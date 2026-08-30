@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'Circular';
+  src: local('Helvetica Neue'), local('Arial');
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #404040 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #404040;
+  border-radius: 4px;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: 'Circular', 'Helvetica Neue', Arial, sans-serif;
+}
+
+[dir="rtl"] .flip-rtl {
+  transform: scaleX(-1);
+}
+
+.gradient-bg {
+  background: linear-gradient(180deg, rgba(83, 83, 83, 0.6) 0%, rgba(18, 18, 18, 1) 100%);
+}
+
+.player-progress {
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: #4d4d4d;
+  cursor: pointer;
+}
+
+.player-progress::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.player-progress:hover::-webkit-slider-thumb {
+  opacity: 1;
+}
+
+.card-hover {
+  @apply transition-all duration-200 hover:bg-spotify-hover;
+}
+
+.green-btn {
+  @apply bg-spotify-green text-black font-bold rounded-full px-6 py-3 hover:bg-spotify-green-hover hover:scale-105 transition-all;
+}
+
+.icon-btn {
+  @apply p-2 rounded-full hover:bg-spotify-hover text-spotify-text hover:text-white transition-colors;
+}
+
+.icon-btn.active {
+  @apply text-spotify-green;
+}
+
+.sidebar-link {
+  @apply flex items-center gap-4 px-3 py-2 rounded-md text-spotify-text font-semibold hover:text-white transition-colors;
+}
+
+.sidebar-link.active {
+  @apply text-white bg-spotify-lightgray;
+}
+
+.lyrics-line {
+  @apply py-2 text-2xl font-bold text-spotify-text transition-colors duration-300;
+}
+
+.lyrics-line.active {
+  @apply text-white scale-105;
+}
+
+@keyframes pulse-green {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.playing-indicator span {
+  @apply inline-block w-1 bg-spotify-green mx-px rounded-sm;
+  animation: pulse-green 0.8s ease-in-out infinite;
+}
+
+.playing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.playing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+.playing-indicator span:nth-child(4) { animation-delay: 0.6s; }

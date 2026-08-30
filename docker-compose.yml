@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: llamastream-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-llamastream}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-llamastream_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-llamastream}
+    volumes:
+      - ./storage/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llamastream}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - llamastream
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: llamastream-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-llamastream}:${POSTGRES_PASSWORD:-llamastream_secret}@postgres:5432/${POSTGRES_DB:-llamastream}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-use-long-random-string}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      ALLOW_PUBLIC_REGISTRATION: ${ALLOW_PUBLIC_REGISTRATION:-false}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@llamastream.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123456}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      MUSIC_STORAGE_PATH: /app/storage/music
+      CACHE_PATH: /app/storage/cache
+      AVATAR_PATH: /app/storage/avatars
+      DEFAULT_AUDIO_QUALITY: ${DEFAULT_AUDIO_QUALITY:-high}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+    volumes:
+      - ./storage/music:/app/storage/music
+      - ./storage/cache:/app/storage/cache
+      - ./storage/avatars:/app/storage/avatars
+    ports:
+      - "${BACKEND_PORT:-3001}:3001"
+    networks:
+      - llamastream
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_WS_URL: ${VITE_WS_URL:-}
+    container_name: llamastream-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    networks:
+      - llamastream
+
+networks:
+  llamastream:
+    driver: bridge
