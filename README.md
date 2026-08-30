@@ -85,7 +85,7 @@ All persistent data is stored on the host machine:
 
 | Host Path              | Container Path           | Purpose                |
 |------------------------|--------------------------|------------------------|
-| `./storage/postgres`   | `/var/lib/postgresql/data` | Database files       |
+| `./storage/postgres/data` | `/var/lib/postgresql/data` | Database files       |
 | `./storage/music`      | `/app/storage/music`     | Downloaded audio (MP3) |
 | `./storage/cache`      | `/app/storage/cache`     | Playlist covers, cache |
 | `./storage/avatars`    | `/app/storage/avatars`   | User avatar images     |
