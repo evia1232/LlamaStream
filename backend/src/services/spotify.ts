@@ -1,7 +1,15 @@
-// @ts-expect-error no types available
-import { getTracks } from 'spotify-url-info';
 import prisma from '../lib/prisma';
 import { getOrCreateTrackFromSearch } from './downloader';
+
+// spotify-url-info exports a factory: require('spotify-url-info')(fetch)
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const createSpotifyUrlInfo = require('spotify-url-info') as (fetchFn: typeof fetch) => {
+  getTracks: (url: string, opts?: RequestInit) => Promise<Array<{
+    name: string; artist: string; duration?: number;
+  }>>;
+};
+
+const { getTracks } = createSpotifyUrlInfo(fetch);
 
 export interface SpotifyTrackInfo {
   name: string;
