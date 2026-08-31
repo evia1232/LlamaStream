@@ -56,6 +56,8 @@ model User {
   queue         QueueItem[]
   refreshTokens RefreshToken[]
   playback      UserPlayback?
+  searchQueries SearchHistoryQuery[]
+  searchTracks  SearchHistoryTrack[]
 }
 
 model RefreshToken {
@@ -248,4 +250,32 @@ model UserPlayback {
   activeDeviceId   String?
   activeDeviceName String?
   updatedAt DateTime @updatedAt
+}
+
+model SearchHistoryQuery {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  query      String
+  searchedAt DateTime @default(now())
+
+  @@index([userId, searchedAt])
+}
+
+model SearchHistoryTrack {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trackKey     String
+  title        String
+  artist       String
+  duration     Int      @default(0)
+  thumbnailUrl String?
+  youtubeUrl   String?
+  spotifyUrl   String?
+  album        String?
+  searchedAt   DateTime @default(now())
+
+  @@unique([userId, trackKey])
+  @@index([userId, searchedAt])
 }

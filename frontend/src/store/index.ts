@@ -107,7 +107,7 @@ interface PlayerState {
     isPlaying?: boolean;
     activeDeviceId?: string | null;
     activeDeviceName?: string | null;
-  }) => Promise<void>;
+  }, opts?: { assumeOnline?: boolean }) => Promise<void>;
   handleSyncCommand: (msg: {
     action?: string;
     fromDeviceId?: string;
@@ -208,10 +208,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   }),
 
   playTrack: async (track, startTime = 0) => {
+    const { localDeviceId, localDeviceName } = get();
     set({
       isRemoteActive: false,
-      activeDeviceId: get().localDeviceId,
-      activeDeviceName: get().localDeviceName,
+      activeDeviceId: localDeviceId,
+      activeDeviceName: localDeviceName,
     });
     get().stopPlaybackImmediate();
     const generation = get()._playGeneration;
@@ -651,11 +652,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   setSyncDevices: (devices, activeId, activeName) => {
     const { localDeviceId } = get();
-    const isRemote = !!activeId && activeId !== localDeviceId;
+    const activeOnline = activeId ? devices.some((d) => d.deviceId === activeId) : false;
+    const effectiveActiveId = activeOnline ? activeId : null;
+    const effectiveActiveName = activeOnline ? activeName : null;
+    const isRemote = !!effectiveActiveId && effectiveActiveId !== localDeviceId;
     set({
       connectedDevices: devices,
-      activeDeviceId: activeId,
-      activeDeviceName: activeName,
+      activeDeviceId: effectiveActiveId,
+      activeDeviceName: effectiveActiveName,
       isRemoteActive: isRemote,
     });
   },
@@ -673,14 +677,26 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     });
   },
 
-  applyRemoteSync: async (data) => {
-    const { localDeviceId } = get();
+  applyRemoteSync: async (data, opts) => {
+    const { localDeviceId, connectedDevices } = get();
     const remoteId = data.activeDeviceId ?? null;
-    const isRemote = !!remoteId && remoteId !== localDeviceId;
+    const remoteOnline = remoteId
+      ? (opts?.assumeOnline || connectedDevices.some((d) => d.deviceId === remoteId))
+      : false;
+    const isRemote = !!remoteId && remoteId !== localDeviceId && remoteOnline;
+
+    if (remoteId && remoteId !== localDeviceId && !remoteOnline) {
+      set({
+        activeDeviceId: localDeviceId,
+        activeDeviceName: get().localDeviceName,
+        isRemoteActive: false,
+      });
+      return;
+    }
 
     set({
-      activeDeviceId: remoteId,
-      activeDeviceName: data.activeDeviceName ?? null,
+      activeDeviceId: isRemote ? remoteId : localDeviceId,
+      activeDeviceName: isRemote ? (data.activeDeviceName ?? null) : get().localDeviceName,
       isRemoteActive: isRemote,
     });
 
@@ -827,13 +843,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         isPlaying = !!data.isPlaying;
       }
       if (data.activeDeviceId) {
-        const isRemote = data.activeDeviceId !== get().localDeviceId;
         set({
           activeDeviceId: data.activeDeviceId,
           activeDeviceName: data.activeDeviceName ?? null,
-          isRemoteActive: isRemote,
         });
-        if (isRemote) isPlaying = false;
       }
     } catch { /* fall back to local */ }
 

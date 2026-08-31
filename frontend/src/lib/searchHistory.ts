@@ -1,10 +1,10 @@
 import { Track } from '../types';
 import { getArtistName } from './trackUtils';
+import api from '../api/client';
 
 const QUERIES_KEY = 'llamastream_recent_searches';
 const TRACKS_KEY = 'llamastream_recent_search_tracks';
-const MAX_QUERIES = 12;
-const MAX_TRACKS = 20;
+const IMPORTED_KEY = 'llamastream_search_history_imported';
 
 export interface RecentSearchTrack {
   id: string;
@@ -18,7 +18,12 @@ export interface RecentSearchTrack {
   searchedAt: number;
 }
 
-export function loadRecentQueries(): string[] {
+export interface SearchHistorySnapshot {
+  queries: string[];
+  tracks: RecentSearchTrack[];
+}
+
+function loadLocalQueries(): string[] {
   try {
     const raw = localStorage.getItem(QUERIES_KEY);
     if (!raw) return [];
@@ -29,14 +34,7 @@ export function loadRecentQueries(): string[] {
   }
 }
 
-export function addRecentQuery(query: string): void {
-  const q = query.trim();
-  if (!q) return;
-  const prev = loadRecentQueries().filter((item) => item.toLowerCase() !== q.toLowerCase());
-  localStorage.setItem(QUERIES_KEY, JSON.stringify([q, ...prev].slice(0, MAX_QUERIES)));
-}
-
-export function loadRecentSearchTracks(): RecentSearchTrack[] {
+function loadLocalTracks(): RecentSearchTrack[] {
   try {
     const raw = localStorage.getItem(TRACKS_KEY);
     if (!raw) return [];
@@ -46,8 +44,63 @@ export function loadRecentSearchTracks(): RecentSearchTrack[] {
   }
 }
 
-export function addRecentSearchTrack(track: Track): void {
-  const entry: RecentSearchTrack = {
+function clearLocalStorage(): void {
+  try {
+    localStorage.removeItem(QUERIES_KEY);
+    localStorage.removeItem(TRACKS_KEY);
+  } catch { /* ignore */ }
+}
+
+async function migrateLocalIfNeeded(): Promise<void> {
+  try {
+    if (localStorage.getItem(IMPORTED_KEY)) return;
+    const queries = loadLocalQueries();
+    const tracks = loadLocalTracks();
+    if (queries.length === 0 && tracks.length === 0) {
+      localStorage.setItem(IMPORTED_KEY, '1');
+      return;
+    }
+    await api.post('/tracks/search-history/import', { queries, tracks });
+    localStorage.setItem(IMPORTED_KEY, '1');
+    clearLocalStorage();
+  } catch {
+    // Server unavailable — keep local data for now
+  }
+}
+
+export async function fetchSearchHistory(): Promise<SearchHistorySnapshot> {
+  await migrateLocalIfNeeded();
+  try {
+    const { data } = await api.get<SearchHistorySnapshot>('/tracks/search-history');
+    return {
+      queries: data.queries ?? [],
+      tracks: data.tracks ?? [],
+    };
+  } catch {
+    return {
+      queries: loadLocalQueries(),
+      tracks: loadLocalTracks(),
+    };
+  }
+}
+
+export async function addRecentQuery(query: string): Promise<string[]> {
+  const q = query.trim();
+  if (!q) return [];
+
+  try {
+    const { data } = await api.post<{ queries: string[] }>('/tracks/search-history/query', { query: q });
+    return data.queries ?? [];
+  } catch {
+    const prev = loadLocalQueries().filter((item) => item.toLowerCase() !== q.toLowerCase());
+    const next = [q, ...prev].slice(0, 12);
+    localStorage.setItem(QUERIES_KEY, JSON.stringify(next));
+    return next;
+  }
+}
+
+export async function addRecentSearchTrack(track: Track): Promise<RecentSearchTrack[]> {
+  const entry = {
     id: track.id,
     title: track.title,
     artist: getArtistName(track.artist),
@@ -56,10 +109,18 @@ export function addRecentSearchTrack(track: Track): void {
     youtubeUrl: track.youtubeUrl,
     spotifyUrl: track.spotifyUrl,
     album: track.album?.title,
-    searchedAt: Date.now(),
   };
-  const prev = loadRecentSearchTracks().filter((t) => t.id !== entry.id);
-  localStorage.setItem(TRACKS_KEY, JSON.stringify([entry, ...prev].slice(0, MAX_TRACKS)));
+
+  try {
+    const { data } = await api.post<{ tracks: RecentSearchTrack[] }>('/tracks/search-history/track', entry);
+    return data.tracks ?? [];
+  } catch {
+    const full: RecentSearchTrack = { ...entry, searchedAt: Date.now() };
+    const prev = loadLocalTracks().filter((t) => t.id !== full.id);
+    const next = [full, ...prev].slice(0, 20);
+    localStorage.setItem(TRACKS_KEY, JSON.stringify(next));
+    return next;
+  }
 }
 
 export function recentTrackToTrack(item: RecentSearchTrack): Track {
@@ -76,4 +137,14 @@ export function recentTrackToTrack(item: RecentSearchTrack): Track {
     source: item.spotifyUrl ? 'spotify' : item.youtubeUrl ? 'youtube' : 'library',
     isDownloaded: !isExternal,
   };
+}
+
+/** @deprecated Use fetchSearchHistory */
+export function loadRecentQueries(): string[] {
+  return loadLocalQueries();
+}
+
+/** @deprecated Use fetchSearchHistory */
+export function loadRecentSearchTracks(): RecentSearchTrack[] {
+  return loadLocalTracks();
 }

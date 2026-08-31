@@ -12,8 +12,15 @@ import { unifiedSearch } from '../services/search';
 import { isSpotifyUrl, isYouTubeUrl } from '../services/spotify';
 import { ytDlpVersion } from '../services/ytdlp';
 import { getSpotifyStatus } from '../services/spotifyApi';
+import { getValidatedActiveDevice } from '../services/playbackSync';
 import { cleanupLibrary, deleteTrackById, getLibraryStats } from '../services/trackCleanup';
 import { promoteTrackToLibrary, evictTrackIfUnpinned, touchTrackAccess } from '../services/trackStorage';
+import {
+  getSearchHistory,
+  addSearchQuery,
+  addSearchTrack,
+  importSearchHistory,
+} from '../services/searchHistory';
 
 const router = Router();
 
@@ -146,9 +153,10 @@ router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
     where: { userId: req.user!.userId },
     include: { track: { include: { artist: true, album: true } } },
   });
+  const { activeDeviceId, activeDeviceName } = await getValidatedActiveDevice(req.user!.userId);
 
   if (!state) {
-    return res.json({ track: null, position: 0, isPlaying: false, volume: 0.7, activeDeviceId: null, activeDeviceName: null });
+    return res.json({ track: null, position: 0, isPlaying: false, volume: 0.7, activeDeviceId, activeDeviceName });
   }
 
   if (state.track && !state.track.isDownloaded && !state.track.sourceUrl) {
@@ -157,8 +165,8 @@ router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
       position: 0,
       isPlaying: false,
       volume: state.volume ?? 0.7,
-      activeDeviceId: state.activeDeviceId,
-      activeDeviceName: state.activeDeviceName,
+      activeDeviceId,
+      activeDeviceName,
     });
   }
 
@@ -168,8 +176,8 @@ router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
       position: 0,
       isPlaying: false,
       volume: state.volume ?? 0.7,
-      activeDeviceId: state.activeDeviceId,
-      activeDeviceName: state.activeDeviceName,
+      activeDeviceId,
+      activeDeviceName,
     });
   }
 
@@ -178,9 +186,71 @@ router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
     position: state.position,
     isPlaying: state.isPlaying,
     volume: state.volume ?? 0.7,
-    activeDeviceId: state.activeDeviceId,
-    activeDeviceName: state.activeDeviceName,
+    activeDeviceId,
+    activeDeviceName,
   });
+});
+
+router.get('/search-history', authenticate, async (req: AuthRequest, res) => {
+  const history = await getSearchHistory(req.user!.userId);
+  res.json(history);
+});
+
+router.post('/search-history/query', authenticate, async (req: AuthRequest, res) => {
+  const { query } = req.body as { query?: string };
+  if (!query?.trim()) return res.status(400).json({ error: 'Query required' });
+  const queries = await addSearchQuery(req.user!.userId, query);
+  res.json({ queries });
+});
+
+router.post('/search-history/track', authenticate, async (req: AuthRequest, res) => {
+  const body = req.body as {
+    id?: string;
+    title?: string;
+    artist?: string;
+    duration?: number;
+    thumbnailUrl?: string | null;
+    youtubeUrl?: string;
+    spotifyUrl?: string;
+    album?: string;
+  };
+  if (!body.id?.trim() || !body.title?.trim()) {
+    return res.status(400).json({ error: 'Track id and title required' });
+  }
+  const tracks = await addSearchTrack(req.user!.userId, {
+    id: body.id,
+    title: body.title,
+    artist: body.artist ?? '',
+    duration: body.duration,
+    thumbnailUrl: body.thumbnailUrl,
+    youtubeUrl: body.youtubeUrl,
+    spotifyUrl: body.spotifyUrl,
+    album: body.album,
+  });
+  res.json({ tracks });
+});
+
+router.post('/search-history/import', authenticate, async (req: AuthRequest, res) => {
+  const { queries, tracks } = req.body as {
+    queries?: string[];
+    tracks?: Array<{
+      id: string;
+      title: string;
+      artist: string;
+      duration?: number;
+      thumbnailUrl?: string | null;
+      youtubeUrl?: string;
+      spotifyUrl?: string;
+      album?: string;
+      searchedAt?: number;
+    }>;
+  };
+  const existing = await getSearchHistory(req.user!.userId);
+  if (existing.queries.length > 0 || existing.tracks.length > 0) {
+    return res.json(existing);
+  }
+  const history = await importSearchHistory(req.user!.userId, { queries, tracks });
+  res.json(history);
 });
 
 router.put('/playback-state', authenticate, async (req: AuthRequest, res) => {

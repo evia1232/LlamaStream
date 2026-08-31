@@ -31,6 +31,47 @@ export function listDevices(userId: string): ConnectedDevice[] {
   }));
 }
 
+export function isDeviceConnected(userId: string, deviceId: string): boolean {
+  return userClients(userId).has(deviceId);
+}
+
+/** Clear active device in DB when it is no longer connected. */
+export async function getValidatedActiveDevice(userId: string): Promise<{
+  activeDeviceId: string | null;
+  activeDeviceName: string | null;
+}> {
+  const state = await getSharedPlaybackState(userId);
+  const activeId = state?.activeDeviceId ?? null;
+  if (!activeId) {
+    return { activeDeviceId: null, activeDeviceName: null };
+  }
+  if (isDeviceConnected(userId, activeId)) {
+    return { activeDeviceId: activeId, activeDeviceName: state?.activeDeviceName ?? null };
+  }
+  await updateSharedPlayback(userId, {
+    activeDeviceId: null,
+    activeDeviceName: null,
+    isPlaying: false,
+  });
+  return { activeDeviceId: null, activeDeviceName: null };
+}
+
+export async function onDeviceDisconnected(userId: string, deviceId: string): Promise<{
+  activeDeviceId: string | null;
+  activeDeviceName: string | null;
+}> {
+  const state = await getSharedPlaybackState(userId);
+  if (state?.activeDeviceId === deviceId) {
+    await updateSharedPlayback(userId, {
+      activeDeviceId: null,
+      activeDeviceName: null,
+      isPlaying: false,
+    });
+    return { activeDeviceId: null, activeDeviceName: null };
+  }
+  return getValidatedActiveDevice(userId);
+}
+
 export function registerDevice(userId: string, deviceId: string, deviceName: string, ws: WebSocket) {
   userClients(userId).set(deviceId, { ws, deviceId, deviceName, userId });
 }

@@ -10,8 +10,7 @@ import { externalTrack, getArtistName } from '../lib/trackUtils';
 import {
   addRecentQuery,
   addRecentSearchTrack,
-  loadRecentQueries,
-  loadRecentSearchTracks,
+  fetchSearchHistory,
   recentTrackToTrack,
   RecentSearchTrack,
 } from '../lib/searchHistory';
@@ -69,13 +68,14 @@ export default function SearchPage() {
   const [recentQueries, setRecentQueries] = useState<string[]>([]);
   const [recentTracks, setRecentTracks] = useState<RecentSearchTrack[]>([]);
 
-  const refreshRecent = useCallback(() => {
-    setRecentQueries(loadRecentQueries());
-    setRecentTracks(loadRecentSearchTracks());
+  const refreshRecent = useCallback(async () => {
+    const history = await fetchSearchHistory();
+    setRecentQueries(history.queries);
+    setRecentTracks(history.tracks);
   }, []);
 
   useEffect(() => {
-    refreshRecent();
+    void refreshRecent();
   }, [refreshRecent]);
 
   const search = useCallback(async (q: string) => {
@@ -85,8 +85,8 @@ export default function SearchPage() {
     try {
       const { data } = await api.get('/tracks/search', { params: { q } });
       setResults(data);
-      addRecentQuery(q);
-      refreshRecent();
+      await addRecentQuery(q);
+      await refreshRecent();
     } catch (err: unknown) {
       setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
     } finally {
@@ -100,10 +100,10 @@ export default function SearchPage() {
     if (!value.trim()) {
       setResults(null);
       setError('');
-      refreshRecent();
+      void refreshRecent();
       return;
     }
-    debounceRef.current = setTimeout(() => search(value), 350);
+    debounceRef.current = setTimeout(() => { void search(value); }, 350);
   };
 
   const playExternal = async (opts: {
@@ -128,8 +128,8 @@ export default function SearchPage() {
     );
     try {
       await playTrack(track);
-      addRecentSearchTrack(track);
-      refreshRecent();
+      await addRecentSearchTrack(track);
+      await refreshRecent();
       if (query.trim()) search(query);
     } catch (err: unknown) {
       setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
@@ -304,7 +304,13 @@ export default function SearchPage() {
                   <TrackSurface
                     key={`${item.id}-${item.searchedAt}`}
                     track={track}
-                    onClick={() => { void playTrack(track); addRecentSearchTrack(track); refreshRecent(); }}
+                    onClick={() => {
+                      void (async () => {
+                        await playTrack(track);
+                        await addRecentSearchTrack(track);
+                        await refreshRecent();
+                      })();
+                    }}
                     onSwipeRight={() => addToQueue(track.id, false, track)}
                     className="flex items-center gap-3 p-2 rounded-md card-hover cursor-pointer"
                   >

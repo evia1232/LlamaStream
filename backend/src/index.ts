@@ -15,6 +15,8 @@ import {
   broadcastToUser,
   getSharedPlaybackState,
   updateSharedPlayback,
+  getValidatedActiveDevice,
+  onDeviceDisconnected,
 } from './services/playbackSync';
 
 import authRoutes from './routes/auth';
@@ -68,11 +70,12 @@ function formatTrackForSync(track: {
 async function sendSyncState(userId: string, ws: WebSocket) {
   const state = await getSharedPlaybackState(userId);
   const devices = listDevices(userId);
+  const { activeDeviceId, activeDeviceName } = await getValidatedActiveDevice(userId);
   ws.send(JSON.stringify({
     type: 'sync',
     devices,
-    activeDeviceId: state?.activeDeviceId ?? null,
-    activeDeviceName: state?.activeDeviceName ?? null,
+    activeDeviceId,
+    activeDeviceName,
     track: state?.track ? formatTrackForSync(state.track) : null,
     position: state?.position ?? 0,
     isPlaying: state?.isPlaying ?? false,
@@ -122,10 +125,12 @@ wss.on('connection', (ws: WSClient, req) => {
         ws.deviceId = message.deviceId;
         registerDevice(ws.userId, message.deviceId, message.deviceName, ws);
         await sendSyncState(ws.userId, ws);
+        const { activeDeviceId, activeDeviceName } = await getValidatedActiveDevice(ws.userId);
         broadcastToUser(ws.userId, {
           type: 'devices',
           devices: listDevices(ws.userId),
-          activeDeviceId: (await getSharedPlaybackState(ws.userId))?.activeDeviceId ?? null,
+          activeDeviceId,
+          activeDeviceName,
         }, message.deviceId);
         return;
       }
@@ -178,12 +183,15 @@ wss.on('connection', (ws: WSClient, req) => {
     }
   });
 
-  ws.on('close', () => {
+  ws.on('close', async () => {
     if (ws.userId && ws.deviceId) {
       unregisterDevice(ws.userId, ws.deviceId);
+      const { activeDeviceId, activeDeviceName } = await onDeviceDisconnected(ws.userId, ws.deviceId);
       broadcastToUser(ws.userId, {
         type: 'devices',
         devices: listDevices(ws.userId),
+        activeDeviceId,
+        activeDeviceName,
       });
     }
   });

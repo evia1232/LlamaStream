@@ -55,7 +55,7 @@ export function usePlaybackSync() {
           isPlaying: !!msg.isPlaying,
           activeDeviceId: msg.deviceId,
           activeDeviceName: msg.deviceName ?? null,
-        });
+        }, { assumeOnline: true });
       }
 
       if (msg.type === 'command') {
