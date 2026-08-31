@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma';
 import { config } from '../config';
 import { resolveAndDownload } from './downloader';
+import { addTrackToPlaylist } from '../lib/playlistTracks';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const createSpotifyUrlInfo = require('spotify-url-info') as (fetchFn: typeof fetch) => {
@@ -147,7 +148,9 @@ export async function importSpotifyPlaylist(
   });
 
   let position = 0;
+  let imported = 0;
   const errors: string[] = [];
+  const skipped: string[] = [];
 
   for (const spotifyTrack of tracks) {
     try {
@@ -158,15 +161,18 @@ export async function importSpotifyPlaylist(
         { title: spotifyTrack.name, artist: spotifyTrack.artist }
       );
 
-      await prisma.playlistTrack.create({
-        data: { playlistId: playlist.id, trackId: track.id, position: position++ },
-      });
+      const { added } = await addTrackToPlaylist(playlist.id, track.id, position);
+      if (added) imported++;
+      else skipped.push(spotifyTrack.name);
+
+      position++;
     } catch (err) {
       errors.push(`${spotifyTrack.name}: ${(err as Error).message}`);
+      position++;
     }
   }
 
-  return { playlist, imported: position, total: tracks.length, errors };
+  return { playlist, imported, skipped: skipped.length, total: tracks.length, errors };
 }
 
 export async function exportPlaylist(playlistId: string, format: 'json' | 'm3u' | 'txt' = 'json') {

@@ -8,6 +8,7 @@ import { body, validationResult } from 'express-validator';
 import { authenticate, AuthRequest, optionalAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { importSpotifyPlaylist, exportPlaylist } from '../services/spotify';
+import { addTrackToPlaylist, nextPlaylistPosition } from '../lib/playlistTracks';
 import { config } from '../config';
 
 const router = Router();
@@ -180,15 +181,12 @@ router.post('/:id/tracks', authenticate, async (req: AuthRequest, res) => {
   }
 
   const { trackId, position } = req.body;
-  const maxPos = playlist.tracks.reduce((max, t) => Math.max(max, t.position), -1);
+  const pos = position ?? await nextPlaylistPosition(req.params.id);
 
-  await prisma.playlistTrack.create({
-    data: {
-      playlistId: req.params.id,
-      trackId,
-      position: position ?? maxPos + 1,
-    },
-  });
+  const { added } = await addTrackToPlaylist(req.params.id, trackId, pos);
+  if (!added) {
+    return res.status(409).json({ error: 'Track already in playlist' });
+  }
   res.status(201).json({ success: true });
 });
 
