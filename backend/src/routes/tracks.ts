@@ -349,7 +349,30 @@ router.post('/:id/like', authenticate, async (req: AuthRequest, res) => {
   await prisma.likedTrack.create({
     data: { userId: req.user!.userId, trackId: req.params.id },
   });
+
+  const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+  void prefetchLibraryTrack(req.params.id, user?.audioQuality || 'HIGH').catch(console.error);
+
   res.json({ liked: true });
+});
+
+router.put('/:id/like', authenticate, async (req: AuthRequest, res) => {
+  const wantLiked = req.body.liked !== false;
+  const existing = await prisma.likedTrack.findUnique({
+    where: { userId_trackId: { userId: req.user!.userId, trackId: req.params.id } },
+  });
+
+  if (wantLiked && !existing) {
+    await prisma.likedTrack.create({
+      data: { userId: req.user!.userId, trackId: req.params.id },
+    });
+    const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+    void prefetchLibraryTrack(req.params.id, user?.audioQuality || 'HIGH').catch(console.error);
+  } else if (!wantLiked && existing) {
+    await prisma.likedTrack.delete({ where: { id: existing.id } });
+  }
+
+  res.json({ liked: wantLiked });
 });
 
 router.post('/:id/play', authenticate, async (req: AuthRequest, res) => {

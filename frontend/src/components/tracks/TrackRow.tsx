@@ -199,7 +199,7 @@ export default function TrackRow({
           )}
           <button
             type="button"
-            onClick={(e) => { stop(e); void toggleLike(track.id); }}
+            onClick={(e) => { stop(e); toggleLike(track.id, track); }}
             className={clsx('icon-btn md:opacity-0 md:group-hover:opacity-100 p-1.5', isLiked && 'text-spotify-green md:opacity-100')}
             title={isLiked ? t('unlike') : t('like')}
           >

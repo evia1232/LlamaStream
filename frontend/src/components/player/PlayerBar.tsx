@@ -288,7 +288,7 @@ export default function PlayerBar() {
         <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); toggleLike(currentTrack.id); }}
+            onClick={(e) => { e.stopPropagation(); toggleLike(currentTrack.id, currentTrack); }}
             className={clsx('icon-btn p-1', isLiked && 'text-spotify-green')}
           >
             <Heart className="w-5 h-5" fill={isLiked ? 'currentColor' : 'none'} />
@@ -340,7 +340,7 @@ export default function PlayerBar() {
           </div>
           <button
             type="button"
-            onClick={() => toggleLike(currentTrack.id)}
+            onClick={() => toggleLike(currentTrack.id, currentTrack)}
             className={clsx('icon-btn shrink-0', isLiked && 'text-spotify-green')}
           >
             <Heart className="w-4 h-4" fill={isLiked ? 'currentColor' : 'none'} />

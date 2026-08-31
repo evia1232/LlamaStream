@@ -6,6 +6,36 @@ function isLibraryId(id: string): boolean {
   return !id.startsWith('external-') && !id.startsWith('discover-yt-');
 }
 
+export { isLibraryId };
+
+/** Register track in library without waiting for download (starts prefetch). */
+export async function registerTrackInLibrary(track: Track): Promise<Track> {
+  if (isLibraryId(track.id)) {
+    if (!track.isDownloaded) prefetchTrack(track);
+    return track;
+  }
+
+  const artistName = getArtistName(track.artist);
+  const payload = track.youtubeUrl
+    ? {
+        url: track.youtubeUrl,
+        title: track.title,
+        artist: artistName,
+        duration: track.duration,
+      }
+    : {
+        spotifyUrl: track.spotifyUrl,
+        title: track.title,
+        artist: artistName,
+        duration: track.duration,
+        album: track.album?.title,
+      };
+
+  const { data } = await api.post('/tracks/prefetch', payload);
+  const { data: trackData } = await api.get(`/tracks/${data.trackId}`);
+  return normalizeTrack(trackData.track);
+}
+
 /** Block until the track MP3 is fully downloaded on the server */
 export async function ensureTrackDownloaded(track: Track): Promise<Track> {
   if (track.isDownloaded) return track;

@@ -4,6 +4,7 @@ import { Play } from 'lucide-react';
 import api from '../api/client';
 import TrackRow from '../components/tracks/TrackRow';
 import { Track } from '../types';
+import { saveLikedIds } from '../lib/likedStorage';
 import { normalizeTrack } from '../lib/trackUtils';
 import { usePlayerStore } from '../store';
 
@@ -16,6 +17,7 @@ export default function LikedPage() {
     api.get('/tracks/liked').then(({ data }) => {
       setTracks(data.tracks.map((t: Track) => normalizeTrack(t)));
       data.tracks.forEach((t: Track) => usePlayerStore.getState().addToLiked(t.id));
+      saveLikedIds(usePlayerStore.getState().likedTrackIds);
     }).catch(console.error);
   }, []);
 

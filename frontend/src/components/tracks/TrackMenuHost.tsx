@@ -154,7 +154,7 @@ export default function TrackMenuHost() {
       id: 'like',
       label: isLiked ? t('unlike') : t('like'),
       icon: <Heart className="w-4 h-4" fill={isLiked ? 'currentColor' : 'none'} />,
-      onClick: () => { void toggleLike(track.id); },
+      onClick: () => { toggleLike(track.id, track); },
     }] : []),
     ...(hasLibraryId ? [{
       id: 'research',

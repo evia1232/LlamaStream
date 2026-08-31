@@ -13,7 +13,8 @@ import {
   saveAutoplayEnabled,
 } from '../lib/playbackStorage';
 import { normalizeTrack } from '../lib/trackUtils';
-import { ensureTrackDownloaded, prefetchTrack, prefetchDiscoverNext } from '../lib/ensureDownload';
+import { ensureTrackDownloaded, prefetchTrack, prefetchDiscoverNext, registerTrackInLibrary, isLibraryId } from '../lib/ensureDownload';
+import { loadLikedIds, saveLikedIds } from '../lib/likedStorage';
 import { canStreamFromSpotify, getSpotifyTrackUri } from '../lib/spotifyTrack';
 import { useSpotifyPlayerStore } from './spotifyPlayerStore';
 
@@ -67,7 +68,7 @@ interface PlayerState {
   addToQueue: (trackId: string, playNext?: boolean) => Promise<void>;
   removeFromQueue: (itemId: string) => Promise<void>;
   clearQueue: () => Promise<void>;
-  toggleLike: (trackId: string) => Promise<void>;
+  toggleLike: (trackId: string, trackHint?: Track) => void;
   fetchLyrics: (trackId: string) => Promise<void>;
   clearPendingSeek: () => void;
   registerSeek: (fn: ((time: number) => void) | null) => void;
@@ -96,7 +97,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   showLyrics: false,
   showNowPlaying: false,
   lyrics: null,
-  likedTrackIds: new Set(),
+  likedTrackIds: loadLikedIds(),
   pendingSeekTime: 0,
   playbackRestored: false,
   _seekFn: null,
@@ -145,11 +146,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   addToLiked: (trackId) => set((s) => {
     const ids = new Set(s.likedTrackIds);
     ids.add(trackId);
+    saveLikedIds(ids);
     return { likedTrackIds: ids };
   }),
   removeFromLiked: (trackId) => set((s) => {
     const ids = new Set(s.likedTrackIds);
     ids.delete(trackId);
+    saveLikedIds(ids);
     return { likedTrackIds: ids };
   }),
 
@@ -460,10 +463,41 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ queue: [] });
   },
 
-  toggleLike: async (trackId) => {
-    const { data } = await api.post(`/tracks/${trackId}/like`);
-    if (data.liked) get().addToLiked(trackId);
+  toggleLike: (trackId, trackHint) => {
+    const track = trackHint ?? (get().currentTrack?.id === trackId ? get().currentTrack : null);
+    const wantLiked = !get().likedTrackIds.has(trackId);
+
+    if (wantLiked) get().addToLiked(trackId);
     else get().removeFromLiked(trackId);
+
+    const sync = async (attempt = 0): Promise<void> => {
+      try {
+        let id = trackId;
+        if (!isLibraryId(trackId)) {
+          if (track && !track.isDownloaded) prefetchTrack(track);
+        } else {
+          if (!track) throw new Error('Track metadata required');
+          const ready = await registerTrackInLibrary(track);
+          id = ready.id;
+          if (id !== trackId) {
+            get().removeFromLiked(trackId);
+            if (wantLiked) get().addToLiked(id);
+            saveLikedIds(get().likedTrackIds);
+          }
+        }
+        await api.put(`/tracks/${id}/like`, { liked: wantLiked });
+      } catch {
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+          return sync(attempt + 1);
+        }
+        if (wantLiked) get().removeFromLiked(trackId);
+        else get().addToLiked(trackId);
+        saveLikedIds(get().likedTrackIds);
+      }
+    };
+
+    void sync();
   },
 
   fetchLyrics: async (trackId) => {

@@ -4,7 +4,7 @@ import { X, Plus, Check } from 'lucide-react';
 import api from '../../api/client';
 import { Playlist, Track } from '../../types';
 import PlaylistCover from '../playlists/PlaylistCover';
-import { ensureTrackDownloaded } from '../../lib/ensureDownload';
+import { registerTrackInLibrary, prefetchTrack } from '../../lib/ensureDownload';
 
 interface AddToPlaylistModalProps {
   track: Track;
@@ -16,7 +16,6 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
   const { t } = useTranslation();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [loading, setLoading] = useState(true);
-  const [addingId, setAddingId] = useState<string | null>(null);
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -33,24 +32,34 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
       .finally(() => setLoading(false));
   }, [open, t]);
 
-  const handleAdd = async (playlistId: string) => {
-    setAddingId(playlistId);
+  const handleAdd = (playlistId: string) => {
+    if (addedIds.has(playlistId)) return;
+    setAddedIds((prev) => new Set(prev).add(playlistId));
     setError('');
-    try {
-      const ready = await ensureTrackDownloaded(track);
-      await api.post(`/playlists/${playlistId}/tracks`, { trackId: ready.id });
-      setAddedIds((prev) => new Set(prev).add(playlistId));
-    } catch (err: unknown) {
-      const status = (err as { response?: { status?: number; data?: { error?: string } } })?.response?.status;
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      if (status === 409) {
-        setAddedIds((prev) => new Set(prev).add(playlistId));
-      } else {
+
+    const sync = async (attempt = 0): Promise<void> => {
+      try {
+        const ready = await registerTrackInLibrary(track);
+        await api.post(`/playlists/${playlistId}/tracks`, { trackId: ready.id });
+        prefetchTrack(ready);
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (status === 409) return;
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+          return sync(attempt + 1);
+        }
+        setAddedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(playlistId);
+          return next;
+        });
+        const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
         setError(msg || t('error'));
       }
-    } finally {
-      setAddingId(null);
-    }
+    };
+
+    void sync();
   };
 
   const handleCreate = async () => {
@@ -62,7 +71,7 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
       setPlaylists((prev) => [playlist, ...prev]);
       setNewName('');
       setShowCreate(false);
-      await handleAdd(playlist.id);
+      handleAdd(playlist.id);
     } catch (err: unknown) {
       setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
     }
@@ -130,13 +139,12 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
             <ul className="space-y-1">
               {playlists.map((pl) => {
                 const added = addedIds.has(pl.id);
-                const busy = addingId === pl.id;
                 return (
                   <li key={pl.id}>
                     <button
                       type="button"
                       onClick={() => !added && handleAdd(pl.id)}
-                      disabled={busy || added}
+                      disabled={added}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 text-start disabled:opacity-70"
                     >
                       <div className="w-12 h-12 rounded bg-spotify-gray overflow-hidden shrink-0">
@@ -151,10 +159,7 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
                         <p className="font-medium truncate">{pl.name}</p>
                         <p className="text-caption">{t('trackCount', { count: pl.trackCount || 0 })}</p>
                       </div>
-                      {busy && (
-                        <div className="w-5 h-5 border-2 border-spotify-green border-t-transparent rounded-full animate-spin shrink-0" />
-                      )}
-                      {added && !busy && (
+                      {added && (
                         <Check className="w-5 h-5 text-spotify-green shrink-0" />
                       )}
                     </button>

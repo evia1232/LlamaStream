@@ -182,7 +182,7 @@ export default function NowPlayingSheet() {
         {/* Secondary actions */}
         <div className="flex items-center justify-around px-4 mb-6">
           <button
-            onClick={() => toggleLike(currentTrack.id)}
+            onClick={() => toggleLike(currentTrack.id, currentTrack)}
             className={clsx('icon-btn p-3', isLiked && 'text-spotify-green')}
           >
             <Heart className="w-6 h-6" fill={isLiked ? 'currentColor' : 'none'} />
