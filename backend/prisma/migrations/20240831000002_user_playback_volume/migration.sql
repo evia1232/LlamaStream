@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "UserPlayback" ADD COLUMN "volume" DOUBLE PRECISION NOT NULL DEFAULT 0.7;

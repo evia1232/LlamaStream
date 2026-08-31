@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { config, qualityBitrates } from '../config';
 import prisma from '../lib/prisma';
 import { runYtDlp, findFileByPrefix, lastLines } from './ytdlp';
-import { buildSearchQueries, rankYouTubeResults } from '../lib/trackMatch';
+import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants } from '../lib/trackMatch';
 
 export interface SearchResult {
   id: string;
@@ -245,6 +245,9 @@ export async function resolveAndDownload(
     album: opts?.album,
   };
 
+  const filterVariants = shouldFilterVariants(trimmed, opts);
+  const rankOpts = { filterVariants, rawQuery: trimmed, minScore: filterVariants ? 40 : 20 };
+
   let candidates: SearchResult[] = [];
 
   if (opts?.title && opts?.artist) {
@@ -263,14 +266,20 @@ export async function resolveAndDownload(
         console.error(`YouTube search failed for "${q}":`, err);
       }
     }
-    candidates = rankYouTubeResults(candidates, target);
+    candidates = rankYouTubeResults(candidates, target, rankOpts);
   }
 
   if (candidates.length === 0) {
-    const fallback = await searchYouTube(searchQuery, 10);
+    const fallback = await searchYouTube(searchQuery, 12);
     candidates = opts?.title && opts?.artist
-      ? rankYouTubeResults(fallback, target)
-      : fallback;
+      ? rankYouTubeResults(fallback, target, rankOpts)
+      : rankYouTubeResults(fallback, target, { ...rankOpts, filterVariants: false });
+  }
+
+  if (candidates.length === 0 && filterVariants) {
+    console.warn('[Match] No strict matches — retrying without variant filter');
+    const fallback = await searchYouTube(searchQuery, 12);
+    candidates = rankYouTubeResults(fallback, target, { ...rankOpts, filterVariants: false, minScore: 25 });
   }
 
   if (candidates.length === 0) {
@@ -278,7 +287,7 @@ export async function resolveAndDownload(
   }
 
   let lastError: Error | null = null;
-  for (const result of candidates.slice(0, 8)) {
+  for (const result of candidates.slice(0, 6)) {
     try {
       const bySource = await prisma.track.findFirst({
         where: { sourceId: result.id, isDownloaded: true },
@@ -286,6 +295,7 @@ export async function resolveAndDownload(
       });
       if (bySource?.filePath && fs.existsSync(bySource.filePath)) return bySource;
 
+      console.log(`[Match] Downloading: "${result.title}" (${result.url})`);
       const download = await downloadFromYouTube(result.url, quality);
       return saveTrackRecord(
         download,

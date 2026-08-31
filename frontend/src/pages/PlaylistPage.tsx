@@ -88,7 +88,17 @@ export default function PlaylistPage() {
           <span className="text-end">⏱</span>
         </div>
         {playlist.tracks?.map((track, i) => (
-          <TrackRow key={track.id} track={normalizeTrack(track as Track)} index={i} />
+          <TrackRow
+            key={track.id}
+            track={normalizeTrack(track as Track)}
+            index={i}
+            playlistId={id}
+            onRemovedFromPlaylist={() => {
+              if (id) {
+                api.get(`/playlists/${id}`).then(({ data }) => setPlaylist(data.playlist)).catch(console.error);
+              }
+            }}
+          />
         ))}
       </div>
     </div>

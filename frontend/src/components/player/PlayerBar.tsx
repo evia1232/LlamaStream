@@ -7,7 +7,7 @@ import {
 import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
 import { streamUrl } from '../../lib/apiUrl';
-import { getArtistName } from '../../lib/trackUtils';
+import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import { useDirection } from '../../hooks/useDirection';
 import { progressGradient } from '../../lib/direction';
 
@@ -32,7 +32,7 @@ export default function PlayerBar() {
     setIsPlaying, setCurrentTime, setDuration, setVolume,
     toggleShuffle, cycleRepeat, playNext, playPrevious,
     toggleLike, setShowQueue, setShowLyrics, showLyrics,
-    clearPendingSeek, persistPlayback,
+    clearPendingSeek, persistPlayback, registerSeek, seekTo, setShowNowPlaying,
   } = usePlayerStore();
 
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
@@ -46,6 +46,13 @@ export default function PlayerBar() {
     audio.src = streamUrl(currentTrack.id, token);
     if (isPlaying) audio.play().catch(() => setIsPlaying(false));
   }, [currentTrack?.id]);
+
+  useEffect(() => {
+    registerSeek((time) => {
+      if (audioRef.current) audioRef.current.currentTime = time;
+    });
+    return () => registerSeek(null);
+  }, [registerSeek]);
 
   useEffect(() => {
     const onUnload = () => { persistPlayback(); };
@@ -79,20 +86,15 @@ export default function PlayerBar() {
     if (!audioRef.current) return;
     setDuration(audioRef.current.duration);
     if (pendingSeekTime > 0) {
-      const seekTo = Math.min(pendingSeekTime, audioRef.current.duration || pendingSeekTime);
-      audioRef.current.currentTime = seekTo;
-      setCurrentTime(seekTo);
+      const t = Math.min(pendingSeekTime, audioRef.current.duration || pendingSeekTime);
+      audioRef.current.currentTime = t;
+      setCurrentTime(t);
       clearPendingSeek();
     }
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(e.target.value);
-    if (audioRef.current) {
-      audioRef.current.currentTime = time;
-      setCurrentTime(time);
-      persistPlayback();
-    }
+    seekTo(parseFloat(e.target.value));
   };
 
   const handleEnded = () => playNext();
@@ -162,6 +164,7 @@ export default function PlayerBar() {
   }
 
   const artistName = getArtistName(currentTrack?.artist);
+  const imageUrl = getTrackImageUrl(currentTrack);
 
   return (
     <footer className="player-bar shrink-0">
@@ -178,30 +181,34 @@ export default function PlayerBar() {
         <div className="h-full bg-white transition-all" style={{ width: `${progressPct}%` }} />
       </div>
 
-      {/* Mobile layout */}
+      {/* Mobile layout — tap track info to expand */}
       <div className="md:hidden flex items-center gap-3 px-3 h-full min-w-0">
-        <div className="flex items-center gap-3 flex-1 min-w-0">
-          <div className="w-11 h-11 rounded bg-spotify-gray shrink-0 overflow-hidden">
-            {currentTrack.thumbnailUrl ? (
-              <img src={currentTrack.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+        <button
+          type="button"
+          onClick={() => setShowNowPlaying(true)}
+          className="flex items-center gap-3 flex-1 min-w-0 text-start active:opacity-80"
+        >
+          <div className="w-11 h-11 rounded bg-spotify-gray shrink-0 overflow-hidden shadow-sm">
+            {imageUrl ? (
+              <img src={imageUrl} alt="" className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-spotify-text text-sm">♪</div>
             )}
           </div>
-          <div className="flex-1 min-w-0 text-start">
+          <div className="flex-1 min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
           </div>
-        </div>
+        </button>
         <div className="flex items-center gap-1 shrink-0">
           <button
-            onClick={() => toggleLike(currentTrack.id)}
+            onClick={(e) => { e.stopPropagation(); toggleLike(currentTrack.id); }}
             className={clsx('icon-btn p-1', isLiked && 'text-spotify-green')}
           >
             <Heart className="w-5 h-5" fill={isLiked ? 'currentColor' : 'none'} />
           </button>
           <button
-            onClick={() => setIsPlaying(!isPlaying)}
+            onClick={(e) => { e.stopPropagation(); setIsPlaying(!isPlaying); }}
             className="w-9 h-9 bg-white rounded-full flex items-center justify-center"
             aria-label={isPlaying ? t('pause') : t('play')}
           >
@@ -212,7 +219,7 @@ export default function PlayerBar() {
             )}
           </button>
           <button
-            onClick={isRtl ? playPrevious : playNext}
+            onClick={(e) => { e.stopPropagation(); (isRtl ? playPrevious : playNext)(); }}
             className="icon-btn p-1"
             aria-label={isRtl ? t('previous') : t('next')}
           >

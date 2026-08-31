@@ -208,6 +208,7 @@ model UserPlayback {
   trackId   String?
   track     Track?   @relation(fields: [trackId], references: [id], onDelete: SetNull)
   position  Float    @default(0)
+  volume    Float    @default(0.7)
   isPlaying Boolean  @default(false)
   updatedAt DateTime @updatedAt
 }

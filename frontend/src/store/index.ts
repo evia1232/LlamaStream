@@ -3,7 +3,13 @@ import i18n from '../i18n';
 import { Track, RepeatMode, User, QueueItem, Lyrics } from '../types';
 import api from '../api/client';
 import { applyDocumentDirection } from '../lib/direction';
-import { loadLocalPlayback, saveLocalPlayback, clearLocalPlayback } from '../lib/playbackStorage';
+import {
+  loadLocalPlayback,
+  saveLocalPlayback,
+  clearLocalPlayback,
+  loadSavedVolume,
+  saveVolume,
+} from '../lib/playbackStorage';
 
 interface PlayerState {
   currentTrack: Track | null;
@@ -16,10 +22,12 @@ interface PlayerState {
   queue: QueueItem[];
   showQueue: boolean;
   showLyrics: boolean;
+  showNowPlaying: boolean;
   lyrics: Lyrics | null;
   likedTrackIds: Set<string>;
   pendingSeekTime: number;
   playbackRestored: boolean;
+  _seekFn: ((time: number) => void) | null;
 
   setCurrentTrack: (track: Track | null) => void;
   setIsPlaying: (playing: boolean) => void;
@@ -30,6 +38,7 @@ interface PlayerState {
   cycleRepeat: () => void;
   setShowQueue: (show: boolean) => void;
   setShowLyrics: (show: boolean) => void;
+  setShowNowPlaying: (show: boolean) => void;
   setLyrics: (lyrics: Lyrics | null) => void;
   setQueue: (queue: QueueItem[]) => void;
   addToLiked: (trackId: string) => void;
@@ -44,7 +53,10 @@ interface PlayerState {
   toggleLike: (trackId: string) => Promise<void>;
   fetchLyrics: (trackId: string) => Promise<void>;
   clearPendingSeek: () => void;
+  registerSeek: (fn: ((time: number) => void) | null) => void;
+  seekTo: (time: number) => void;
   persistPlayback: () => Promise<void>;
+  persistVolume: () => Promise<void>;
   restorePlayback: () => Promise<void>;
 }
 
@@ -53,16 +65,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   isPlaying: false,
   currentTime: 0,
   duration: 0,
-  volume: 0.7,
+  volume: loadSavedVolume(),
   shuffle: false,
   repeat: 'off',
   queue: [],
   showQueue: false,
   showLyrics: false,
+  showNowPlaying: false,
   lyrics: null,
   likedTrackIds: new Set(),
   pendingSeekTime: 0,
   playbackRestored: false,
+  _seekFn: null,
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
   setIsPlaying: (playing) => {
@@ -72,15 +86,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setCurrentTime: (time) => set({ currentTime: time }),
   setDuration: (duration) => set({ duration }),
   setVolume: (volume) => {
-    set({ volume });
-    localStorage.setItem('volume', String(volume));
+    const v = Math.min(1, Math.max(0, volume));
+    set({ volume: v });
+    saveVolume(v);
+    get().persistVolume();
   },
   toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
   cycleRepeat: () => set((s) => ({
     repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off',
   })),
   setShowQueue: (show) => set({ showQueue: show }),
-  setShowLyrics: (show) => set({ showLyrics: show }),
+  setShowLyrics: (show) => set({ showLyrics: show, showNowPlaying: show ? false : get().showNowPlaying }),
+  setShowNowPlaying: (show) => set({ showNowPlaying: show, showLyrics: show ? false : get().showLyrics }),
   setLyrics: (lyrics) => set({ lyrics }),
   setQueue: (queue) => set({ queue }),
   addToLiked: (trackId) => set((s) => {
@@ -102,7 +119,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       pendingSeekTime: startTime,
       lyrics: null,
     });
-    saveLocalPlayback({ trackId: track.id, position: startTime, isPlaying: true, savedAt: Date.now() });
+    saveLocalPlayback({
+      trackId: track.id,
+      position: startTime,
+      isPlaying: true,
+      volume: get().volume,
+      savedAt: Date.now(),
+    });
     try {
       await api.post(`/tracks/${track.id}/play`);
       get().fetchLyrics(track.id);
@@ -113,7 +136,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   playNext: () => {
     const { queue, currentTrack, repeat, shuffle } = get();
     if (repeat === 'one' && currentTrack) {
-      set({ currentTime: 0, isPlaying: true });
+      get().seekTo(0);
+      set({ isPlaying: true });
       return;
     }
     if (queue.length > 0) {
@@ -122,7 +146,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       get().playTrack(next.track);
       get().removeFromQueue(next.id);
     } else if (repeat === 'all' && currentTrack) {
-      set({ currentTime: 0, isPlaying: true });
+      get().seekTo(0);
+      set({ isPlaying: true });
     } else {
       set({ isPlaying: false });
     }
@@ -131,9 +156,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   playPrevious: () => {
     const { currentTime, currentTrack } = get();
     if (currentTime > 3) {
-      set({ currentTime: 0 });
+      get().seekTo(0);
     } else if (currentTrack) {
-      set({ currentTime: 0, isPlaying: true });
+      get().seekTo(0);
+      set({ isPlaying: true });
     }
   },
 
@@ -176,14 +202,30 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   clearPendingSeek: () => set({ pendingSeekTime: 0 }),
 
+  registerSeek: (fn) => set({ _seekFn: fn }),
+
+  seekTo: (time) => {
+    const t = Math.max(0, time);
+    set({ currentTime: t, pendingSeekTime: 0 });
+    get()._seekFn?.(t);
+    get().persistPlayback();
+  },
+
+  persistVolume: async () => {
+    try {
+      await api.put('/tracks/playback-state', { volume: get().volume });
+    } catch { /* ignore */ }
+  },
+
   persistPlayback: async () => {
-    const { currentTrack, currentTime, isPlaying } = get();
+    const { currentTrack, currentTime, isPlaying, volume } = get();
     if (!currentTrack) return;
 
     saveLocalPlayback({
       trackId: currentTrack.id,
       position: currentTime,
       isPlaying,
+      volume,
       savedAt: Date.now(),
     });
 
@@ -192,6 +234,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         trackId: currentTrack.id,
         position: currentTime,
         isPlaying,
+        volume,
       });
     } catch { /* ignore */ }
   },
@@ -200,18 +243,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (get().playbackRestored) return;
     set({ playbackRestored: true });
 
-    const savedVolume = localStorage.getItem('volume');
-    if (savedVolume) {
-      const vol = parseFloat(savedVolume);
-      if (!Number.isNaN(vol)) set({ volume: vol });
-    }
-
     let track: Track | null = null;
     let position = 0;
     let isPlaying = false;
+    let volume = loadSavedVolume();
 
     try {
       const { data } = await api.get('/tracks/playback-state');
+      if (typeof data.volume === 'number') {
+        volume = Math.min(1, Math.max(0, data.volume));
+        saveVolume(volume);
+      }
       if (data.track) {
         track = data.track;
         position = data.position ?? 0;
@@ -219,9 +261,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
     } catch { /* fall back to local */ }
 
+    set({ volume });
+
     if (!track) {
       const local = loadLocalPlayback();
       if (!local) return;
+      if (typeof local.volume === 'number') {
+        set({ volume: Math.min(1, Math.max(0, local.volume)) });
+      }
       try {
         const { data } = await api.get(`/tracks/${local.trackId}`);
         track = data.track;

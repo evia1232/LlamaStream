@@ -8,6 +8,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: 'auto',
       includeAssets: ['favicon.svg', 'icon-192.svg', 'icon-512.svg', 'icon-maskable.svg'],
       manifest: {
         name: 'LlamaStream',
@@ -58,9 +59,13 @@ export default defineConfig({
         ],
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         globPatterns: ['**/*.{js,css,html,ico,svg,woff2}'],
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api/],
+        // Don't long-cache API responses in SW — avoids stale data after deploy
         runtimeCaching: [
           {
             urlPattern: /^\/api\/(?!.*\/stream).*/i,
@@ -68,16 +73,16 @@ export default defineConfig({
             options: {
               cacheName: 'api-cache',
               networkTimeoutSeconds: 10,
-              expiration: { maxEntries: 100, maxAgeSeconds: 3600 },
+              expiration: { maxEntries: 50, maxAgeSeconds: 300 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
           {
             urlPattern: /\.(?:png|jpg|jpeg|webp|gif)$/i,
-            handler: 'CacheFirst',
+            handler: 'StaleWhileRevalidate',
             options: {
               cacheName: 'image-cache',
-              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
             },
           },
         ],

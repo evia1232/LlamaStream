@@ -9,17 +9,29 @@ import { applyDocumentDirection } from './lib/direction';
 
 applyDocumentDirection();
 
-// PWA: auto-update service worker when new version is deployed
-registerSW({
+// PWA: activate new service worker immediately and reload to pick up fresh CSS/JS
+const updateSW = registerSW({
   immediate: true,
   onOfflineReady() {
     console.log('[PWA] App ready for offline use');
   },
   onNeedRefresh() {
-    const msg = document.documentElement.lang === 'he'
-      ? 'גרסה חדשה זמינה. לרענן?'
-      : 'A new version is available. Reload?';
-    if (confirm(msg)) window.location.reload();
+    updateSW(true);
+  },
+  onRegisteredSW(_swUrl, registration) {
+    if (registration) {
+      // Check for updates when user returns to the app
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          registration.update();
+        }
+      });
+      // Periodic update check
+      setInterval(() => registration.update(), 60 * 60 * 1000);
+    }
+  },
+  onRegisterError(error) {
+    console.error('[PWA] Service worker registration failed:', error);
   },
 });
 

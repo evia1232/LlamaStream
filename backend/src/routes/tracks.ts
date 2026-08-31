@@ -117,26 +117,49 @@ router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
     include: { track: { include: { artist: true, album: true } } },
   });
 
-  if (!state?.track?.isDownloaded) {
-    return res.json({ track: null, position: 0, isPlaying: false });
+  if (!state) {
+    return res.json({ track: null, position: 0, isPlaying: false, volume: 0.7 });
+  }
+
+  if (!state.track?.isDownloaded) {
+    return res.json({
+      track: null,
+      position: 0,
+      isPlaying: false,
+      volume: state.volume ?? 0.7,
+    });
   }
 
   res.json({
     track: formatTrack(state.track),
     position: state.position,
     isPlaying: state.isPlaying,
+    volume: state.volume ?? 0.7,
   });
 });
 
 router.put('/playback-state', authenticate, async (req: AuthRequest, res) => {
-  const { trackId, position, isPlaying } = req.body as {
+  const { trackId, position, isPlaying, volume } = req.body as {
     trackId?: string | null;
     position?: number;
     isPlaying?: boolean;
+    volume?: number;
   };
 
+  const clampedVolume = volume !== undefined
+    ? Math.min(1, Math.max(0, volume))
+    : undefined;
+
   if (!trackId) {
-    await prisma.userPlayback.deleteMany({ where: { userId: req.user!.userId } });
+    if (clampedVolume !== undefined) {
+      await prisma.userPlayback.upsert({
+        where: { userId: req.user!.userId },
+        create: { userId: req.user!.userId, volume: clampedVolume },
+        update: { volume: clampedVolume },
+      });
+    } else {
+      await prisma.userPlayback.deleteMany({ where: { userId: req.user!.userId } });
+    }
     return res.json({ success: true });
   }
 
@@ -152,11 +175,13 @@ router.put('/playback-state', authenticate, async (req: AuthRequest, res) => {
       trackId,
       position: Math.max(0, position ?? 0),
       isPlaying: !!isPlaying,
+      ...(clampedVolume !== undefined && { volume: clampedVolume }),
     },
     update: {
       trackId,
       position: Math.max(0, position ?? 0),
       isPlaying: !!isPlaying,
+      ...(clampedVolume !== undefined && { volume: clampedVolume }),
     },
   });
 

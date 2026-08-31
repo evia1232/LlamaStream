@@ -276,4 +276,38 @@
 :root {
   --player-h-mobile: 4rem;
   --player-h-desktop: 5.625rem;
+  --mobile-nav-h: 3.5rem;
+}
+
+@media (min-width: 768px) {
+  .pb-mobile-with-player,
+  .pb-mobile-nav-only {
+    padding-bottom: 0;
+  }
+}
+
+.pb-mobile-nav-only {
+  padding-bottom: calc(var(--mobile-nav-h) + env(safe-area-inset-bottom));
+}
+
+.pb-mobile-with-player {
+  padding-bottom: calc(var(--mobile-nav-h) + var(--player-h-mobile) + env(safe-area-inset-bottom));
+}
+
+@keyframes slide-up {
+  from { transform: translateY(100%); opacity: 0.5; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.28s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.15s ease-out;
 }
