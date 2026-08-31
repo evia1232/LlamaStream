@@ -89,14 +89,17 @@ export interface ArtistSpotifyData {
 
 async function findLocalTracks(artistName: string, artistId?: string | null) {
   const candidates = await prisma.track.findMany({
-    where: artistId
-      ? {
-          OR: [
-            { artistId },
-            { artist: { name: { contains: artistName, mode: 'insensitive' } } },
-          ],
-        }
-      : { artist: { name: { contains: artistName, mode: 'insensitive' } } },
+    where: {
+      storageTier: 'LIBRARY',
+      ...(artistId
+        ? {
+            OR: [
+              { artistId },
+              { artist: { name: { contains: artistName, mode: 'insensitive' } } },
+            ],
+          }
+        : { artist: { name: { contains: artistName, mode: 'insensitive' } } }),
+    },
     include: { artist: true, album: true },
     orderBy: { title: 'asc' },
     take: 500,

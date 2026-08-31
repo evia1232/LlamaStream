@@ -12,6 +12,7 @@ import { startPlaylistImport, getImportJobStatus, importSpotifyPlaylist, listAct
 import { trackStreamUrl } from '../services/trackDownload';
 import { addTrackToPlaylist, nextPlaylistPosition } from '../lib/playlistTracks';
 import { prefetchLibraryTrack } from '../services/downloader';
+import { promoteTrackToLibrary, syncTracksAfterUnpin } from '../services/trackStorage';
 import { extractPlaylistCoverImages, playlistCoverTracksQuery } from '../lib/playlistCovers';
 import { config } from '../config';
 
@@ -187,11 +188,16 @@ router.put('/:id', authenticate, async (req: AuthRequest, res) => {
 });
 
 router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
-  const playlist = await prisma.playlist.findUnique({ where: { id: req.params.id } });
+  const playlist = await prisma.playlist.findUnique({
+    where: { id: req.params.id },
+    include: { tracks: { select: { trackId: true } } },
+  });
   if (!playlist || playlist.userId !== req.user!.userId) {
     return res.status(403).json({ error: 'Access denied' });
   }
+  const trackIds = playlist.tracks.map((t) => t.trackId);
   await prisma.playlist.delete({ where: { id: req.params.id } });
+  void syncTracksAfterUnpin(trackIds).catch(console.error);
   res.json({ success: true });
 });
 
@@ -228,6 +234,8 @@ router.post('/:id/tracks', authenticate, async (req: AuthRequest, res) => {
     return res.status(409).json({ error: 'Track already in playlist' });
   }
 
+  await promoteTrackToLibrary(trackId);
+
   const [track, user] = await Promise.all([
     prisma.track.findUnique({ where: { id: trackId }, select: { isDownloaded: true } }),
     prisma.user.findUnique({ where: { id: req.user!.userId }, select: { audioQuality: true } }),
@@ -248,6 +256,7 @@ router.delete('/:id/tracks/:trackId', authenticate, async (req: AuthRequest, res
   await prisma.playlistTrack.deleteMany({
     where: { playlistId: req.params.id, trackId: req.params.trackId },
   });
+  void syncTracksAfterUnpin([req.params.trackId]).catch(console.error);
   res.json({ success: true });
 });
 

@@ -5,6 +5,7 @@ import prisma from '../lib/prisma';
 import type { DownloadResult } from './downloader';
 import { fetchLyricsForTrack } from './lyrics';
 import { lastLines, ytDlpAudioExtractArgs } from './ytdlp';
+import { finalizeFileStorage, getDownloadDirForTrack, touchTrackAccess } from './trackStorage';
 
 const activeDownloads = new Map<string, Promise<void>>();
 
@@ -50,18 +51,22 @@ async function finalizeTrackDownload(
   const artistName = meta.artist || download.artist;
   const trackTitle = meta.title || download.title;
 
+  const { filePath, storageTier } = await finalizeFileStorage(trackId, download.filePath);
+
   await prisma.track.update({
     where: { id: trackId },
     data: {
       title: trackTitle,
       duration: download.duration || track.duration,
-      filePath: download.filePath,
+      filePath,
       sourceUrl: download.sourceUrl,
       sourceId: download.sourceId,
       thumbnailUrl: download.thumbnailUrl || track.thumbnailUrl,
       quality,
       isDownloaded: true,
       downloadedAt: new Date(),
+      storageTier,
+      lastAccessedAt: new Date(),
     },
   });
 
@@ -89,7 +94,8 @@ export function ensureBackgroundDownload(
 
       const { downloadFromYouTube } = await import('./downloader');
       console.log(`[Download] Background save started for track ${trackId}`);
-      const download = await downloadFromYouTube(sourceUrl, quality);
+      const outputDir = await getDownloadDirForTrack(trackId);
+      const download = await downloadFromYouTube(sourceUrl, quality, undefined, outputDir);
       await finalizeTrackDownload(trackId, download, quality, meta);
       console.log(`[Download] Background save complete for track ${trackId}`);
     } catch (err) {

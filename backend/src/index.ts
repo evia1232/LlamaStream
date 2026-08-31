@@ -25,6 +25,7 @@ import homeRoutes from './routes/home';
 import discoverRoutes from './routes/discover';
 import mediaRoutes from './routes/media';
 import { resumePendingImports } from './services/playlistImport';
+import { evictStaleCache } from './services/trackStorage';
 
 const app = express();
 const server = http.createServer(app);
@@ -240,6 +241,8 @@ async function seedAdmin() {
 async function start() {
   await seedAdmin();
   await resumePendingImports();
+  const evicted = await evictStaleCache().catch(() => 0);
+  if (evicted > 0) console.log(`[Storage] Evicted ${evicted} stale cache tracks`);
   server.listen(config.port, () => {
     console.log(`LlamaStream backend running on port ${config.port}`);
   });

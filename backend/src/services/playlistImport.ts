@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma';
 import { resolveAndDownload } from './downloader';
 import { addTrackToPlaylist } from '../lib/playlistTracks';
+import { promoteTrackToLibrary } from './trackStorage';
 import { parseSpotifyUrl, isSpotifyUrl, isYouTubeUrl } from './spotify';
 import { runYtDlp } from './ytdlp';
 import { sanitizeSearchText } from '../lib/trackMatch';
@@ -232,6 +233,7 @@ export async function processPlaylistImport(jobId: string) {
       );
 
       await addTrackToPlaylist(job.playlistId, track.id, position);
+      await promoteTrackToLibrary(track.id);
       position++;
       completed++;
     } catch (err) {
@@ -335,7 +337,10 @@ export async function importSpotifyPlaylist(
         { title: item.name, artist: item.artist, duration: item.duration, album: item.album, url: item.url }
       );
       const { added } = await addTrackToPlaylist(playlist.id, track.id, position);
-      if (added) imported++;
+      if (added) {
+        await promoteTrackToLibrary(track.id);
+        imported++;
+      }
       else skipped.push(item.name);
       position++;
     } catch (err) {

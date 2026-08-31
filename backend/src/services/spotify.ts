@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma';
 import { resolveAndDownload } from './downloader';
 import { addTrackToPlaylist } from '../lib/playlistTracks';
+import { promoteTrackToLibrary } from './trackStorage';
 import {
   fetchSpotifyUrlTracks,
   extractSpotifyTrackId,
@@ -136,7 +137,10 @@ export async function importSpotifyPlaylist(
       );
 
       const { added } = await addTrackToPlaylist(playlist.id, track.id, position);
-      if (added) imported++;
+      if (added) {
+        await promoteTrackToLibrary(track.id);
+        imported++;
+      }
       else skipped.push(spotifyTrack.name);
 
       position++;

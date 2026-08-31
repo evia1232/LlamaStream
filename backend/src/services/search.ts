@@ -68,7 +68,10 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
   // Local search always runs — library, artists, albums, playlists
   const [libraryTracks, artists, albums, playlists] = await Promise.all([
     prisma.track.findMany({
-      where: trackFilter,
+      where: {
+        ...trackFilter,
+        storageTier: 'LIBRARY',
+      },
       include: { artist: true, album: true },
       orderBy: [{ isDownloaded: 'desc' }, { updatedAt: 'desc' }],
       take: limit,

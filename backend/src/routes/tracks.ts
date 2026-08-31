@@ -13,6 +13,7 @@ import { isSpotifyUrl, isYouTubeUrl } from '../services/spotify';
 import { ytDlpVersion } from '../services/ytdlp';
 import { getSpotifyStatus } from '../services/spotifyApi';
 import { cleanupLibrary, deleteTrackById, getLibraryStats } from '../services/trackCleanup';
+import { promoteTrackToLibrary, evictTrackIfUnpinned, touchTrackAccess } from '../services/trackStorage';
 
 const router = Router();
 
@@ -314,6 +315,7 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
   if (!track) return res.status(404).json({ error: 'Track not found' });
 
   if (track.isDownloaded && track.filePath && fs.existsSync(track.filePath)) {
+    void touchTrackAccess(track.id);
     if (!track.filePath.toLowerCase().endsWith('.mp3')) {
       return res.status(500).json({ error: 'Invalid audio file format' });
     }
@@ -355,6 +357,7 @@ router.post('/:id/like', authenticate, async (req: AuthRequest, res) => {
 
   if (existing) {
     await prisma.likedTrack.delete({ where: { id: existing.id } });
+    void evictTrackIfUnpinned(req.params.id).catch(console.error);
     return res.json({ liked: false });
   }
 
@@ -362,6 +365,7 @@ router.post('/:id/like', authenticate, async (req: AuthRequest, res) => {
     data: { userId: req.user!.userId, trackId: req.params.id },
   });
 
+  await promoteTrackToLibrary(req.params.id);
   const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
   void prefetchLibraryTrack(req.params.id, user?.audioQuality || 'HIGH').catch(console.error);
 
@@ -378,10 +382,12 @@ router.put('/:id/like', authenticate, async (req: AuthRequest, res) => {
     await prisma.likedTrack.create({
       data: { userId: req.user!.userId, trackId: req.params.id },
     });
+    await promoteTrackToLibrary(req.params.id);
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
     void prefetchLibraryTrack(req.params.id, user?.audioQuality || 'HIGH').catch(console.error);
   } else if (!wantLiked && existing) {
     await prisma.likedTrack.delete({ where: { id: existing.id } });
+    void evictTrackIfUnpinned(req.params.id).catch(console.error);
   }
 
   res.json({ liked: wantLiked });

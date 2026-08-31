@@ -96,6 +96,11 @@ model Album {
   @@unique([title, artistId])
 }
 
+enum StorageTier {
+  CACHE
+  LIBRARY
+}
+
 model Track {
   id           String        @id @default(uuid())
   title        String
@@ -111,6 +116,8 @@ model Track {
   quality      AudioQuality  @default(HIGH)
   isDownloaded Boolean       @default(false)
   downloadedAt DateTime?
+  storageTier  StorageTier    @default(CACHE)
+  lastAccessedAt DateTime?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 

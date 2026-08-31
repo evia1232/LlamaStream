@@ -3,6 +3,7 @@ import path from 'path';
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { config } from '../config';
+import { evictTrackIfUnpinned, isTrackPinned } from './trackStorage';
 
 function unlinkSafe(filePath: string | null | undefined) {
   if (!filePath) return;
@@ -20,9 +21,10 @@ async function cleanupOrphanMetadata() {
   });
 }
 
-function buildRecentFilter(days: number): Prisma.TrackWhereInput {
+function buildRecentCacheFilter(days: number): Prisma.TrackWhereInput {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   return {
+    storageTier: 'CACHE',
     isDownloaded: true,
     OR: [
       { downloadedAt: { gte: since } },
@@ -32,25 +34,39 @@ function buildRecentFilter(days: number): Prisma.TrackWhereInput {
 }
 
 export async function getLibraryStats() {
-  const [downloadedCount, totalCount, tracks] = await Promise.all([
-    prisma.track.count({ where: { isDownloaded: true } }),
+  const [libraryCount, cacheCount, totalCount, tracks] = await Promise.all([
+    prisma.track.count({ where: { storageTier: 'LIBRARY', isDownloaded: true } }),
+    prisma.track.count({ where: { storageTier: 'CACHE', isDownloaded: true } }),
     prisma.track.count(),
     prisma.track.findMany({
       where: { isDownloaded: true, filePath: { not: null } },
-      select: { filePath: true },
+      select: { filePath: true, storageTier: true },
     }),
   ]);
 
   let totalBytes = 0;
+  let libraryBytes = 0;
+  let cacheBytes = 0;
   for (const t of tracks) {
     if (t.filePath && fs.existsSync(t.filePath)) {
       try {
-        totalBytes += fs.statSync(t.filePath).size;
+        const size = fs.statSync(t.filePath).size;
+        totalBytes += size;
+        if (t.storageTier === 'LIBRARY') libraryBytes += size;
+        else cacheBytes += size;
       } catch { /* ignore */ }
     }
   }
 
-  return { downloadedCount, totalCount, totalBytes };
+  return {
+    downloadedCount: libraryCount + cacheCount,
+    libraryCount,
+    cacheCount,
+    totalCount,
+    totalBytes,
+    libraryBytes,
+    cacheBytes,
+  };
 }
 
 export async function deleteTrackById(trackId: string): Promise<boolean> {
@@ -70,13 +86,15 @@ export async function deleteTrackById(trackId: string): Promise<boolean> {
 }
 
 export async function cleanupLibrary(opts: {
-  mode: 'all' | 'recent';
+  mode: 'all' | 'recent' | 'cache';
   days?: number;
 }): Promise<{ deleted: number; filesRemoved: number }> {
   const where: Prisma.TrackWhereInput =
     opts.mode === 'all'
-      ? {}
-      : buildRecentFilter(Math.max(1, opts.days ?? 1));
+      ? { storageTier: 'CACHE', isDownloaded: true }
+      : opts.mode === 'cache'
+        ? { storageTier: 'CACHE', isDownloaded: true }
+        : buildRecentCacheFilter(Math.max(1, opts.days ?? 1));
 
   const tracks = await prisma.track.findMany({
     where,
@@ -84,35 +102,35 @@ export async function cleanupLibrary(opts: {
   });
 
   let filesRemoved = 0;
+  let deleted = 0;
   for (const track of tracks) {
+    if (await isTrackPinned(track.id)) continue;
     if (track.filePath && fs.existsSync(track.filePath)) {
       unlinkSafe(track.filePath);
       filesRemoved++;
     }
-  }
-
-  if (tracks.length > 0) {
-    await prisma.userPlayback.updateMany({
-      where: { trackId: { in: tracks.map((t) => t.id) } },
-      data: { trackId: null, position: 0, isPlaying: false },
+    await prisma.track.update({
+      where: { id: track.id },
+      data: { filePath: null, isDownloaded: false, storageTier: 'CACHE' },
     });
-    await prisma.track.deleteMany({ where: { id: { in: tracks.map((t) => t.id) } } });
+    deleted++;
   }
 
   await cleanupOrphanMetadata();
 
-  // Remove empty cache dirs (best effort)
   try {
-    const musicDir = config.musicStoragePath;
-    if (fs.existsSync(musicDir)) {
-      for (const entry of fs.readdirSync(musicDir)) {
-        const full = path.join(musicDir, entry);
-        if (fs.statSync(full).isDirectory() && fs.readdirSync(full).length === 0) {
-          fs.rmdirSync(full);
+    const cacheDir = path.join(config.cachePath, 'audio');
+    if (fs.existsSync(cacheDir)) {
+      for (const entry of fs.readdirSync(cacheDir)) {
+        const full = path.join(cacheDir, entry);
+        if (fs.statSync(full).isFile() && entry.endsWith('.mp3')) {
+          // orphan cache files without DB row
+          const referenced = tracks.some((t) => t.filePath === full);
+          if (!referenced) unlinkSafe(full);
         }
       }
     }
   } catch { /* ignore */ }
 
-  return { deleted: tracks.length, filesRemoved };
+  return { deleted, filesRemoved };
 }

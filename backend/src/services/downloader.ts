@@ -9,6 +9,7 @@ import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestA
 import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
 import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress } from './trackDownload';
+import { getCacheAudioDir, getDownloadDirForTrack, finalizeFileStorage, promoteTrackToLibrary, isTrackPinned } from './trackStorage';
 
 export interface SearchResult {
   id: string;
@@ -161,13 +162,14 @@ export async function searchYouTube(query: string, limit = 15, minDuration?: num
 export async function downloadFromYouTube(
   sourceUrl: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  outputDir?: string
 ): Promise<DownloadResult> {
-  const outputDir = config.musicStoragePath;
-  fs.mkdirSync(outputDir, { recursive: true });
+  const dir = outputDir ?? getCacheAudioDir();
+  fs.mkdirSync(dir, { recursive: true });
 
   const fileId = uuidv4();
-  const outputTemplate = path.join(outputDir, `${fileId}.%(ext)s`);
+  const outputTemplate = path.join(dir, `${fileId}.%(ext)s`);
 
   // Fetch metadata
   const metaResult = await runYtDlp(['--dump-single-json', '--skip-download', sourceUrl], 60000);
@@ -213,7 +215,7 @@ export async function downloadFromYouTube(
 
   void downloadResult;
 
-  const filePath = findFileByPrefix(outputDir, fileId);
+  const filePath = findFileByPrefix(dir, fileId);
   if (!filePath || !fs.existsSync(filePath)) {
     throw new Error('Download completed but audio file was not found');
   }
@@ -251,17 +253,24 @@ export async function saveTrackRecord(
     ? await prisma.track.findFirst({ where: { sourceId: download.sourceId } })
     : null;
 
+  const trackId = existing?.id ?? null;
+  const { filePath, storageTier } = trackId
+    ? await finalizeFileStorage(trackId, download.filePath)
+    : { filePath: download.filePath, storageTier: 'CACHE' as const };
+
   const data = {
     title: trackTitle,
     artistId: artist.id,
     duration: download.duration,
-    filePath: download.filePath,
+    filePath,
     sourceUrl: download.sourceUrl,
     sourceId: download.sourceId,
     thumbnailUrl: download.thumbnailUrl,
     quality,
     isDownloaded: true,
     downloadedAt: new Date(),
+    storageTier,
+    lastAccessedAt: new Date(),
   };
 
   const track = existing
@@ -274,6 +283,10 @@ export async function saveTrackRecord(
         data,
         include: { artist: true, album: true, lyrics: true },
       });
+
+  if (await isTrackPinned(track.id)) {
+    await promoteTrackToLibrary(track.id);
+  }
 
   fetchLyricsForTrack({
     trackId: track.id,
@@ -722,11 +735,14 @@ export async function downloadLibraryTrack(
     });
   }
 
-  const download = await downloadFromYouTube(sourceUrl, quality);
+  const outputDir = await getDownloadDirForTrack(trackId);
+  const download = await downloadFromYouTube(sourceUrl, quality, undefined, outputDir);
+  const { filePath, storageTier } = await finalizeFileStorage(trackId, download.filePath);
+
   await prisma.track.update({
     where: { id: trackId },
     data: {
-      filePath: download.filePath,
+      filePath,
       sourceUrl: download.sourceUrl,
       sourceId: download.sourceId,
       thumbnailUrl: download.thumbnailUrl || track.thumbnailUrl,
@@ -734,6 +750,8 @@ export async function downloadLibraryTrack(
       quality,
       isDownloaded: true,
       downloadedAt: new Date(),
+      storageTier,
+      lastAccessedAt: new Date(),
     },
   });
 
