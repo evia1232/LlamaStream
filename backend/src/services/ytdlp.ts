@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { qualityAudioScale } from '../config';
 
 export interface YtDlpResult {
   stdout: string;
@@ -55,13 +56,29 @@ export async function ytDlpVersion(): Promise<string> {
   return result.stdout.split('\n')[0];
 }
 
+export function ytDlpAudioExtractArgs(quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH'): string[] {
+  const audioQuality = qualityAudioScale[quality] || '0';
+  return [
+    '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+    '-x', '--audio-format', 'mp3',
+    '--audio-quality', audioQuality,
+    '--postprocessor-args', 'ffmpeg:-ar 44100 -ac 2',
+    '--concurrent-fragments', '1',
+  ];
+}
+
 export function findFileByPrefix(dir: string, prefix: string): string | null {
   if (!fs.existsSync(dir)) return null;
-  const files = fs.readdirSync(dir).filter((f) => f.startsWith(prefix));
-  const mp3 = files.find((f) => f.endsWith('.mp3'));
-  if (mp3) return path.join(dir, mp3);
-  const audio = files.find((f) => /\.(mp3|m4a|opus|webm|ogg)$/i.test(f));
-  return audio ? path.join(dir, audio) : null;
+  const mp3 = fs.readdirSync(dir).find((f) => f.startsWith(prefix) && f.endsWith('.mp3'));
+  if (!mp3) return null;
+  const fullPath = path.join(dir, mp3);
+  try {
+    const stat = fs.statSync(fullPath);
+    if (stat.size < 1024) return null;
+  } catch {
+    return null;
+  }
+  return fullPath;
 }
 
 export function lastLines(text: string, count = 5): string {

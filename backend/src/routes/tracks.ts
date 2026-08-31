@@ -302,6 +302,9 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
   if (!track) return res.status(404).json({ error: 'Track not found' });
 
   if (track.isDownloaded && track.filePath && fs.existsSync(track.filePath)) {
+    if (!track.filePath.toLowerCase().endsWith('.mp3')) {
+      return res.status(500).json({ error: 'Invalid audio file format' });
+    }
     const stat = fs.statSync(track.filePath);
     const fileSize = stat.size;
     const range = req.headers.range;

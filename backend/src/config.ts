@@ -17,10 +17,19 @@ export const config = {
   spotifyClientId: (process.env.SPOTIFY_CLIENT_ID || '').trim(),
   spotifyClientSecret: (process.env.SPOTIFY_CLIENT_SECRET || '').trim(),
   spotifyMarket: (process.env.SPOTIFY_MARKET || 'IL').trim().toUpperCase(),
+  spotifyRedirectUri: (process.env.SPOTIFY_REDIRECT_URI || '').trim(),
+  frontendUrl: (process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:3000').replace(/\/$/, ''),
 };
 
 export const qualityBitrates: Record<string, string> = {
   LOW: '96',
   NORMAL: '192',
   HIGH: '320',
+};
+
+/** yt-dlp --audio-quality scale for MP3 (0 = best VBR, 9 = worst) */
+export const qualityAudioScale: Record<string, string> = {
+  LOW: '7',
+  NORMAL: '4',
+  HIGH: '0',
 };

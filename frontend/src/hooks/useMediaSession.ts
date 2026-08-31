@@ -74,14 +74,20 @@ export function useMediaSession() {
     if (!('mediaSession' in navigator) || !duration || duration <= 0) return;
     if (!('setPositionState' in navigator.mediaSession)) return;
 
-    try {
-      navigator.mediaSession.setPositionState({
-        duration,
-        playbackRate: 1,
-        position: Math.min(Math.max(0, currentTime), duration),
-      });
-    } catch {
-      /* position updates can fail during track transitions */
-    }
-  }, [currentTime, duration, currentTrack?.id]);
+    const id = setInterval(() => {
+      const { currentTime: t, duration: d } = usePlayerStore.getState();
+      if (!d || d <= 0) return;
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: d,
+          playbackRate: 1,
+          position: Math.min(Math.max(0, t), d),
+        });
+      } catch {
+        /* position updates can fail during track transitions */
+      }
+    }, 1500);
+
+    return () => clearInterval(id);
+  }, [duration, currentTrack?.id]);
 }

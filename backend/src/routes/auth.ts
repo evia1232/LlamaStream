@@ -9,6 +9,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import prisma from '../lib/prisma';
 import { authenticate, requireAdmin, AuthRequest } from '../middleware/auth';
+import {
+  buildSpotifyAuthUrl,
+  verifySpotifyState,
+  connectSpotifyUser,
+  disconnectSpotifyUser,
+  getSpotifyAccessTokenForUser,
+  getSpotifyStatusForUser,
+  isSpotifyOAuthConfigured,
+} from '../services/spotifyOAuth';
 
 const router = Router();
 
@@ -37,6 +46,9 @@ function sanitizeUser(user: {
   audioQuality: string;
   language: string;
   createdAt: Date;
+  spotifyUserId?: string | null;
+  spotifyProduct?: string | null;
+  spotifyConnectedAt?: Date | null;
 }) {
   return {
     id: user.id,
@@ -48,6 +60,11 @@ function sanitizeUser(user: {
     audioQuality: user.audioQuality,
     language: user.language,
     createdAt: user.createdAt,
+    spotify: getSpotifyStatusForUser({
+      spotifyUserId: user.spotifyUserId ?? null,
+      spotifyProduct: user.spotifyProduct ?? null,
+      spotifyConnectedAt: user.spotifyConnectedAt ?? null,
+    }),
   };
 }
 
@@ -209,6 +226,55 @@ router.delete('/users/:id', authenticate, requireAdmin, async (req: AuthRequest,
   }
   await prisma.user.delete({ where: { id: req.params.id } });
   res.json({ success: true });
+});
+
+router.get('/spotify/status', authenticate, async (req: AuthRequest, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({
+    configured: isSpotifyOAuthConfigured(),
+    ...getSpotifyStatusForUser(user),
+  });
+});
+
+router.get('/spotify/connect', authenticate, async (req: AuthRequest, res) => {
+  if (!isSpotifyOAuthConfigured()) {
+    return res.status(503).json({ error: 'Spotify OAuth not configured' });
+  }
+  res.json({ url: buildSpotifyAuthUrl(req.user!.userId) });
+});
+
+router.get('/spotify/callback', async (req, res) => {
+  const { code, state, error } = req.query as { code?: string; state?: string; error?: string };
+  const redirectBase = `${config.frontendUrl}/settings`;
+
+  if (error || !code || !state) {
+    return res.redirect(`${redirectBase}?spotify=error`);
+  }
+
+  try {
+    const userId = verifySpotifyState(state);
+    const { product } = await connectSpotifyUser(userId, code);
+    const status = product === 'premium' ? 'connected' : 'no_premium';
+    return res.redirect(`${redirectBase}?spotify=${status}`);
+  } catch (err) {
+    console.error('Spotify OAuth callback error:', err);
+    return res.redirect(`${redirectBase}?spotify=error`);
+  }
+});
+
+router.delete('/spotify/disconnect', authenticate, async (req: AuthRequest, res) => {
+  await disconnectSpotifyUser(req.user!.userId);
+  res.json({ success: true });
+});
+
+router.get('/spotify/token', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const accessToken = await getSpotifyAccessTokenForUser(req.user!.userId);
+    res.json({ accessToken });
+  } catch (err) {
+    res.status(401).json({ error: (err as Error).message });
+  }
 });
 
 export default router;

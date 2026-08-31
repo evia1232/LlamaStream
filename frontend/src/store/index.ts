@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import i18n from '../i18n';
-import { Track, RepeatMode, User, QueueItem, Lyrics } from '../types';
+import { Track, RepeatMode, User, QueueItem, Lyrics, PlaybackEngine } from '../types';
 import api from '../api/client';
 import { applyDocumentDirection } from '../lib/direction';
 import {
@@ -14,6 +14,8 @@ import {
 } from '../lib/playbackStorage';
 import { normalizeTrack } from '../lib/trackUtils';
 import { ensureTrackDownloaded, prefetchTrack, prefetchDiscoverNext } from '../lib/ensureDownload';
+import { canStreamFromSpotify, getSpotifyTrackUri } from '../lib/spotifyTrack';
+import { useSpotifyPlayerStore } from './spotifyPlayerStore';
 
 interface PlayerState {
   currentTrack: Track | null;
@@ -56,6 +58,7 @@ interface PlayerState {
   autoplay: boolean;
   _discoverLoading: boolean;
   isPreparingPlayback: boolean;
+  playbackEngine: PlaybackEngine;
   fetchQueue: () => Promise<void>;
   addToQueue: (trackId: string, playNext?: boolean) => Promise<void>;
   removeFromQueue: (itemId: string) => Promise<void>;
@@ -71,6 +74,7 @@ interface PlayerState {
   toggleAutoplay: () => void;
   playDiscoverNext: () => Promise<void>;
   prefetchUpcoming: () => void;
+  downloadToLibrary: () => Promise<void>;
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -95,9 +99,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   autoplay: loadAutoplayEnabled(),
   _discoverLoading: false,
   isPreparingPlayback: false,
+  playbackEngine: 'local' as PlaybackEngine,
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
   setIsPlaying: (playing) => {
+    const { playbackEngine } = get();
+    if (playbackEngine === 'spotify') {
+      const spot = useSpotifyPlayerStore.getState();
+      if (playing) void spot.resume();
+      else void spot.pause();
+    }
     set({ isPlaying: playing });
     get().persistPlayback();
   },
@@ -107,6 +118,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const v = Math.min(1, Math.max(0, volume));
     set({ volume: v });
     saveVolume(v);
+    if (get().playbackEngine === 'spotify') {
+      void useSpotifyPlayerStore.getState().setVolume(v);
+    }
     get().persistVolume();
   },
   toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
@@ -130,11 +144,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   }),
 
   playTrack: async (track, startTime = 0) => {
-    const { contextTracks } = get();
+    const { contextTracks, volume } = get();
     const ctxIdx = contextTracks.findIndex((t) => t.id === track.id);
     if (ctxIdx >= 0) {
       set({ contextIndex: ctxIdx });
     }
+
+    const user = useAuthStore.getState().user;
+    const spotifyStatus = user?.spotify ?? { connected: false, premium: false };
+    const spotifyUri = getSpotifyTrackUri(track);
+    const useSpotify = canStreamFromSpotify(track, spotifyStatus) && !!spotifyUri;
 
     set({
       currentTrack: track,
@@ -143,7 +162,27 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentTime: startTime,
       pendingSeekTime: startTime,
       lyrics: null,
+      playbackEngine: useSpotify ? 'spotify' : 'local',
     });
+
+    if (useSpotify && spotifyUri) {
+      try {
+        const spot = useSpotifyPlayerStore.getState();
+        const ok = await spot.init(volume);
+        if (!ok) throw new Error(spot.initError || 'Spotify player failed');
+        await spot.playUri(spotifyUri, startTime * 1000);
+        set({
+          isPlaying: true,
+          isPreparingPlayback: false,
+          currentTime: startTime,
+          duration: track.duration || 0,
+        });
+        return;
+      } catch (err) {
+        console.warn('Spotify playback failed, falling back to download:', err);
+        set({ playbackEngine: 'local' });
+      }
+    }
 
     try {
       const ready = await ensureTrackDownloaded(track);
@@ -151,6 +190,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         currentTrack: ready,
         isPlaying: true,
         isPreparingPlayback: false,
+        playbackEngine: 'local',
         currentTime: startTime,
         pendingSeekTime: startTime,
       });
@@ -167,6 +207,28 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       get().prefetchUpcoming();
     } catch {
       set({ isPreparingPlayback: false, isPlaying: false });
+    }
+  },
+
+  downloadToLibrary: async () => {
+    const { currentTrack, currentTime, playbackEngine } = get();
+    if (!currentTrack || currentTrack.isDownloaded) return;
+
+    set({ isPreparingPlayback: true });
+    try {
+      if (playbackEngine === 'spotify') {
+        await useSpotifyPlayerStore.getState().pause();
+      }
+      const ready = await ensureTrackDownloaded(currentTrack);
+      set({
+        currentTrack: ready,
+        playbackEngine: 'local',
+        isPreparingPlayback: false,
+        pendingSeekTime: currentTime,
+      });
+      await get().playTrack(ready, currentTime);
+    } catch {
+      set({ isPreparingPlayback: false });
     }
   },
 
@@ -367,7 +429,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   seekTo: (time) => {
     const t = Math.max(0, time);
     set({ currentTime: t, pendingSeekTime: 0 });
-    get()._seekFn?.(t);
+    if (get().playbackEngine === 'spotify') {
+      void useSpotifyPlayerStore.getState().seek(t * 1000);
+    } else {
+      get()._seekFn?.(t);
+    }
     get().persistPlayback();
   },
 
@@ -479,6 +545,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   logout: () => {
     localStorage.removeItem('token');
+    useSpotifyPlayerStore.getState().destroy();
     set({ user: null, token: null });
   },
 

@@ -1,11 +1,10 @@
 import { spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
 import { Response } from 'express';
-import { qualityBitrates } from '../config';
 import prisma from '../lib/prisma';
 import type { DownloadResult } from './downloader';
 import { fetchLyricsForTrack } from './lyrics';
-import { lastLines } from './ytdlp';
+import { lastLines, ytDlpAudioExtractArgs } from './ytdlp';
 
 const activeDownloads = new Map<string, Promise<void>>();
 
@@ -111,18 +110,9 @@ export function pipeYouTubeAudio(
   res: Response,
   startSec = 0
 ): ChildProcess {
-  const bitrate = qualityBitrates[quality] || '192';
-  const start = Math.max(0, Math.floor(startSec));
-
-  const ppArgs = start > 0
-    ? `ffmpeg:-ss ${start} -b:a ${bitrate}k`
-    : `ffmpeg:-b:a ${bitrate}k`;
-
   const proc = spawn('yt-dlp', [
     ...YTDLP_BASE,
-    '-f', 'bestaudio/best',
-    '-x', '--audio-format', 'mp3',
-    '--postprocessor-args', ppArgs,
+    ...ytDlpAudioExtractArgs(quality),
     '-o', '-',
     sourceUrl,
   ], { stdio: ['ignore', 'pipe', 'pipe'] });

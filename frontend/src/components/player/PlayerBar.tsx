@@ -11,6 +11,7 @@ import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import { progressGradient } from '../../lib/direction';
 import { openTrackContextMenu } from '../../store/trackMenuStore';
 import { useMediaSession } from '../../hooks/useMediaSession';
+import { useSpotifyPlaybackSync } from '../../hooks/useSpotifyPlaybackSync';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -33,33 +34,66 @@ export default function PlayerBar() {
     toggleShuffle, cycleRepeat, playNext, playPrevious,
     toggleLike, setShowQueue, setShowLyrics, showLyrics,
     clearPendingSeek, persistPlayback, registerSeek, seekTo, setShowNowPlaying,
-    autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback,
+    autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback, playbackEngine,
   } = usePlayerStore();
 
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
   const lastPersistRef = useRef(0);
+  const loadTokenRef = useRef(0);
+  const isSpotifyMode = playbackEngine === 'spotify';
 
   useMediaSession();
+  useSpotifyPlaybackSync();
 
+  // Load local MP3 source and wait for buffer before playing
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !currentTrack?.isDownloaded || isPreparingPlayback) return;
+    if (!audio || isSpotifyMode || !currentTrack?.isDownloaded || isPreparingPlayback) return;
 
-    const { pendingSeekTime, isPlaying } = usePlayerStore.getState();
     const token = localStorage.getItem('token');
-    audio.src = streamUrl(currentTrack.id, token);
+    const src = streamUrl(currentTrack.id, token);
+    const loadToken = ++loadTokenRef.current;
 
-    if (isPlaying) audio.play().catch(() => setIsPlaying(false));
-  }, [currentTrack?.id, currentTrack?.isDownloaded, isPreparingPlayback]);
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+
+    const applyPendingSeek = () => {
+      const { pendingSeekTime: seek } = usePlayerStore.getState();
+      if (seek > 0 && Number.isFinite(audio.duration)) {
+        const t = Math.min(seek, audio.duration || seek);
+        audio.currentTime = t;
+        setCurrentTime(t);
+        clearPendingSeek();
+      }
+    };
+
+    const onCanPlay = () => {
+      if (loadToken !== loadTokenRef.current) return;
+      applyPendingSeek();
+      if (usePlayerStore.getState().isPlaying) {
+        audio.play().catch(() => setIsPlaying(false));
+      }
+    };
+
+    audio.addEventListener('canplay', onCanPlay, { once: true });
+    audio.src = src;
+    audio.load();
+
+    return () => {
+      audio.removeEventListener('canplay', onCanPlay);
+    };
+  }, [currentTrack?.id, currentTrack?.isDownloaded, isPreparingPlayback, isSpotifyMode, setIsPlaying, setCurrentTime, clearPendingSeek]);
 
   useEffect(() => {
+    if (isSpotifyMode) return;
     registerSeek((time) => {
       const audio = audioRef.current;
       if (!audio) return;
       audio.currentTime = time;
     });
     return () => registerSeek(null);
-  }, [registerSeek]);
+  }, [registerSeek, isSpotifyMode]);
 
   useEffect(() => {
     const onUnload = () => { persistPlayback(); };
@@ -67,16 +101,24 @@ export default function PlayerBar() {
     return () => window.removeEventListener('beforeunload', onUnload);
   }, [persistPlayback]);
 
+  // Play/pause only after audio is buffered
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || isPreparingPlayback) return;
-    if (isPlaying) audio.play().catch(() => setIsPlaying(false));
-    else audio.pause();
-  }, [isPlaying, isPreparingPlayback]);
+    if (!audio || isPreparingPlayback || isSpotifyMode || !currentTrack?.isDownloaded) return;
+    if (!audio.src) return;
+
+    if (isPlaying) {
+      if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+        audio.play().catch(() => setIsPlaying(false));
+      }
+    } else {
+      audio.pause();
+    }
+  }, [isPlaying, isPreparingPlayback, isSpotifyMode, currentTrack?.isDownloaded, setIsPlaying]);
 
   useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = volume;
-  }, [volume]);
+    if (!isSpotifyMode && audioRef.current) audioRef.current.volume = volume;
+  }, [volume, isSpotifyMode]);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -135,7 +177,7 @@ export default function PlayerBar() {
   const trackDuration = duration || currentTrack.duration || 0;
   const progressPct = (currentTime / (trackDuration || 1)) * 100;
   const volumePct = volume * 100;
-  const showPreparing = isPreparingPlayback || !currentTrack.isDownloaded;
+  const showPreparing = isPreparingPlayback || (!isSpotifyMode && !currentTrack.isDownloaded);
 
   const transportControls = (
     <>
@@ -214,6 +256,7 @@ export default function PlayerBar() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
+            {isSpotifyMode && !showPreparing && <p className="text-2xs text-spotify-green truncate">{t('spotifyStreaming')}</p>}
             {showPreparing && <p className="text-2xs text-spotify-green truncate">{t('preparingPlayback')}</p>}
           </div>
         </button>
@@ -266,6 +309,7 @@ export default function PlayerBar() {
           <div className="min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
+            {isSpotifyMode && !showPreparing && <p className="text-2xs text-spotify-green truncate">{t('spotifyStreaming')}</p>}
             {showPreparing && <p className="text-2xs text-spotify-green truncate">{t('preparingPlayback')}</p>}
             {_discoverLoading && <p className="text-2xs text-spotify-green truncate">{t('findingNext')}</p>}
           </div>

@@ -39,6 +39,12 @@ model User {
   role          Role          @default(USER)
   audioQuality  AudioQuality  @default(HIGH)
   language      String        @default("he")
+  spotifyUserId         String?   @unique
+  spotifyAccessToken    String?
+  spotifyRefreshToken   String?
+  spotifyTokenExpiresAt DateTime?
+  spotifyProduct        String?
+  spotifyConnectedAt    DateTime?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 

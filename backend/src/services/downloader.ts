@@ -2,9 +2,9 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { config, qualityBitrates } from '../config';
+import { config } from '../config';
 import prisma from '../lib/prisma';
-import { runYtDlp, findFileByPrefix, lastLines } from './ytdlp';
+import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractArgs } from './ytdlp';
 import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults } from '../lib/trackMatch';
 import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
@@ -168,7 +168,6 @@ export async function downloadFromYouTube(
 
   const fileId = uuidv4();
   const outputTemplate = path.join(outputDir, `${fileId}.%(ext)s`);
-  const bitrate = qualityBitrates[quality] || '192';
 
   // Fetch metadata
   const metaResult = await runYtDlp(['--dump-single-json', '--skip-download', sourceUrl], 60000);
@@ -188,9 +187,7 @@ export async function downloadFromYouTube(
       '--no-warnings', '--no-playlist', '--retries', '5', '--fragment-retries', '5',
       '--socket-timeout', '30',
       '--extractor-args', 'youtube:player_client=android,web',
-      '-f', 'bestaudio/best',
-      '-x', '--audio-format', 'mp3',
-      '--postprocessor-args', `ffmpeg:-b:a ${bitrate}k`,
+      ...ytDlpAudioExtractArgs(quality),
       '-o', outputTemplate,
       '--newline',
       '--progress',

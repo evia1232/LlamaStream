@@ -165,7 +165,7 @@ export default function TrackMenuHost() {
     }] : []),
     ...(!canStream ? [{
       id: 'download',
-      label: downloading ? t('downloading') : t('download'),
+      label: downloading ? t('downloading') : (track.spotifyUrl || track.source === 'spotify' ? t('saveToLibrary') : t('download')),
       icon: <Download className="w-4 h-4" />,
       onClick: () => { void handleDownload(); },
       disabled: downloading,

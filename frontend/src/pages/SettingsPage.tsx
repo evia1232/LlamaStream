@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { applyDocumentDirection } from '../lib/direction';
 import { useAuthStore, usePlayerStore } from '../store';
 import api from '../api/client';
 import { User } from '../types';
-import { Trash2, UserPlus, HardDrive, Infinity } from 'lucide-react';
+import { Trash2, UserPlus, HardDrive, Infinity, Music2 } from 'lucide-react';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -32,6 +33,49 @@ export default function SettingsPage() {
   const [cleanupDays, setCleanupDays] = useState(7);
   const [cleaning, setCleaning] = useState(false);
   const [cleanupMsg, setCleanupMsg] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [spotifyMsg, setSpotifyMsg] = useState('');
+  const [spotifyLoading, setSpotifyLoading] = useState(false);
+
+  useEffect(() => {
+    const status = searchParams.get('spotify');
+    if (!status) return;
+    if (status === 'connected') {
+      setSpotifyMsg(t('spotifyConnected'));
+      void useAuthStore.getState().fetchUser();
+    } else if (status === 'no_premium') {
+      setSpotifyMsg(t('spotifyNoPremium'));
+      void useAuthStore.getState().fetchUser();
+    } else if (status === 'error') {
+      setSpotifyMsg(t('spotifyConnectError'));
+    }
+    searchParams.delete('spotify');
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams, t]);
+
+  const connectSpotify = async () => {
+    setSpotifyLoading(true);
+    try {
+      const { data } = await api.get('/auth/spotify/connect');
+      window.location.href = data.url;
+    } catch {
+      setSpotifyMsg(t('spotifyConnectError'));
+      setSpotifyLoading(false);
+    }
+  };
+
+  const disconnectSpotify = async () => {
+    setSpotifyLoading(true);
+    try {
+      await api.delete('/auth/spotify/disconnect');
+      await useAuthStore.getState().fetchUser();
+      setSpotifyMsg(t('spotifyDisconnected'));
+    } catch {
+      setSpotifyMsg(t('error'));
+    } finally {
+      setSpotifyLoading(false);
+    }
+  };
 
   const fetchLibraryStats = () => {
     api.get('/tracks/library/stats').then(({ data }) => setLibraryStats(data)).catch(console.error);
@@ -161,6 +205,42 @@ export default function SettingsPage() {
           <button onClick={handleSave} className="green-btn">
             {saved ? t('success') : t('save')}
           </button>
+        </div>
+      </section>
+
+      {/* Spotify Premium streaming */}
+      <section className="mb-10">
+        <h2 className="text-heading-sm mb-5 flex items-center gap-2">
+          <Music2 className="w-5 h-5 text-spotify-green" />
+          {t('spotifyAccount')}
+        </h2>
+        <div className="bg-spotify-lightgray rounded-lg p-4 space-y-3">
+          <p className="text-sm text-spotify-text">{t('spotifyAccountHint')}</p>
+          {user?.spotify?.connected ? (
+            <div className="space-y-3">
+              <p className="text-sm">
+                {user.spotify.premium ? t('spotifyPremiumActive') : t('spotifyFreeAccount')}
+              </p>
+              <button
+                type="button"
+                onClick={() => void disconnectSpotify()}
+                disabled={spotifyLoading}
+                className="bg-spotify-gray hover:bg-white/10 rounded-full py-2 px-5 text-sm disabled:opacity-50"
+              >
+                {t('spotifyDisconnect')}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void connectSpotify()}
+              disabled={spotifyLoading}
+              className="green-btn disabled:opacity-50"
+            >
+              {spotifyLoading ? t('loading') : t('spotifyConnect')}
+            </button>
+          )}
+          {spotifyMsg && <p className="text-sm text-spotify-green">{spotifyMsg}</p>}
         </div>
       </section>
 

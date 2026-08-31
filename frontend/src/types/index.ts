@@ -7,7 +7,14 @@ export interface User {
   role: 'USER' | 'ADMIN';
   audioQuality: 'LOW' | 'NORMAL' | 'HIGH';
   language: string;
+  spotify?: {
+    connected: boolean;
+    premium: boolean;
+    product?: string | null;
+  };
 }
+
+export type PlaybackEngine = 'local' | 'spotify';
 
 export interface Artist {
   id: string;
