@@ -32,22 +32,31 @@ export default function TrackMenuHost() {
   const artistName = getArtistName(track.artist);
   const isLiked = likedTrackIds.has(track.id);
   const hasLibraryId = isLibraryTrack(track.id);
-  const canStream = track.isDownloaded || !!track.streamUrl;
+  const canStream = track.isDownloaded;
   const canRemoveFromLibrary = canStream && hasLibraryId;
 
   const handleDownload = async () => {
     if (canStream) return;
     setDownloading(true);
     try {
-      const { data } = await api.post('/tracks/download', {
-        query: `${artistName} - ${track.title}`,
-        url: options.external?.url,
-        title: track.title,
-        artist: artistName,
-        duration: track.duration,
-        album: options.external?.album || track.album?.title,
-      });
-      playTrack(data.track);
+      const payload = track.youtubeUrl
+        ? {
+            url: track.youtubeUrl,
+            title: track.title,
+            artist: artistName,
+            duration: track.duration,
+            album: track.album?.title,
+          }
+        : {
+            query: `${artistName} - ${track.title}`,
+            url: options.external?.url,
+            title: track.title,
+            artist: artistName,
+            duration: track.duration,
+            album: options.external?.album || track.album?.title,
+          };
+      const { data } = await api.post('/tracks/download', payload);
+      playTrack(normalizeTrack(data.track));
       options.onRefresh?.();
     } catch (err: unknown) {
       alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
@@ -57,11 +66,7 @@ export default function TrackMenuHost() {
   };
 
   const handlePlay = async () => {
-    if (canStream) {
-      playTrack(track);
-    } else {
-      await handleDownload();
-    }
+    await playTrack(track);
   };
 
   const handleAddToQueue = async (playNext = false) => {

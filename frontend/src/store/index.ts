@@ -13,6 +13,7 @@ import {
   saveAutoplayEnabled,
 } from '../lib/playbackStorage';
 import { normalizeTrack } from '../lib/trackUtils';
+import { ensureTrackDownloaded, prefetchTrack, prefetchDiscoverNext } from '../lib/ensureDownload';
 
 interface PlayerState {
   currentTrack: Track | null;
@@ -54,6 +55,7 @@ interface PlayerState {
   contextIndex: number;
   autoplay: boolean;
   _discoverLoading: boolean;
+  isPreparingPlayback: boolean;
   fetchQueue: () => Promise<void>;
   addToQueue: (trackId: string, playNext?: boolean) => Promise<void>;
   removeFromQueue: (itemId: string) => Promise<void>;
@@ -68,6 +70,7 @@ interface PlayerState {
   restorePlayback: () => Promise<void>;
   toggleAutoplay: () => void;
   playDiscoverNext: () => Promise<void>;
+  prefetchUpcoming: () => void;
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -91,6 +94,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   contextIndex: -1,
   autoplay: loadAutoplayEnabled(),
   _discoverLoading: false,
+  isPreparingPlayback: false,
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
   setIsPlaying: (playing) => {
@@ -134,41 +138,67 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     set({
       currentTrack: track,
-      isPlaying: true,
+      isPlaying: false,
+      isPreparingPlayback: true,
       currentTime: startTime,
       pendingSeekTime: startTime,
       lyrics: null,
     });
-    saveLocalPlayback({
-      trackId: track.id,
-      position: startTime,
-      isPlaying: true,
-      volume: get().volume,
-      savedAt: Date.now(),
-    });
+
     try {
-      await api.post(`/tracks/${track.id}/play`);
-      get().fetchLyrics(track.id);
+      const ready = await ensureTrackDownloaded(track);
+      set({
+        currentTrack: ready,
+        isPlaying: true,
+        isPreparingPlayback: false,
+        currentTime: startTime,
+        pendingSeekTime: startTime,
+      });
+      saveLocalPlayback({
+        trackId: ready.id,
+        position: startTime,
+        isPlaying: true,
+        volume: get().volume,
+        savedAt: Date.now(),
+      });
+      await api.post(`/tracks/${ready.id}/play`);
+      get().fetchLyrics(ready.id);
       await get().persistPlayback();
-    } catch { /* ignore */ }
+      get().prefetchUpcoming();
+    } catch {
+      set({ isPreparingPlayback: false, isPlaying: false });
+    }
   },
 
   playTracks: async (tracks, startIndex = 0) => {
     if (tracks.length === 0) return;
     const idx = Math.min(Math.max(0, startIndex), tracks.length - 1);
     set({ contextTracks: tracks, contextIndex: idx });
-    const track = tracks[idx];
-    if (track.isDownloaded || track.streamUrl) {
-      await get().playTrack(track);
-    } else {
-      // TrackRow handles download-then-play; for play all use first playable
-      for (let i = idx; i < tracks.length; i++) {
-        if (tracks[i].isDownloaded || tracks[i].streamUrl) {
-          set({ contextIndex: i });
-          await get().playTrack(tracks[i]);
-          return;
-        }
+    await get().playTrack(tracks[idx]);
+  },
+
+  prefetchUpcoming: () => {
+    const { currentTrack, contextTracks, contextIndex, queue, shuffle, autoplay } = get();
+    if (!currentTrack) return;
+
+    for (let i = contextIndex + 1; i < contextTracks.length; i++) {
+      const t = contextTracks[i];
+      if (!t.isDownloaded) {
+        prefetchTrack(t);
+        return;
       }
+    }
+
+    if (queue.length > 0) {
+      const next = shuffle ? queue[Math.floor(Math.random() * queue.length)] : queue[0];
+      if (next?.track && !next.track.isDownloaded) {
+        prefetchTrack(next.track);
+        return;
+      }
+    }
+
+    if (autoplay) {
+      prefetchDiscoverNext(currentTrack.id);
     }
   },
 
@@ -182,15 +212,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     const findNextInContext = (): Track | null => {
       if (contextTracks.length === 0 || contextIndex < 0) return null;
-      const playable = (i: number) => {
-        const t = contextTracks[i];
-        return t && (t.isDownloaded || t.streamUrl);
-      };
+      const playable = (i: number) => !!contextTracks[i];
 
       if (shuffle) {
         const candidates = contextTracks
           .map((t, i) => ({ t, i }))
-          .filter(({ t, i }) => i !== contextIndex && (t.isDownloaded || t.streamUrl));
+          .filter(({ t, i }) => i !== contextIndex && t);
         if (candidates.length > 0) {
           const pick = candidates[Math.floor(Math.random() * candidates.length)];
           set({ contextIndex: pick.i });
@@ -258,9 +285,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
 
       const track = normalizeTrack(data.track);
-      const upcoming = (data.upcoming || [])
-        .filter((t: { source?: string; streamUrl?: string | null }) => t.source === 'library' && t.streamUrl)
-        .map((t: Track) => normalizeTrack(t));
+      const upcoming = (data.upcoming || []).map((t: Track) => normalizeTrack(t));
 
       if (upcoming.length > 0) {
         set({ contextTracks: [track, ...upcoming], contextIndex: 0 });
@@ -285,7 +310,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (contextTracks.length > 0 && contextIndex > 0) {
       for (let i = contextIndex - 1; i >= 0; i--) {
         const t = contextTracks[i];
-        if (t.isDownloaded || t.streamUrl) {
+        if (t) {
           set({ contextIndex: i });
           get().playTrack(t);
           return;
@@ -415,10 +440,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
     }
 
-    if (!track?.streamUrl && !track?.isDownloaded) return;
+    if (!track) return;
 
     set({
-      currentTrack: track,
+      currentTrack: normalizeTrack(track),
       currentTime: position,
       pendingSeekTime: position,
       isPlaying: false,

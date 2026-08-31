@@ -61,7 +61,7 @@ export function normalizeTrack(track: {
     title: track.title,
     duration: track.duration || 0,
     thumbnailUrl,
-    isDownloaded: track.isDownloaded ?? !!track.streamUrl,
+    isDownloaded: !!track.isDownloaded,
     isDownloading: track.isDownloading ?? false,
     streamUrl: track.streamUrl ?? null,
     artist: artistObj,

@@ -8,7 +8,7 @@ import { runYtDlp, findFileByPrefix, lastLines } from './ytdlp';
 import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults } from '../lib/trackMatch';
 import { lookupSpotifyTrack, isSpotifyConfigured } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
-import { ensureBackgroundDownload, cancelBackgroundDownload } from './trackDownload';
+import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress } from './trackDownload';
 
 export interface SearchResult {
   id: string;
@@ -675,6 +675,122 @@ export const searchTracks = searchYouTube;
 export const downloadTrack = downloadFromYouTube;
 export const getOrCreateTrackFromSearch = (query: string, quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH') =>
   resolveAndDownload(query, quality);
+
+/** Download a library track fully before playback */
+export async function downloadLibraryTrack(
+  trackId: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH'
+) {
+  const track = await prisma.track.findUnique({
+    where: { id: trackId },
+    include: { artist: true, album: true, lyrics: true },
+  });
+  if (!track) throw new Error('Track not found');
+  if (track.isDownloaded && track.filePath && fs.existsSync(track.filePath)) {
+    return track;
+  }
+
+  cancelBackgroundDownload(trackId);
+
+  let sourceUrl = track.sourceUrl;
+  if (!sourceUrl) {
+    const source = await resolveYouTubeSource(
+      `${track.artist.name} - ${track.title}`,
+      {
+        title: track.title,
+        artist: track.artist.name,
+        duration: track.duration > 0 ? track.duration : undefined,
+        album: track.album?.title,
+      }
+    );
+    sourceUrl = source.url;
+    await prisma.track.update({
+      where: { id: trackId },
+      data: {
+        sourceUrl: source.url,
+        sourceId: source.sourceId,
+        thumbnailUrl: source.thumbnailUrl || track.thumbnailUrl,
+      },
+    });
+  }
+
+  const download = await downloadFromYouTube(sourceUrl, quality);
+  await prisma.track.update({
+    where: { id: trackId },
+    data: {
+      filePath: download.filePath,
+      sourceUrl: download.sourceUrl,
+      sourceId: download.sourceId,
+      thumbnailUrl: download.thumbnailUrl || track.thumbnailUrl,
+      duration: download.duration || track.duration,
+      quality,
+      isDownloaded: true,
+      downloadedAt: new Date(),
+    },
+  });
+
+  fetchLyricsForTrack({
+    trackId,
+    title: track.title,
+    artist: track.artist.name,
+    duration: download.duration,
+    album: track.album?.title ?? null,
+  }).catch(console.error);
+
+  return prisma.track.findUniqueOrThrow({
+    where: { id: trackId },
+    include: { artist: true, album: true, lyrics: true },
+  });
+}
+
+/** Start background full download for a library track (prefetch while another song plays) */
+export async function prefetchLibraryTrack(
+  trackId: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH'
+) {
+  const track = await prisma.track.findUnique({
+    where: { id: trackId },
+    include: { artist: true, album: true },
+  });
+  if (!track) throw new Error('Track not found');
+  if (track.isDownloaded && track.filePath && fs.existsSync(track.filePath)) {
+    return { status: 'ready' as const, trackId };
+  }
+  if (isDownloadInProgress(trackId)) {
+    return { status: 'downloading' as const, trackId };
+  }
+
+  let sourceUrl = track.sourceUrl;
+  if (!sourceUrl) {
+    const source = await resolveYouTubeSource(
+      `${track.artist.name} - ${track.title}`,
+      {
+        title: track.title,
+        artist: track.artist.name,
+        duration: track.duration > 0 ? track.duration : undefined,
+        album: track.album?.title,
+        relaxed: true,
+      }
+    );
+    sourceUrl = source.url;
+    await prisma.track.update({
+      where: { id: trackId },
+      data: {
+        sourceUrl: source.url,
+        sourceId: source.sourceId,
+        thumbnailUrl: source.thumbnailUrl || track.thumbnailUrl,
+      },
+    });
+  }
+
+  ensureBackgroundDownload(trackId, sourceUrl, quality, {
+    title: track.title,
+    artist: track.artist.name,
+    album: track.album?.title,
+  });
+
+  return { status: 'downloading' as const, trackId };
+}
 
 /** Re-search YouTube for an existing library track and replace the source/file */
 export async function researchTrack(

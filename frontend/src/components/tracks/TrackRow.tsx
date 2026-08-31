@@ -130,18 +130,10 @@ export default function TrackRow({
   const handlePlay = async () => {
     if (contextTracks && contextTracks.length > 0) {
       const startIdx = index ?? contextTracks.findIndex((t) => t.id === track.id);
-      if (track.isDownloaded || track.streamUrl) {
-        await playTracks(contextTracks, startIdx >= 0 ? startIdx : 0);
-      } else {
-        await handleDownload();
-      }
+      await playTracks(contextTracks, startIdx >= 0 ? startIdx : 0);
       return;
     }
-    if (track.isDownloaded || track.streamUrl) {
-      playTrack(track);
-    } else {
-      await handleDownload();
-    }
+    await playTrack(track);
   };
 
   return (
@@ -194,7 +186,7 @@ export default function TrackRow({
         <div className="hidden md:block" />
 
         <div className="flex items-center gap-0.5 md:gap-2 shrink-0 ms-auto md:ms-0 md:justify-self-end">
-          {!track.isDownloaded && !track.streamUrl && (
+          {!track.isDownloaded && (
             <button
               type="button"
               onClick={(e) => { stop(e); void handleDownload(); }}

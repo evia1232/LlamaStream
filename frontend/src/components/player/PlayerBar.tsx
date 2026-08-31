@@ -11,6 +11,7 @@ import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import { progressGradient } from '../../lib/direction';
 import { openTrackContextMenu } from '../../store/trackMenuStore';
 import { useMediaSession } from '../../hooks/useMediaSession';
+
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -32,59 +33,30 @@ export default function PlayerBar() {
     toggleShuffle, cycleRepeat, playNext, playPrevious,
     toggleLike, setShowQueue, setShowLyrics, showLyrics,
     clearPendingSeek, persistPlayback, registerSeek, seekTo, setShowNowPlaying,
-    autoplay, toggleAutoplay, _discoverLoading,
+    autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback,
   } = usePlayerStore();
-
-  const isBuffering = currentTrack?.isDownloading && !currentTrack?.isDownloaded;
 
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
   const lastPersistRef = useRef(0);
-  /** For YouTube pipe streams, audio.currentTime is relative to stream start */
-  const streamOffsetRef = useRef(0);
 
   useMediaSession();
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !currentTrack) return;
+    if (!audio || !currentTrack?.isDownloaded || isPreparingPlayback) return;
 
     const { pendingSeekTime, isPlaying } = usePlayerStore.getState();
     const token = localStorage.getItem('token');
-    const isDownloaded = !!currentTrack.isDownloaded;
-
-    if (isDownloaded) {
-      streamOffsetRef.current = 0;
-      audio.src = streamUrl(currentTrack.id, token);
-    } else {
-      const start = pendingSeekTime > 0 ? pendingSeekTime : 0;
-      streamOffsetRef.current = start;
-      audio.src = streamUrl(currentTrack.id, token, start);
-    }
+    audio.src = streamUrl(currentTrack.id, token);
 
     if (isPlaying) audio.play().catch(() => setIsPlaying(false));
-  }, [currentTrack?.id]);
+  }, [currentTrack?.id, currentTrack?.isDownloaded, isPreparingPlayback]);
 
   useEffect(() => {
     registerSeek((time) => {
       const audio = audioRef.current;
       if (!audio) return;
-
-      const { currentTrack: track, isPlaying } = usePlayerStore.getState();
-      if (!track) return;
-
-      if (track.isDownloaded) {
-        streamOffsetRef.current = 0;
-        audio.currentTime = time;
-        return;
-      }
-
-      streamOffsetRef.current = Math.max(0, time);
-      const token = localStorage.getItem('token');
-      audio.src = streamUrl(track.id, token, streamOffsetRef.current);
-      audio.load();
-      if (isPlaying) {
-        audio.play().catch(() => usePlayerStore.getState().setIsPlaying(false));
-      }
+      audio.currentTime = time;
     });
     return () => registerSeek(null);
   }, [registerSeek]);
@@ -97,31 +69,30 @@ export default function PlayerBar() {
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || isPreparingPlayback) return;
     if (isPlaying) audio.play().catch(() => setIsPlaying(false));
     else audio.pause();
-  }, [isPlaying]);
+  }, [isPlaying, isPreparingPlayback]);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
   }, [volume]);
 
-  // Resume playback when returning to the app (mobile browsers may pause background tabs)
   useEffect(() => {
     const onVisibility = () => {
       const audio = audioRef.current;
       if (!audio || document.visibilityState !== 'visible') return;
-      if (isPlaying && audio.paused) {
+      if (isPlaying && audio.paused && !isPreparingPlayback) {
         audio.play().catch(() => usePlayerStore.getState().setIsPlaying(false));
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [isPlaying]);
+  }, [isPlaying, isPreparingPlayback]);
 
   const handleTimeUpdate = () => {
     if (!audioRef.current) return;
-    const time = streamOffsetRef.current + audioRef.current.currentTime;
+    const time = audioRef.current.currentTime;
     setCurrentTime(time);
     const now = Date.now();
     if (now - lastPersistRef.current > 4000) {
@@ -139,13 +110,10 @@ export default function PlayerBar() {
     }
     setDuration(d);
 
-    if (currentTrack.isDownloaded && pendingSeekTime > 0) {
+    if (pendingSeekTime > 0) {
       const t = Math.min(pendingSeekTime, audioRef.current.duration || pendingSeekTime);
       audioRef.current.currentTime = t;
       setCurrentTime(t);
-      clearPendingSeek();
-    } else if (!currentTrack.isDownloaded) {
-      setCurrentTime(streamOffsetRef.current);
       clearPendingSeek();
     }
   };
@@ -167,6 +135,7 @@ export default function PlayerBar() {
   const trackDuration = duration || currentTrack.duration || 0;
   const progressPct = (currentTime / (trackDuration || 1)) * 100;
   const volumePct = volume * 100;
+  const showPreparing = isPreparingPlayback || !currentTrack.isDownloaded;
 
   const transportControls = (
     <>
@@ -178,11 +147,14 @@ export default function PlayerBar() {
       </button>
       <button
         type="button"
-        onClick={() => setIsPlaying(!isPlaying)}
-        className="w-8 h-8 bg-white rounded-full flex items-center justify-center hover:scale-105 transition-transform"
+        onClick={() => !showPreparing && setIsPlaying(!isPlaying)}
+        disabled={showPreparing}
+        className="w-8 h-8 bg-white rounded-full flex items-center justify-center hover:scale-105 transition-transform disabled:opacity-60"
         aria-label={isPlaying ? t('pause') : t('play')}
       >
-        {isPlaying ? (
+        {showPreparing ? (
+          <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+        ) : isPlaying ? (
           <Pause className="w-4 h-4 text-black fill-black" />
         ) : (
           <PlayIcon className="w-4 h-4 text-black fill-black" />
@@ -221,12 +193,10 @@ export default function PlayerBar() {
         preload="auto"
       />
 
-      {/* Mobile progress */}
       <div className="md:hidden absolute top-0 inset-x-0 h-0.5 bg-spotify-hover">
         <div className="h-full bg-white transition-all" style={{ width: `${progressPct}%` }} />
       </div>
 
-      {/* Mobile layout */}
       <div className="md:hidden flex items-center gap-3 px-3 h-full min-w-0">
         <button
           type="button"
@@ -244,6 +214,7 @@ export default function PlayerBar() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
+            {showPreparing && <p className="text-2xs text-spotify-green truncate">{t('preparingPlayback')}</p>}
           </div>
         </button>
         <div className="flex items-center gap-1 shrink-0">
@@ -256,11 +227,14 @@ export default function PlayerBar() {
           </button>
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setIsPlaying(!isPlaying); }}
-            className="w-9 h-9 bg-white rounded-full flex items-center justify-center"
+            onClick={(e) => { e.stopPropagation(); !showPreparing && setIsPlaying(!isPlaying); }}
+            disabled={showPreparing}
+            className="w-9 h-9 bg-white rounded-full flex items-center justify-center disabled:opacity-60"
             aria-label={isPlaying ? t('pause') : t('play')}
           >
-            {isPlaying ? (
+            {showPreparing ? (
+              <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+            ) : isPlaying ? (
               <Pause className="w-4 h-4 text-black fill-black" />
             ) : (
               <PlayIcon className="w-4 h-4 text-black fill-black" />
@@ -277,9 +251,7 @@ export default function PlayerBar() {
         </div>
       </div>
 
-      {/* Desktop — Spotify-style: sides + absolutely centered transport */}
       <div className="player-bar-desktop hidden md:block relative h-full w-full overflow-visible">
-        {/* Left: now playing */}
         <div
           className="absolute inset-y-0 start-0 flex items-center gap-3 min-w-0 max-w-[30%] ps-4 pe-2 z-10 cursor-default"
           onContextMenu={(e) => openTrackContextMenu(e, currentTrack)}
@@ -294,7 +266,7 @@ export default function PlayerBar() {
           <div className="min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
-            {isBuffering && <p className="text-2xs text-spotify-green truncate">{t('downloading')}</p>}
+            {showPreparing && <p className="text-2xs text-spotify-green truncate">{t('preparingPlayback')}</p>}
             {_discoverLoading && <p className="text-2xs text-spotify-green truncate">{t('findingNext')}</p>}
           </div>
           <button
@@ -306,7 +278,6 @@ export default function PlayerBar() {
           </button>
         </div>
 
-        {/* Center: transport + timeline (always screen-centered) */}
         <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 flex flex-col items-center justify-center gap-2 w-full max-w-[40rem] px-4 pointer-events-none z-20">
           <div className="pointer-events-auto flex items-center gap-4">
             {transportControls}
@@ -319,14 +290,14 @@ export default function PlayerBar() {
               max={trackDuration}
               value={currentTime}
               onChange={handleSeek}
-              className="player-progress flex-1 min-w-0"
+              disabled={showPreparing}
+              className="player-progress flex-1 min-w-0 disabled:opacity-50"
               style={{ background: progressGradient(progressPct) }}
             />
             <span className="text-caption w-10 tabular-nums shrink-0">{formatTime(trackDuration)}</span>
           </div>
         </div>
 
-        {/* Right: lyrics, queue, volume */}
         <div className="absolute inset-y-0 end-0 flex items-center justify-end gap-2 pe-4 ps-2 z-10">
           <button
             type="button"

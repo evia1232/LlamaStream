@@ -5,9 +5,9 @@ import { body, query } from 'express-validator';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { resolveAndDownload, prepareTrackForPlayback, researchTrack } from '../services/downloader';
+import { resolveAndDownload, downloadLibraryTrack, prefetchLibraryTrack, researchTrack, resolveYouTubeSource, upsertPendingTrack } from '../services/downloader';
+import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress } from '../services/trackDownload';
 import { fetchLyricsForTrack } from '../services/lyrics';
-import { isDownloadInProgress, pipeYouTubeAudio, trackStreamUrl, ensureBackgroundDownload } from '../services/trackDownload';
 import { unifiedSearch } from '../services/search';
 import { isSpotifyUrl, isYouTubeUrl, parseSpotifyUrl } from '../services/spotify';
 import { ytDlpVersion } from '../services/ytdlp';
@@ -254,19 +254,19 @@ router.post(
         const targetUrl = url || input;
 
         if (isYouTubeUrl(targetUrl)) {
-          const track = await prepareTrackForPlayback(targetUrl, quality, { url: targetUrl, title, artist, duration, album });
+          const track = await resolveAndDownload(targetUrl, quality, { url: targetUrl, title, artist, duration, album });
           return res.status(201).json({ track: formatTrack(track) });
         }
 
         if (isSpotifyUrl(targetUrl)) {
           if (title && artist) {
-            const track = await prepareTrackForPlayback(`${artist} - ${title}`, quality, { title, artist, duration, album });
+            const track = await resolveAndDownload(`${artist} - ${title}`, quality, { title, artist, duration, album });
             return res.status(201).json({ track: formatTrack(track) });
           }
           const parsed = await parseSpotifyUrl(targetUrl);
           if (parsed.tracks.length === 0) throw new Error('No tracks found in Spotify URL');
           const first = parsed.tracks[0];
-          const track = await prepareTrackForPlayback(
+          const track = await resolveAndDownload(
             `${first.artist} - ${first.name}`,
             quality,
             { title: first.name, artist: first.artist, duration: first.duration, album: first.album }
@@ -275,7 +275,7 @@ router.post(
         }
       }
 
-      const track = await prepareTrackForPlayback(
+      const track = await resolveAndDownload(
         input || `${artist} - ${title}`,
         quality,
         { title, artist, duration, album }
@@ -336,17 +336,7 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
     return;
   }
 
-  if (track.sourceUrl) {
-    const startSec = Math.max(0, parseInt(String(req.query.t || '0'), 10) || 0);
-    ensureBackgroundDownload(track.id, track.sourceUrl, track.quality, {
-      title: track.title,
-      artist: (await prisma.artist.findUnique({ where: { id: track.artistId } }))?.name,
-    });
-    pipeYouTubeAudio(track.sourceUrl, track.quality, req, res, startSec);
-    return;
-  }
-
-  return res.status(404).json({ error: 'Track not available for streaming' });
+  return res.status(404).json({ error: 'Track not downloaded yet' });
 });
 
 router.post('/:id/like', authenticate, async (req: AuthRequest, res) => {
@@ -389,6 +379,52 @@ router.put('/:id/lyrics', authenticate, async (req: AuthRequest, res) => {
     update: { content, synced, lines, source: 'manual' },
   });
   res.json({ lyrics });
+});
+
+router.post('/:id/download', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+    const quality = user?.audioQuality || 'HIGH';
+    const track = await downloadLibraryTrack(req.params.id, quality);
+    res.json({ track: formatTrack(track) });
+  } catch (err) {
+    console.error('Download track error:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/prefetch', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+    const quality = user?.audioQuality || 'HIGH';
+    const { url, title, artist, duration } = req.body as {
+      url?: string;
+      title?: string;
+      artist?: string;
+      duration?: number;
+    };
+    if (!url) return res.status(400).json({ error: 'url required' });
+
+    const source = await resolveYouTubeSource(url, { url, title, artist, duration, relaxed: true });
+    const track = await upsertPendingTrack(source, quality, title, artist);
+    ensureBackgroundDownload(track.id, source.url, quality, { title, artist });
+    res.json({ trackId: track.id, status: 'prefetching' });
+  } catch (err) {
+    console.error('Prefetch error:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/:id/prefetch', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+    const quality = user?.audioQuality || 'HIGH';
+    const result = await prefetchLibraryTrack(req.params.id, quality);
+    res.json(result);
+  } catch (err) {
+    console.error('Prefetch track error:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 router.post('/:id/research', authenticate, async (req: AuthRequest, res) => {

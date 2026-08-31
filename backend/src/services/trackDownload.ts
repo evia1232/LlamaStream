@@ -26,8 +26,8 @@ export function cancelBackgroundDownload(trackId: string): void {
   activeDownloads.delete(trackId);
 }
 
-export function trackStreamUrl(track: { id: string; isDownloaded: boolean; sourceUrl?: string | null }): string | null {
-  if (track.isDownloaded || track.sourceUrl) {
+export function trackStreamUrl(track: { id: string; isDownloaded: boolean }): string | null {
+  if (track.isDownloaded) {
     return `/api/tracks/${track.id}/stream`;
   }
   return null;

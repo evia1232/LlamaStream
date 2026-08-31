@@ -1,7 +1,7 @@
 import prisma from '../lib/prisma';
-import { searchYouTube, prepareTrackForPlayback, SearchResult } from './downloader';
+import { searchYouTube, SearchResult, resolveYouTubeSource, upsertPendingTrack, prefetchLibraryTrack } from './downloader';
 import { rankYouTubeResults, extractTrackTitleFromYouTube } from '../lib/trackMatch';
-import { trackStreamUrl } from './trackDownload';
+import { trackStreamUrl, ensureBackgroundDownload } from './trackDownload';
 
 export interface DiscoverItem {
   id: string;
@@ -213,7 +213,7 @@ export async function getNextDiscoverTrack(
   const { recommendations } = await getDiscoverRecommendations(userId, seedTrackId, 6);
 
   for (const rec of recommendations) {
-    if (rec.source === 'library' && rec.streamUrl) {
+    if (rec.source === 'library') {
       const track = await prisma.track.findUnique({
         where: { id: rec.id },
         include: { artist: true, album: true },
@@ -227,22 +227,53 @@ export async function getNextDiscoverTrack(
     }
 
     if (rec.source === 'youtube' && rec.youtubeUrl) {
-      try {
-        const prepared = await prepareTrackForPlayback(rec.youtubeUrl, quality, {
-          url: rec.youtubeUrl,
-          title: rec.title,
-          artist: rec.artist.name,
-          duration: rec.duration,
-        });
-        return {
-          track: formatDiscoverTrack({ ...prepared, album: prepared.album }),
-          upcoming: recommendations.filter((r) => r.id !== rec.id).slice(0, 5),
-        };
-      } catch (err) {
-        console.error('[Discover] Failed to prepare:', (err as Error).message);
-      }
+      return {
+        track: rec,
+        upcoming: recommendations.filter((r) => r.id !== rec.id).slice(0, 5),
+      };
     }
   }
 
   return { track: null, upcoming: [] as DiscoverItem[] };
+}
+
+/** Prefetch the next recommended track in the background while user listens */
+export async function prefetchNextDiscoverTrack(
+  userId: string,
+  seedTrackId: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH'
+) {
+  const { recommendations } = await getDiscoverRecommendations(userId, seedTrackId, 4);
+
+  for (const rec of recommendations) {
+    if (rec.source === 'library') {
+      const track = await prisma.track.findUnique({ where: { id: rec.id } });
+      if (!track) continue;
+      if (track.isDownloaded) continue;
+      await prefetchLibraryTrack(track.id, quality);
+      return { trackId: track.id, status: 'prefetching' };
+    }
+
+    if (rec.source === 'youtube' && rec.youtubeUrl) {
+      try {
+        const source = await resolveYouTubeSource(rec.youtubeUrl, {
+          url: rec.youtubeUrl,
+          title: rec.title,
+          artist: rec.artist.name,
+          duration: rec.duration,
+          relaxed: true,
+        });
+        const track = await upsertPendingTrack(source, quality, rec.title, rec.artist.name);
+        ensureBackgroundDownload(track.id, source.url, quality, {
+          title: rec.title,
+          artist: rec.artist.name,
+        });
+        return { trackId: track.id, status: 'prefetching' };
+      } catch (err) {
+        console.error('[Discover] Prefetch failed:', (err as Error).message);
+      }
+    }
+  }
+
+  return { status: 'none' };
 }
