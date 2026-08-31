@@ -103,6 +103,10 @@ const resources = {
       loading: 'טוען...',
       error: 'שגיאה',
       success: 'הצלחה',
+      installApp: 'התקן את LlamaStream',
+      installAppHint: 'הוסף למסך הבית לגישה מהירה',
+      install: 'התקן',
+      updateAvailable: 'גרסה חדשה זמינה. לרענן?',
     },
   },
   en: {
@@ -206,6 +210,10 @@ const resources = {
       loading: 'Loading...',
       error: 'Error',
       success: 'Success',
+      installApp: 'Install LlamaStream',
+      installAppHint: 'Add to home screen for quick access',
+      install: 'Install',
+      updateAvailable: 'A new version is available. Reload?',
     },
   },
 };

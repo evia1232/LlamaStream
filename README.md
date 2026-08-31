@@ -65,6 +65,16 @@ This starts three containers:
 
 Open **http://localhost:3000** in your browser.
 
+### Install as PWA (mobile / desktop)
+
+LlamaStream is a Progressive Web App — install it like a native app:
+
+- **Android Chrome:** Tap the install banner, or Menu → "Add to Home screen"
+- **iPhone Safari:** Share → "Add to Home Screen"
+- **Desktop Chrome/Edge:** Click the install icon in the address bar
+
+The app works offline for the UI shell; music streaming requires network access to your server.
+
 Default admin credentials (change in `.env`):
 
 | Field    | Value                      |
