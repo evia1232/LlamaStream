@@ -46,24 +46,19 @@ router.get('/search', authenticate, query('q').notEmpty(), async (req: AuthReque
     const limit = parseInt(req.query.limit as string) || 20;
     const results = await unifiedSearch(q, req.user!.userId, limit);
 
-    // Backward-compatible shape + new fields
     res.json({
-      tracks: results.library.map((t) => ({
-        ...t,
-        artist: { ...t.artist, imageUrl: null },
-        album: null,
-        sourceUrl: null,
-        sourceId: null,
-        quality: 'HIGH',
-      })),
-      external: results.youtube,
+      // Local library (downloaded + cached tracks)
+      library: results.library,
+      tracks: results.library,
+      artists: results.artists,
+      albums: results.albums,
+      playlists: results.playlists,
+      // External sources
       youtube: results.youtube,
       spotify: results.spotify,
       spotifyUrlTracks: results.spotifyUrlTracks,
       detectedUrl: results.detectedUrl,
-      artists: results.artists,
-      albums: results.albums,
-      playlists: results.playlists,
+      external: results.youtube, // backward compat
     });
   } catch (err) {
     console.error('Search error:', err);
