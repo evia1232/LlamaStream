@@ -8,7 +8,8 @@ import { useRef, useState, useCallback } from 'react';
 import { usePlayerStore } from '../../store';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import { progressGradient } from '../../lib/direction';
-import PlaybackMeta from '../player/PlaybackMeta';
+import { DevicePickerButton } from './DevicePicker';
+import PlaybackMeta from './PlaybackMeta';
 import AddToPlaylistModal from '../tracks/AddToPlaylistModal';
 import TrackContextMenu, { TrackMenuAction } from '../tracks/TrackContextMenu';
 
@@ -31,7 +32,7 @@ export default function NowPlayingSheet() {
     shuffle, repeat, likedTrackIds,
     setIsPlaying, setVolume, toggleShuffle, cycleRepeat,
     playNext, playPrevious, toggleLike, setShowQueue, setShowLyrics, seekTo,
-    addToQueue, isPreparingPlayback, isBuffering,
+    addToQueue, isPreparingPlayback, isBuffering, isRemoteActive, activeDeviceName,
   } = usePlayerStore();
 
   const [showPlaylistModal, setShowPlaylistModal] = useState(false);
@@ -122,15 +123,18 @@ export default function NowPlayingSheet() {
           <ChevronDown className="w-7 h-7" />
         </button>
         <p className="text-caption uppercase tracking-widest">{t('nowPlaying')}</p>
-        <button
-          ref={menuAnchorRef}
-          type="button"
-          onClick={openMenu}
-          className={clsx('icon-btn p-2', menuOpen && 'text-white bg-white/10')}
-          aria-label={t('more')}
-        >
-          <MoreHorizontal className="w-6 h-6" />
-        </button>
+        <div className="flex items-center gap-1">
+          <DevicePickerButton />
+          <button
+            ref={menuAnchorRef}
+            type="button"
+            onClick={openMenu}
+            className={clsx('icon-btn p-2', menuOpen && 'text-white bg-white/10')}
+            aria-label={t('more')}
+          >
+            <MoreHorizontal className="w-6 h-6" />
+          </button>
+        </div>
       </div>
 
       {/* Artwork */}
@@ -146,6 +150,9 @@ export default function NowPlayingSheet() {
         <div className="text-start mb-6 px-1">
           <h2 className="text-2xl font-bold truncate mb-1">{currentTrack.title}</h2>
           <p className="text-body text-base truncate">{artistName}</p>
+          {isRemoteActive && activeDeviceName && (
+            <p className="text-sm text-spotify-green truncate mt-1">{t('playingOnDevice', { device: activeDeviceName })}</p>
+          )}
           <PlaybackMeta track={currentTrack} className="mt-1" />
         </div>
 

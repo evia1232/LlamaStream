@@ -10,6 +10,7 @@ import { streamUrl } from '../../lib/apiUrl';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import { progressGradient } from '../../lib/direction';
 import PlaybackMeta from './PlaybackMeta';
+import { DevicePickerButton } from './DevicePicker';
 import { openTrackContextMenu } from '../../store/trackMenuStore';
 import { useMediaSession } from '../../hooks/useMediaSession';
 import { useSpotifyPlaybackSync } from '../../hooks/useSpotifyPlaybackSync';
@@ -36,7 +37,7 @@ export default function PlayerBar() {
     toggleLike, setShowQueue, setShowLyrics, showLyrics,
     clearPendingSeek, persistPlayback, registerSeek, registerStop, seekTo, setShowNowPlaying,
     autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback, isBuffering, playbackEngine,
-    setIsBuffering,
+    setIsBuffering, isRemoteActive, activeDeviceName, sendRemoteCommand,
   } = usePlayerStore();
 
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
@@ -50,7 +51,7 @@ export default function PlayerBar() {
   // Load local MP3 source and wait for buffer before playing
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || isSpotifyMode || !currentTrack?.isDownloaded || isPreparingPlayback) return;
+    if (!audio || isSpotifyMode || !currentTrack?.isDownloaded || isPreparingPlayback || isRemoteActive) return;
 
     const token = localStorage.getItem('token');
     const src = streamUrl(currentTrack.id, token);
@@ -94,7 +95,7 @@ export default function PlayerBar() {
       audio.removeEventListener('canplay', onCanPlay);
       audio.removeEventListener('error', onError);
     };
-  }, [currentTrack?.id, currentTrack?.isDownloaded, isPreparingPlayback, isSpotifyMode, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering]);
+  }, [currentTrack?.id, currentTrack?.isDownloaded, isPreparingPlayback, isSpotifyMode, isRemoteActive, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering]);
 
   useEffect(() => {
     if (isSpotifyMode) return;
@@ -127,7 +128,7 @@ export default function PlayerBar() {
   // Play/pause only after audio is buffered
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || isPreparingPlayback || isSpotifyMode || !currentTrack?.isDownloaded) return;
+    if (!audio || isPreparingPlayback || isSpotifyMode || !currentTrack?.isDownloaded || isRemoteActive) return;
     if (!audio.src) return;
 
     if (isPlaying) {
@@ -137,7 +138,7 @@ export default function PlayerBar() {
     } else {
       audio.pause();
     }
-  }, [isPlaying, isPreparingPlayback, isSpotifyMode, currentTrack?.isDownloaded, setIsPlaying]);
+  }, [isPlaying, isPreparingPlayback, isSpotifyMode, isRemoteActive, currentTrack?.isDownloaded, setIsPlaying]);
 
   useEffect(() => {
     if (!isSpotifyMode && audioRef.current) audioRef.current.volume = volume;
@@ -146,16 +147,17 @@ export default function PlayerBar() {
   useEffect(() => {
     const onVisibility = () => {
       const audio = audioRef.current;
-      if (!audio || document.visibilityState !== 'visible') return;
+      if (!audio || document.visibilityState !== 'visible' || isRemoteActive) return;
       if (isPlaying && audio.paused && !isPreparingPlayback) {
         audio.play().catch(() => usePlayerStore.getState().setIsPlaying(false));
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [isPlaying, isPreparingPlayback]);
+  }, [isPlaying, isPreparingPlayback, isRemoteActive]);
 
   const handleTimeUpdate = () => {
+    if (isRemoteActive) return;
     if (!audioRef.current) return;
     const time = audioRef.current.currentTime;
     setCurrentTime(time);
@@ -187,7 +189,10 @@ export default function PlayerBar() {
     seekTo(parseFloat(e.target.value));
   };
 
-  const handleEnded = () => playNext();
+  const handleEnded = () => {
+    if (isRemoteActive) return;
+    playNext();
+  };
 
   if (!currentTrack) {
     return (
@@ -210,7 +215,7 @@ export default function PlayerBar() {
       <button type="button" onClick={toggleShuffle} className={clsx('icon-btn', shuffle && 'active text-spotify-green')}>
         <Shuffle className="w-4 h-4" />
       </button>
-      <button type="button" onClick={playPrevious} className="icon-btn" aria-label={t('previous')}>
+      <button type="button" onClick={() => (isRemoteActive ? sendRemoteCommand('prev') : playPrevious())} className="icon-btn" aria-label={t('previous')}>
         <SkipBack className="w-5 h-5 fill-current" />
       </button>
       <button
@@ -228,7 +233,7 @@ export default function PlayerBar() {
           <PlayIcon className="w-4 h-4 text-black fill-black" />
         )}
       </button>
-      <button type="button" onClick={playNext} className="icon-btn" aria-label={t('next')}>
+      <button type="button" onClick={() => (isRemoteActive ? sendRemoteCommand('next') : playNext())} className="icon-btn" aria-label={t('next')}>
         <SkipForward className="w-5 h-5 fill-current" />
       </button>
       <button type="button" onClick={cycleRepeat} className={clsx('icon-btn', repeat !== 'off' && 'active text-spotify-green')}>
@@ -282,10 +287,14 @@ export default function PlayerBar() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
+            {isRemoteActive && activeDeviceName && (
+              <p className="text-2xs text-spotify-green truncate">{t('playingOnDevice', { device: activeDeviceName })}</p>
+            )}
             <PlaybackMeta track={currentTrack} className="mt-0.5" />
           </div>
         </button>
         <div className="flex items-center gap-1 shrink-0">
+          <DevicePickerButton />
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); toggleLike(currentTrack.id, currentTrack); }}
@@ -334,6 +343,9 @@ export default function PlayerBar() {
           <div className="min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
+            {isRemoteActive && activeDeviceName && (
+              <p className="text-2xs text-spotify-green truncate">{t('playingOnDevice', { device: activeDeviceName })}</p>
+            )}
             {currentTrack && <PlaybackMeta track={currentTrack} className="mt-0.5" />}
             {_discoverLoading && <p className="text-2xs text-spotify-green truncate">{t('findingNext')}</p>}
           </div>
@@ -367,6 +379,7 @@ export default function PlayerBar() {
         </div>
 
         <div className="absolute inset-y-0 end-0 flex items-center justify-end gap-2 pe-4 ps-2 z-10">
+          <DevicePickerButton />
           <button
             type="button"
             onClick={() => setShowLyrics(!showLyrics)}

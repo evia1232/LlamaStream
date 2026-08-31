@@ -147,7 +147,7 @@ router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
   });
 
   if (!state) {
-    return res.json({ track: null, position: 0, isPlaying: false, volume: 0.7 });
+    return res.json({ track: null, position: 0, isPlaying: false, volume: 0.7, activeDeviceId: null, activeDeviceName: null });
   }
 
   if (state.track && !state.track.isDownloaded && !state.track.sourceUrl) {
@@ -156,6 +156,8 @@ router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
       position: 0,
       isPlaying: false,
       volume: state.volume ?? 0.7,
+      activeDeviceId: state.activeDeviceId,
+      activeDeviceName: state.activeDeviceName,
     });
   }
 
@@ -165,6 +167,8 @@ router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
       position: 0,
       isPlaying: false,
       volume: state.volume ?? 0.7,
+      activeDeviceId: state.activeDeviceId,
+      activeDeviceName: state.activeDeviceName,
     });
   }
 
@@ -173,15 +177,19 @@ router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
     position: state.position,
     isPlaying: state.isPlaying,
     volume: state.volume ?? 0.7,
+    activeDeviceId: state.activeDeviceId,
+    activeDeviceName: state.activeDeviceName,
   });
 });
 
 router.put('/playback-state', authenticate, async (req: AuthRequest, res) => {
-  const { trackId, position, isPlaying, volume } = req.body as {
+  const { trackId, position, isPlaying, volume, activeDeviceId, activeDeviceName } = req.body as {
     trackId?: string | null;
     position?: number;
     isPlaying?: boolean;
     volume?: number;
+    activeDeviceId?: string | null;
+    activeDeviceName?: string | null;
   };
 
   const clampedVolume = volume !== undefined
@@ -214,12 +222,16 @@ router.put('/playback-state', authenticate, async (req: AuthRequest, res) => {
       position: Math.max(0, position ?? 0),
       isPlaying: !!isPlaying,
       ...(clampedVolume !== undefined && { volume: clampedVolume }),
+      ...(activeDeviceId !== undefined && { activeDeviceId }),
+      ...(activeDeviceName !== undefined && { activeDeviceName }),
     },
     update: {
       trackId,
       position: Math.max(0, position ?? 0),
       isPlaying: !!isPlaying,
       ...(clampedVolume !== undefined && { volume: clampedVolume }),
+      ...(activeDeviceId !== undefined && { activeDeviceId }),
+      ...(activeDeviceName !== undefined && { activeDeviceName }),
     },
   });
 

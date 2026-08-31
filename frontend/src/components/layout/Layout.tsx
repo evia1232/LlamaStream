@@ -10,10 +10,13 @@ import InstallPrompt from '../pwa/InstallPrompt';
 import TrackMenuHost from '../tracks/TrackMenuHost';
 import { usePlayerStore } from '../../store';
 import { useAudioInterruptResume } from '../../hooks/useAudioInterruptResume';
+import { usePlaybackSync } from '../../hooks/usePlaybackSync';
+import DevicePicker from '../player/DevicePicker';
 
 export default function Layout({ children }: { children: ReactNode }) {
   const hasTrack = usePlayerStore((s) => !!s.currentTrack);
   useAudioInterruptResume();
+  usePlaybackSync();
 
   return (
     <div className="h-screen flex flex-col bg-spotify-black safe-area">
@@ -29,6 +32,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         </main>
       </div>
       <PlayerBar />
+      <DevicePicker />
       <MobileNav />
       <NowPlayingSheet />
       <QueueDrawer />

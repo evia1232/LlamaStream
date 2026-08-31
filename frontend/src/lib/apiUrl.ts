@@ -54,3 +54,15 @@ export function streamUrl(trackId: string, token: string | null): string {
   const path = `/api/tracks/${trackId}/stream?token=${encodeURIComponent(token || '')}`;
   return origin ? `${origin}${path}` : path;
 }
+
+/** WebSocket URL for cross-device playback sync */
+export function getWsUrl(token: string): string {
+  const envUrl = import.meta.env.VITE_WS_URL?.trim();
+  if (envUrl) {
+    const base = envUrl.replace(/\/$/, '');
+    return `${base}?token=${encodeURIComponent(token)}`;
+  }
+  if (typeof window === 'undefined') return '';
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+}

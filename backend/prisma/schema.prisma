@@ -238,5 +238,7 @@ model UserPlayback {
   position  Float    @default(0)
   volume    Float    @default(0.7)
   isPlaying Boolean  @default(false)
+  activeDeviceId   String?
+  activeDeviceName String?
   updatedAt DateTime @updatedAt
 }
