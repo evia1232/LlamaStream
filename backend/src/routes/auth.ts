@@ -46,6 +46,8 @@ function sanitizeUser(user: {
   audioQuality: string;
   language: string;
   createdAt: Date;
+  searchSpotifyEnabled?: boolean;
+  searchYoutubeEnabled?: boolean;
   spotifyUserId?: string | null;
   spotifyProduct?: string | null;
   spotifyConnectedAt?: Date | null;
@@ -59,6 +61,8 @@ function sanitizeUser(user: {
     role: user.role,
     audioQuality: user.audioQuality,
     language: user.language,
+    searchSpotifyEnabled: user.searchSpotifyEnabled ?? true,
+    searchYoutubeEnabled: user.searchYoutubeEnabled ?? true,
     createdAt: user.createdAt,
     spotify: getSpotifyStatusForUser({
       spotifyUserId: user.spotifyUserId ?? null,
@@ -142,14 +146,18 @@ router.put(
   body('displayName').optional().isString(),
   body('language').optional().isIn(['he', 'en']),
   body('audioQuality').optional().isIn(['LOW', 'NORMAL', 'HIGH']),
+  body('searchSpotifyEnabled').optional().isBoolean(),
+  body('searchYoutubeEnabled').optional().isBoolean(),
   async (req: AuthRequest, res) => {
-    const { displayName, language, audioQuality } = req.body;
+    const { displayName, language, audioQuality, searchSpotifyEnabled, searchYoutubeEnabled } = req.body;
     const user = await prisma.user.update({
       where: { id: req.user!.userId },
       data: {
         ...(displayName !== undefined && { displayName }),
         ...(language !== undefined && { language }),
         ...(audioQuality !== undefined && { audioQuality }),
+        ...(searchSpotifyEnabled !== undefined && { searchSpotifyEnabled }),
+        ...(searchYoutubeEnabled !== undefined && { searchYoutubeEnabled }),
       },
     });
     res.json({ user: sanitizeUser(user) });

@@ -27,7 +27,7 @@ export default function LyricsPanel() {
   });
 
   return (
-    <div className="fixed inset-0 bg-black/80 z-50 flex flex-col">
+    <div className="fixed inset-0 bg-black/80 z-[70] md:z-50 flex flex-col">
       <div className="flex items-center justify-between p-6">
         <div>
           <h2 className="text-2xl font-bold">{currentTrack.title}</h2>

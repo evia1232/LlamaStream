@@ -9,9 +9,11 @@ import LyricsPanel from '../lyrics/LyricsPanel';
 import InstallPrompt from '../pwa/InstallPrompt';
 import TrackMenuHost from '../tracks/TrackMenuHost';
 import { usePlayerStore } from '../../store';
+import { useAudioInterruptResume } from '../../hooks/useAudioInterruptResume';
 
 export default function Layout({ children }: { children: ReactNode }) {
   const hasTrack = usePlayerStore((s) => !!s.currentTrack);
+  useAudioInterruptResume();
 
   return (
     <div className="h-screen flex flex-col bg-spotify-black safe-area">

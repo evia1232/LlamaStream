@@ -1,14 +1,26 @@
-import { NavLink } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Home, Search, Library, Heart, Plus, Settings, LogOut, Music2,
 } from 'lucide-react';
 import { useAuthStore } from '../../store';
+import api from '../../api/client';
+import { Playlist } from '../../types';
+import PlaylistCover from '../playlists/PlaylistCover';
 import clsx from 'clsx';
 
 export default function Sidebar() {
   const { t } = useTranslation();
   const { user, logout } = useAuthStore();
+  const navigate = useNavigate();
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+
+  useEffect(() => {
+    api.get('/playlists')
+      .then(({ data }) => setPlaylists(data.playlists))
+      .catch(() => { /* ignore */ });
+  }, []);
 
   const navItems = [
     { to: '/', icon: Home, label: t('home') },
@@ -45,10 +57,10 @@ export default function Sidebar() {
       </nav>
 
       {/* Library */}
-      <div className="bg-spotify-gray rounded-lg p-2 flex-1 overflow-y-auto">
+      <div className="bg-spotify-gray rounded-lg p-2 flex-1 overflow-y-auto min-h-0">
         <div className="flex items-center justify-between px-3 py-2 mb-1">
           <span className="text-label">{t('library')}</span>
-          <button className="icon-btn p-1">
+          <button type="button" onClick={() => navigate('/library')} className="icon-btn p-1" aria-label={t('createPlaylist')}>
             <Plus className="w-5 h-5" />
           </button>
         </div>
@@ -62,6 +74,31 @@ export default function Sidebar() {
             <span>{label}</span>
           </NavLink>
         ))}
+        {playlists.length > 0 && (
+          <ul className="mt-2 pt-2 border-t border-white/5 space-y-0.5">
+            {playlists.map((pl) => (
+              <li key={pl.id}>
+                <NavLink
+                  to={`/playlist/${pl.id}`}
+                  className={({ isActive }) => clsx(
+                    'flex items-center gap-3 px-3 py-2 rounded-md text-sm text-spotify-text hover:text-white hover:bg-white/10 transition-colors',
+                    isActive && 'text-white bg-white/10'
+                  )}
+                >
+                  <div className="w-8 h-8 rounded-sm overflow-hidden shrink-0 bg-spotify-lightgray shadow-sm">
+                    <PlaylistCover
+                      coverUrl={pl.coverUrl}
+                      coverImages={pl.coverImages}
+                      className="w-full h-full"
+                      fallback={<span className="text-xs">♪</span>}
+                    />
+                  </div>
+                  <span className="truncate font-medium">{pl.name}</span>
+                </NavLink>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {/* User */}

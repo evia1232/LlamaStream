@@ -4,6 +4,7 @@ import { X, Plus, Check } from 'lucide-react';
 import api from '../../api/client';
 import { Playlist, Track } from '../../types';
 import PlaylistCover from '../playlists/PlaylistCover';
+import { ensureTrackDownloaded } from '../../lib/ensureDownload';
 
 interface AddToPlaylistModalProps {
   track: Track;
@@ -36,7 +37,8 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
     setAddingId(playlistId);
     setError('');
     try {
-      await api.post(`/playlists/${playlistId}/tracks`, { trackId: track.id });
+      const ready = await ensureTrackDownloaded(track);
+      await api.post(`/playlists/${playlistId}/tracks`, { trackId: ready.id });
       setAddedIds((prev) => new Set(prev).add(playlistId));
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number; data?: { error?: string } } })?.response?.status;

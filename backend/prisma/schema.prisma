@@ -45,6 +45,8 @@ model User {
   spotifyTokenExpiresAt DateTime?
   spotifyProduct        String?
   spotifyConnectedAt    DateTime?
+  searchSpotifyEnabled  Boolean       @default(true)
+  searchYoutubeEnabled  Boolean       @default(true)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 

@@ -1,0 +1,2 @@
+ALTER TABLE "User" ADD COLUMN "searchSpotifyEnabled" BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE "User" ADD COLUMN "searchYoutubeEnabled" BOOLEAN NOT NULL DEFAULT true;

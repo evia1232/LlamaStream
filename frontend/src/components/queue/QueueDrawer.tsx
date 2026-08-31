@@ -27,10 +27,10 @@ export default function QueueDrawer() {
   return (
     <>
       <div
-        className="md:hidden fixed inset-0 bg-black/60 z-40"
+        className="md:hidden fixed inset-0 bg-black/60 z-[70]"
         onClick={() => setShowQueue(false)}
       />
-      <div className="fixed inset-y-0 inset-x-0 md:inset-x-auto md:w-80 md:start-0 md:end-auto bg-spotify-gray shadow-2xl z-50 flex flex-col border-inline-end border-black/30 max-md:pb-[env(safe-area-inset-bottom)]">
+      <div className="fixed inset-y-0 inset-x-0 md:inset-x-auto md:w-80 md:start-0 md:end-auto bg-spotify-gray shadow-2xl z-[70] md:z-50 flex flex-col border-inline-end border-black/30 max-md:pb-[env(safe-area-inset-bottom)]">
         <div className="flex items-center justify-between p-4 border-b border-white/10">
         <h2 className="text-lg font-bold">{t('queue')}</h2>
         <div className="flex gap-2">

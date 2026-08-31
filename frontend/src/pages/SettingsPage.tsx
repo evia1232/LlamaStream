@@ -22,6 +22,8 @@ export default function SettingsPage() {
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [language, setLanguage] = useState(user?.language || 'he');
   const [audioQuality, setAudioQuality] = useState(user?.audioQuality || 'HIGH');
+  const [searchSpotifyEnabled, setSearchSpotifyEnabled] = useState(user?.searchSpotifyEnabled ?? true);
+  const [searchYoutubeEnabled, setSearchYoutubeEnabled] = useState(user?.searchYoutubeEnabled ?? true);
   const [saved, setSaved] = useState(false);
 
   // Admin user management
@@ -91,8 +93,20 @@ export default function SettingsPage() {
     }
   }, [user]);
 
+  useEffect(() => {
+    if (!user) return;
+    setSearchSpotifyEnabled(user.searchSpotifyEnabled ?? true);
+    setSearchYoutubeEnabled(user.searchYoutubeEnabled ?? true);
+  }, [user?.searchSpotifyEnabled, user?.searchYoutubeEnabled, user]);
+
   const handleSave = async () => {
-    await updateProfile({ displayName, language, audioQuality: audioQuality as 'LOW' | 'NORMAL' | 'HIGH' });
+    await updateProfile({
+      displayName,
+      language,
+      audioQuality: audioQuality as 'LOW' | 'NORMAL' | 'HIGH',
+      searchSpotifyEnabled,
+      searchYoutubeEnabled,
+    });
     i18n.changeLanguage(language);
     localStorage.setItem('language', language);
     applyDocumentDirection(language);
@@ -205,6 +219,47 @@ export default function SettingsPage() {
           <button onClick={handleSave} className="green-btn">
             {saved ? t('success') : t('save')}
           </button>
+        </div>
+      </section>
+
+      {/* Search preferences */}
+      <section className="mb-10">
+        <h2 className="text-heading-sm mb-5">{t('searchPreferences')}</h2>
+        <div className="space-y-3">
+          <label className="flex items-center justify-between bg-spotify-lightgray rounded-lg p-4 cursor-pointer">
+            <div>
+              <p className="font-medium">{t('searchSpotifyEnabled')}</p>
+              <p className="text-sm text-spotify-text mt-1">{t('searchSpotifyHint')}</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={searchSpotifyEnabled}
+              onClick={() => setSearchSpotifyEnabled((v) => !v)}
+              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${searchSpotifyEnabled ? 'bg-spotify-green' : 'bg-spotify-gray'}`}
+            >
+              <span
+                className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full transition-transform ${searchSpotifyEnabled ? 'translate-x-5' : ''}`}
+              />
+            </button>
+          </label>
+          <label className="flex items-center justify-between bg-spotify-lightgray rounded-lg p-4 cursor-pointer">
+            <div>
+              <p className="font-medium">{t('searchYoutubeEnabled')}</p>
+              <p className="text-sm text-spotify-text mt-1">{t('searchYoutubeHint')}</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={searchYoutubeEnabled}
+              onClick={() => setSearchYoutubeEnabled((v) => !v)}
+              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${searchYoutubeEnabled ? 'bg-spotify-green' : 'bg-spotify-gray'}`}
+            >
+              <span
+                className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full transition-transform ${searchYoutubeEnabled ? 'translate-x-5' : ''}`}
+              />
+            </button>
+          </label>
         </div>
       </section>
 

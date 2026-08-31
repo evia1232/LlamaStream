@@ -33,7 +33,7 @@ export default function PlayerBar() {
     setIsPlaying, setCurrentTime, setDuration, setVolume,
     toggleShuffle, cycleRepeat, playNext, playPrevious,
     toggleLike, setShowQueue, setShowLyrics, showLyrics,
-    clearPendingSeek, persistPlayback, registerSeek, seekTo, setShowNowPlaying,
+    clearPendingSeek, persistPlayback, registerSeek, registerStop, seekTo, setShowNowPlaying,
     autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback, playbackEngine,
   } = usePlayerStore();
 
@@ -94,6 +94,18 @@ export default function PlayerBar() {
     });
     return () => registerSeek(null);
   }, [registerSeek, isSpotifyMode]);
+
+  useEffect(() => {
+    registerStop(() => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+      loadTokenRef.current += 1;
+    });
+    return () => registerStop(null);
+  }, [registerStop]);
 
   useEffect(() => {
     const onUnload = () => { persistPlayback(); };

@@ -7,6 +7,8 @@ export interface User {
   role: 'USER' | 'ADMIN';
   audioQuality: 'LOW' | 'NORMAL' | 'HIGH';
   language: string;
+  searchSpotifyEnabled?: boolean;
+  searchYoutubeEnabled?: boolean;
   spotify?: {
     connected: boolean;
     premium: boolean;

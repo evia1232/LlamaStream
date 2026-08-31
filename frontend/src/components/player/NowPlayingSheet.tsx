@@ -179,13 +179,13 @@ export default function NowPlayingSheet() {
             <ListPlus className="w-6 h-6" />
           </button>
           <button
-            onClick={() => { setShowNowPlaying(false); setShowLyrics(true); }}
+            onClick={() => setShowLyrics(true)}
             className="icon-btn p-3"
           >
             <Mic2 className="w-6 h-6" />
           </button>
           <button
-            onClick={() => { setShowNowPlaying(false); setShowQueue(true); }}
+            onClick={() => setShowQueue(true)}
             className="icon-btn p-3"
           >
             <ListMusic className="w-6 h-6" />

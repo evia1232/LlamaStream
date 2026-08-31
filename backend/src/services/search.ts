@@ -58,6 +58,13 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
   const trackFilter = buildTrackFilter(trimmed);
   const words = trimmed.split(/\s+/).filter((w) => w.length > 0);
 
+  const userPrefs = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { searchSpotifyEnabled: true, searchYoutubeEnabled: true },
+  });
+  const searchSpotify = userPrefs?.searchSpotifyEnabled ?? true;
+  const searchYoutube = userPrefs?.searchYoutubeEnabled ?? true;
+
   // Local search always runs — library, artists, albums, playlists
   const [libraryTracks, artists, albums, playlists] = await Promise.all([
     prisma.track.findMany({
@@ -111,26 +118,31 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
 
   if (isSpotifyUrl(trimmed)) {
     detectedUrl = { type: 'spotify', url: trimmed };
-    try {
-      const parsed = await parseSpotifyUrl(trimmed);
-      spotifyUrlTracks = parsed.tracks;
-    } catch (err) {
-      console.error('Spotify URL parse failed:', err);
+    if (searchSpotify) {
+      try {
+        const parsed = await parseSpotifyUrl(trimmed);
+        spotifyUrlTracks = parsed.tracks;
+      } catch (err) {
+        console.error('Spotify URL parse failed:', err);
+      }
     }
   } else if (isYouTubeUrl(trimmed)) {
     detectedUrl = { type: 'youtube', url: trimmed };
   } else {
-    // Text query: search YouTube + Spotify in parallel (local already done above)
-    const spResult = await searchSpotifyTracks(trimmed, limit);
-    spotify = spResult.tracks;
-    spotifyError = spResult.error;
-    spotifyConfigured = spResult.configured;
+    if (searchSpotify) {
+      const spResult = await searchSpotifyTracks(trimmed, limit);
+      spotify = spResult.tracks;
+      spotifyError = spResult.error;
+      spotifyConfigured = spResult.configured;
+    }
 
-    const ytResults = await searchYouTube(trimmed, limit).catch((err) => {
-      console.error('YouTube search failed:', err);
-      return [] as UnifiedSearchResult['youtube'];
-    });
-    youtube = ytResults;
+    if (searchYoutube) {
+      const ytResults = await searchYouTube(trimmed, limit).catch((err) => {
+        console.error('YouTube search failed:', err);
+        return [] as UnifiedSearchResult['youtube'];
+      });
+      youtube = ytResults;
+    }
   }
 
   return {

@@ -34,6 +34,8 @@ interface PlayerState {
   pendingSeekTime: number;
   playbackRestored: boolean;
   _seekFn: ((time: number) => void) | null;
+  _stopFn: (() => void) | null;
+  _playGeneration: number;
 
   setCurrentTrack: (track: Track | null) => void;
   setIsPlaying: (playing: boolean) => void;
@@ -67,6 +69,8 @@ interface PlayerState {
   fetchLyrics: (trackId: string) => Promise<void>;
   clearPendingSeek: () => void;
   registerSeek: (fn: ((time: number) => void) | null) => void;
+  registerStop: (fn: (() => void) | null) => void;
+  stopPlaybackImmediate: () => void;
   seekTo: (time: number) => void;
   persistPlayback: () => Promise<void>;
   persistVolume: () => Promise<void>;
@@ -94,6 +98,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   pendingSeekTime: 0,
   playbackRestored: false,
   _seekFn: null,
+  _stopFn: null,
+  _playGeneration: 0,
   contextTracks: [] as Track[],
   contextIndex: -1,
   autoplay: loadAutoplayEnabled(),
@@ -128,8 +134,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off',
   })),
   setShowQueue: (show) => set({ showQueue: show }),
-  setShowLyrics: (show) => set({ showLyrics: show, showNowPlaying: show ? false : get().showNowPlaying }),
-  setShowNowPlaying: (show) => set({ showNowPlaying: show, showLyrics: show ? false : get().showLyrics }),
+  setShowLyrics: (show) => set({ showLyrics: show }),
+  setShowNowPlaying: (show) => set({ showNowPlaying: show }),
   setLyrics: (lyrics) => set({ lyrics }),
   setQueue: (queue) => set({ queue }),
   addToLiked: (trackId) => set((s) => {
@@ -144,6 +150,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   }),
 
   playTrack: async (track, startTime = 0) => {
+    get().stopPlaybackImmediate();
+    const generation = get()._playGeneration;
+
     const { contextTracks, volume } = get();
     const ctxIdx = contextTracks.findIndex((t) => t.id === track.id);
     if (ctxIdx >= 0) {
@@ -153,24 +162,55 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const user = useAuthStore.getState().user;
     const spotifyStatus = user?.spotify ?? { connected: false, premium: false };
     const spotifyUri = getSpotifyTrackUri(track);
-    const useSpotify = canStreamFromSpotify(track, spotifyStatus) && !!spotifyUri;
+    const useSpotify = !track.isDownloaded && canStreamFromSpotify(track, spotifyStatus) && !!spotifyUri;
+    const stale = () => generation !== get()._playGeneration;
 
     set({
       currentTrack: track,
       isPlaying: false,
-      isPreparingPlayback: true,
+      isPreparingPlayback: !track.isDownloaded && !useSpotify,
       currentTime: startTime,
       pendingSeekTime: startTime,
       lyrics: null,
       playbackEngine: useSpotify ? 'spotify' : 'local',
     });
 
+    // Fast path: already downloaded locally
+    if (track.isDownloaded && !useSpotify) {
+      if (stale()) return;
+      set({
+        isPlaying: true,
+        isPreparingPlayback: false,
+        playbackEngine: 'local',
+        currentTime: startTime,
+        pendingSeekTime: startTime,
+      });
+      saveLocalPlayback({
+        trackId: track.id,
+        position: startTime,
+        isPlaying: true,
+        volume: get().volume,
+        savedAt: Date.now(),
+      });
+      try {
+        await api.post(`/tracks/${track.id}/play`);
+        if (stale()) return;
+        get().fetchLyrics(track.id);
+        await get().persistPlayback();
+        get().prefetchUpcoming();
+      } catch { /* ignore */ }
+      return;
+    }
+
     if (useSpotify && spotifyUri) {
+      set({ isPreparingPlayback: true });
       try {
         const spot = useSpotifyPlayerStore.getState();
         const ok = await spot.init(volume);
+        if (stale()) return;
         if (!ok) throw new Error(spot.initError || 'Spotify player failed');
         await spot.playUri(spotifyUri, startTime * 1000);
+        if (stale()) return;
         set({
           isPlaying: true,
           isPreparingPlayback: false,
@@ -179,13 +219,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         });
         return;
       } catch (err) {
+        if (stale()) return;
         console.warn('Spotify playback failed, falling back to download:', err);
-        set({ playbackEngine: 'local' });
+        set({ playbackEngine: 'local', isPreparingPlayback: true });
       }
     }
 
     try {
       const ready = await ensureTrackDownloaded(track);
+      if (stale()) return;
       set({
         currentTrack: ready,
         isPlaying: true,
@@ -202,12 +244,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         savedAt: Date.now(),
       });
       await api.post(`/tracks/${ready.id}/play`);
+      if (stale()) return;
       get().fetchLyrics(ready.id);
       await get().persistPlayback();
       get().prefetchUpcoming();
     } catch {
-      set({ isPreparingPlayback: false, isPlaying: false });
+      if (!stale()) set({ isPreparingPlayback: false, isPlaying: false });
     }
+  },
+
+  stopPlaybackImmediate: () => {
+    set((s) => ({ _playGeneration: s._playGeneration + 1, isPlaying: false }));
+    get()._stopFn?.();
+    void useSpotifyPlayerStore.getState().pause();
   },
 
   downloadToLibrary: async () => {
@@ -425,6 +474,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   clearPendingSeek: () => set({ pendingSeekTime: 0 }),
 
   registerSeek: (fn) => set({ _seekFn: fn }),
+
+  registerStop: (fn) => set({ _stopFn: fn }),
 
   seekTo: (time) => {
     const t = Math.max(0, time);

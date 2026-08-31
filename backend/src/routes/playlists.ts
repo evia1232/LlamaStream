@@ -11,6 +11,7 @@ import { exportPlaylist } from '../services/spotify';
 import { startPlaylistImport, getImportJobStatus, importSpotifyPlaylist, listActiveImportJobs } from '../services/playlistImport';
 import { trackStreamUrl } from '../services/trackDownload';
 import { addTrackToPlaylist, nextPlaylistPosition } from '../lib/playlistTracks';
+import { prefetchLibraryTrack } from '../services/downloader';
 import { extractPlaylistCoverImages, playlistCoverTracksQuery } from '../lib/playlistCovers';
 import { config } from '../config';
 
@@ -226,6 +227,15 @@ router.post('/:id/tracks', authenticate, async (req: AuthRequest, res) => {
   if (!added) {
     return res.status(409).json({ error: 'Track already in playlist' });
   }
+
+  const [track, user] = await Promise.all([
+    prisma.track.findUnique({ where: { id: trackId }, select: { isDownloaded: true } }),
+    prisma.user.findUnique({ where: { id: req.user!.userId }, select: { audioQuality: true } }),
+  ]);
+  if (track && !track.isDownloaded) {
+    void prefetchLibraryTrack(trackId, user?.audioQuality || 'HIGH').catch(console.error);
+  }
+
   res.status(201).json({ success: true });
 });
 
