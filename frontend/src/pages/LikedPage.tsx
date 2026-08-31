@@ -19,6 +19,12 @@ export default function LikedPage() {
     }).catch(console.error);
   }, []);
 
+  const refresh = () => {
+    api.get('/tracks/liked').then(({ data }) => {
+      setTracks(data.tracks.map((t: Track) => normalizeTrack(t)));
+    }).catch(console.error);
+  };
+
   return (
     <div>
       <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-end gap-6">
@@ -43,7 +49,7 @@ export default function LikedPage() {
 
       <div className="px-2">
         {tracks.map((track, i) => (
-          <TrackRow key={track.id} track={track} index={i} />
+          <TrackRow key={track.id} track={track} index={i} onDeleted={refresh} />
         ))}
       </div>
     </div>

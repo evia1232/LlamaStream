@@ -5,7 +5,14 @@ import { applyDocumentDirection } from '../lib/direction';
 import { useAuthStore } from '../store';
 import api from '../api/client';
 import { User } from '../types';
-import { Trash2, UserPlus } from 'lucide-react';
+import { Trash2, UserPlus, HardDrive } from 'lucide-react';
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 export default function SettingsPage() {
   const { t } = useTranslation();
@@ -19,6 +26,19 @@ export default function SettingsPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', username: '', password: '', role: 'USER' });
+
+  const [libraryStats, setLibraryStats] = useState<{ downloadedCount: number; totalCount: number; totalBytes: number } | null>(null);
+  const [cleanupDays, setCleanupDays] = useState(7);
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanupMsg, setCleanupMsg] = useState('');
+
+  const fetchLibraryStats = () => {
+    api.get('/tracks/library/stats').then(({ data }) => setLibraryStats(data)).catch(console.error);
+  };
+
+  useEffect(() => {
+    fetchLibraryStats();
+  }, []);
 
   useEffect(() => {
     if (user?.role === 'ADMIN') {
@@ -56,6 +76,27 @@ export default function SettingsPage() {
     if (!confirm(t('confirmDelete'))) return;
     await api.delete(`/auth/users/${id}`);
     setUsers(users.filter((u) => u.id !== id));
+  };
+
+  const handleCleanup = async (mode: 'all' | 'recent') => {
+    const msg = mode === 'all'
+      ? t('confirmDeleteAll')
+      : t('confirmDeleteRecent', { count: cleanupDays });
+    if (!confirm(msg)) return;
+
+    setCleaning(true);
+    setCleanupMsg('');
+    try {
+      const { data } = await api.delete('/tracks/library/cleanup', {
+        data: { mode, days: cleanupDays },
+      });
+      setCleanupMsg(t('tracksDeleted', { count: data.deleted }));
+      fetchLibraryStats();
+    } catch (err: unknown) {
+      setCleanupMsg((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
+    } finally {
+      setCleaning(false);
+    }
   };
 
   return (
@@ -119,6 +160,70 @@ export default function SettingsPage() {
           <button onClick={handleSave} className="green-btn">
             {saved ? t('success') : t('save')}
           </button>
+        </div>
+      </section>
+
+      {/* Library management */}
+      <section className="mb-10">
+        <h2 className="text-heading-sm mb-5 flex items-center gap-2">
+          <HardDrive className="w-5 h-5 text-spotify-green" />
+          {t('libraryManagement')}
+        </h2>
+
+        {libraryStats && (
+          <div className="bg-spotify-lightgray rounded-lg p-4 mb-4 space-y-1 text-sm">
+            <p>{t('downloadedTracks')}: <span className="text-white font-medium">{libraryStats.downloadedCount}</span></p>
+            <p>{t('storageUsed')}: <span className="text-white font-medium">{formatBytes(libraryStats.totalBytes)}</span></p>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <button
+            onClick={() => handleCleanup('all')}
+            disabled={cleaning}
+            className="w-full flex items-center justify-center gap-2 bg-red-900/40 hover:bg-red-900/60 border border-red-500/40 text-red-300 rounded-lg py-3 px-4 text-sm font-medium transition-colors disabled:opacity-50"
+          >
+            <Trash2 className="w-4 h-4" />
+            {t('deleteAllTracks')}
+          </button>
+
+          <div className="bg-spotify-lightgray rounded-lg p-4 space-y-3">
+            <p className="text-sm text-spotify-text">{t('deleteRecentTracks')}</p>
+            <div className="flex flex-wrap gap-2">
+              {[1, 7, 30].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setCleanupDays(d)}
+                  className={`px-3 py-1.5 rounded-full text-sm ${cleanupDays === d ? 'bg-white text-black font-bold' : 'bg-spotify-gray text-spotify-text'}`}
+                >
+                  {d === 1 ? t('deleteLastDay') : t('deleteLastDays', { count: d })}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={cleanupDays}
+                onChange={(e) => setCleanupDays(Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-20 bg-spotify-gray rounded-md px-3 py-2 text-sm focus:outline-none"
+              />
+              <span className="text-sm text-spotify-text">{t('days')}</span>
+              <button
+                onClick={() => handleCleanup('recent')}
+                disabled={cleaning}
+                className="ms-auto green-btn py-2 px-4 text-sm disabled:opacity-50"
+              >
+                {t('delete')}
+              </button>
+            </div>
+          </div>
+
+          {cleanupMsg && (
+            <p className="text-sm text-spotify-green">{cleanupMsg}</p>
+          )}
         </div>
       </section>
 

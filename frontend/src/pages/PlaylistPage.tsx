@@ -98,6 +98,11 @@ export default function PlaylistPage() {
                 api.get(`/playlists/${id}`).then(({ data }) => setPlaylist(data.playlist)).catch(console.error);
               }
             }}
+            onDeleted={() => {
+              if (id) {
+                api.get(`/playlists/${id}`).then(({ data }) => setPlaylist(data.playlist)).catch(console.error);
+              }
+            }}
           />
         ))}
       </div>

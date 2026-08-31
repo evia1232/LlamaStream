@@ -1,11 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import {
-  ListMusic, ListPlus, Heart, Download, Play, Trash2, MoreHorizontal,
-} from 'lucide-react';
 import clsx from 'clsx';
-import { Track } from '../../types';
 
 export interface TrackMenuAction {
   id: string;
@@ -18,12 +14,12 @@ export interface TrackMenuAction {
 
 interface TrackContextMenuProps {
   open: boolean;
-  anchorRect: DOMRect | null;
+  position: { x: number; y: number } | null;
   actions: TrackMenuAction[];
   onClose: () => void;
 }
 
-export default function TrackContextMenu({ open, anchorRect, actions, onClose }: TrackContextMenuProps) {
+export default function TrackContextMenu({ open, position, actions, onClose }: TrackContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation();
 
@@ -36,27 +32,31 @@ export default function TrackContextMenu({ open, anchorRect, actions, onClose }:
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
+    const onScroll = () => onClose();
     document.addEventListener('mousedown', onPointerDown);
     document.addEventListener('touchstart', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('scroll', onScroll, true);
     return () => {
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('touchstart', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('scroll', onScroll, true);
     };
   }, [open, onClose]);
 
-  if (!open || !anchorRect) return null;
+  if (!open || !position) return null;
 
-  const menuWidth = 220;
-  const left = Math.min(anchorRect.right - menuWidth, window.innerWidth - menuWidth - 8);
-  const top = Math.min(anchorRect.bottom + 4, window.innerHeight - actions.length * 44 - 16);
+  const menuWidth = 240;
+  const menuHeight = actions.length * 44 + 12;
+  const left = Math.min(position.x, window.innerWidth - menuWidth - 8);
+  const top = Math.min(position.y, window.innerHeight - menuHeight - 8);
 
   return createPortal(
     <div
       ref={menuRef}
       role="menu"
-      className="fixed z-[70] min-w-[220px] py-1.5 bg-[#282828] border border-white/10 rounded-lg shadow-xl animate-fade-in"
+      className="fixed z-[70] min-w-[240px] py-1.5 bg-[#282828] border border-white/10 rounded-lg shadow-xl animate-fade-in"
       style={{ top: Math.max(8, top), left: Math.max(8, left) }}
     >
       {actions.map((action) => (
@@ -84,5 +84,3 @@ export default function TrackContextMenu({ open, anchorRect, actions, onClose }:
     document.body
   );
 }
-
-export { ListMusic, ListPlus, Heart, Download, Play, Trash2, MoreHorizontal };

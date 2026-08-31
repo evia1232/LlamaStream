@@ -21,6 +21,7 @@ interface TrackRowProps {
   showIndex?: boolean;
   playlistId?: string;
   onRemovedFromPlaylist?: () => void;
+  onDeleted?: () => void;
 }
 
 function TrackArtwork({
@@ -70,19 +71,22 @@ export default function TrackRow({
   showIndex = true,
   playlistId,
   onRemovedFromPlaylist,
+  onDeleted,
 }: TrackRowProps) {
   const { t } = useTranslation();
-  const { currentTrack, isPlaying, playTrack, toggleLike, likedTrackIds, addToQueue } = usePlayerStore();
+  const { currentTrack, isPlaying, playTrack, toggleLike, likedTrackIds, addToQueue, setCurrentTrack } = usePlayerStore();
   const [downloading, setDownloading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [showPlaylistModal, setShowPlaylistModal] = useState(false);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
 
   const isCurrent = currentTrack?.id === track.id;
   const isLiked = likedTrackIds.has(track.id);
   const artistName = getArtistName(track.artist);
   const imageUrl = getTrackImageUrl(track);
+  const canRemoveFromLibrary = track.isDownloaded || !!track.streamUrl;
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
@@ -114,12 +118,24 @@ export default function TrackRow({
     }
   };
 
-  const openMenu = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    const rect = menuAnchorRef.current?.getBoundingClientRect() ?? null;
-    setMenuRect(rect);
-    setMenuOpen((v) => !v);
+  const showMenuAt = useCallback((x: number, y: number) => {
+    setMenuPos({ x, y });
+    setMenuOpen(true);
   }, []);
+
+  const openMenuFromButton = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    const rect = menuAnchorRef.current?.getBoundingClientRect();
+    if (rect) {
+      showMenuAt(rect.right - 240, rect.bottom + 4);
+    }
+  }, [showMenuAt]);
+
+  const openMenuFromRightClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showMenuAt(e.clientX, e.clientY);
+  }, [showMenuAt]);
 
   const handleAddToQueue = async (playNext = false) => {
     try {
@@ -135,6 +151,17 @@ export default function TrackRow({
     try {
       await api.delete(`/playlists/${playlistId}/tracks/${track.id}`);
       onRemovedFromPlaylist?.();
+    } catch {
+      alert(t('error'));
+    }
+  };
+
+  const handleRemoveFromLibrary = async () => {
+    if (!confirm(t('confirmRemoveFromLibrary'))) return;
+    try {
+      await api.delete(`/tracks/${track.id}`);
+      if (currentTrack?.id === track.id) setCurrentTrack(null);
+      onDeleted?.();
     } catch {
       alert(t('error'));
     }
@@ -179,10 +206,17 @@ export default function TrackRow({
       disabled: downloading,
     }] : []),
     ...(playlistId ? [{
-      id: 'remove',
+      id: 'removePlaylist',
       label: t('removeFromPlaylist'),
       icon: <Trash2 className="w-4 h-4" />,
       onClick: () => { void handleRemoveFromPlaylist(); },
+      danger: true,
+    }] : []),
+    ...(canRemoveFromLibrary ? [{
+      id: 'removeLibrary',
+      label: t('removeFromLibrary'),
+      icon: <Trash2 className="w-4 h-4" />,
+      onClick: () => { void handleRemoveFromLibrary(); },
       danger: true,
     }] : []),
   ];
@@ -190,12 +224,13 @@ export default function TrackRow({
   return (
     <>
       <div
+        ref={rowRef}
+        onContextMenu={openMenuFromRightClick}
         className={clsx(
           'flex md:grid md:grid-cols-[16px_4fr_3fr_1fr_80px] gap-2 md:gap-4 items-center px-2 md:px-4 py-2 rounded-md group card-hover',
           isCurrent && 'bg-white/10'
         )}
       >
-        {/* Index — desktop only (Spotify-style # column) */}
         <div className="hidden md:block text-spotify-text text-sm text-center">
           {isCurrent && isPlaying ? (
             <div className="playing-indicator flex justify-center gap-0.5">
@@ -206,18 +241,17 @@ export default function TrackRow({
           ) : showIndex ? (
             <>
               <span className="group-hover:hidden tabular-nums">{index !== undefined ? index + 1 : ''}</span>
-              <button type="button" onClick={(e) => { stop(e); handlePlay(); }} className="hidden group-hover:block mx-auto">
+              <button type="button" onClick={(e) => { stop(e); void handlePlay(); }} className="hidden group-hover:block mx-auto">
                 <Play className="w-4 h-4 fill-current text-white" />
               </button>
             </>
           ) : (
-            <button type="button" onClick={(e) => { stop(e); handlePlay(); }} className="mx-auto">
+            <button type="button" onClick={(e) => { stop(e); void handlePlay(); }} className="mx-auto">
               <Play className="w-4 h-4 fill-current text-white opacity-0 group-hover:opacity-100" />
             </button>
           )}
         </div>
 
-        {/* Title + artwork */}
         <div className="flex flex-1 md:flex-none items-center gap-3 min-w-0 cursor-pointer" onClick={() => { void handlePlay(); }}>
           <TrackArtwork
             imageUrl={imageUrl}
@@ -268,7 +302,7 @@ export default function TrackRow({
           <button
             ref={menuAnchorRef}
             type="button"
-            onClick={openMenu}
+            onClick={openMenuFromButton}
             className={clsx('icon-btn p-1.5', menuOpen && 'text-white bg-white/10')}
             title={t('more')}
             aria-haspopup="menu"
@@ -281,7 +315,7 @@ export default function TrackRow({
 
       <TrackContextMenu
         open={menuOpen}
-        anchorRect={menuRect}
+        position={menuPos}
         actions={menuActions}
         onClose={() => setMenuOpen(false)}
       />

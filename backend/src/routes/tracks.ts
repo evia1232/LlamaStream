@@ -10,6 +10,7 @@ import { unifiedSearch } from '../services/search';
 import { isSpotifyUrl, isYouTubeUrl, parseSpotifyUrl } from '../services/spotify';
 import { ytDlpVersion } from '../services/ytdlp';
 import { getSpotifyStatus } from '../services/spotifyApi';
+import { cleanupLibrary, deleteTrackById, getLibraryStats } from '../services/trackCleanup';
 
 const router = Router();
 
@@ -40,6 +41,31 @@ function formatTrack(track: {
     streamUrl: track.isDownloaded ? `/api/tracks/${track.id}/stream` : null,
   };
 }
+
+router.get('/library/stats', authenticate, async (_req, res) => {
+  try {
+    const stats = await getLibraryStats();
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.delete(
+  '/library/cleanup',
+  authenticate,
+  body('mode').isIn(['all', 'recent']),
+  async (req: AuthRequest, res) => {
+    const { mode, days } = req.body as { mode: 'all' | 'recent'; days?: number };
+    try {
+      const result = await cleanupLibrary({ mode, days });
+      res.json(result);
+    } catch (err) {
+      console.error('Library cleanup error:', err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  }
+);
 
 router.get('/search', authenticate, query('q').notEmpty(), async (req: AuthRequest, res) => {
   try {
@@ -339,6 +365,17 @@ router.put('/:id/lyrics', authenticate, async (req: AuthRequest, res) => {
     update: { content, synced, lines, source: 'manual' },
   });
   res.json({ lyrics });
+});
+
+router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const deleted = await deleteTrackById(req.params.id);
+    if (!deleted) return res.status(404).json({ error: 'Track not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete track error:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 export default router;

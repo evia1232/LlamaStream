@@ -26,6 +26,10 @@ export default function HomePage() {
     api.get('/home').then(({ data: d }) => setData(d)).catch(console.error);
   }, []);
 
+  const refresh = () => {
+    api.get('/home').then(({ data: d }) => setData(d)).catch(console.error);
+  };
+
   if (!data) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -82,7 +86,7 @@ export default function HomePage() {
           <h2 className="text-heading mb-4">{t('history')}</h2>
           <div>
             {data.history.slice(0, 10).map((track, i) => (
-              <TrackRow key={`${track.id}-${i}`} track={normalizeTrack(track)} index={i} />
+              <TrackRow key={`${track.id}-${i}`} track={normalizeTrack(track)} index={i} onDeleted={refresh} />
             ))}
           </div>
         </section>

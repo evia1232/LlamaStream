@@ -201,7 +201,7 @@ export default function SearchPage() {
                 <div className="mb-6">
                   <h3 className="text-label mb-2">{t('tracks')}</h3>
                   {localTracks.map((track, i) => (
-                    <TrackRow key={track.id} track={track} index={i} />
+                    <TrackRow key={track.id} track={track} index={i} onDeleted={() => search(query)} />
                   ))}
                 </div>
               )}

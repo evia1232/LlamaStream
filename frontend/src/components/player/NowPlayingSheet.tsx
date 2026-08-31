@@ -35,13 +35,16 @@ export default function NowPlayingSheet() {
 
   const [showPlaylistModal, setShowPlaylistModal] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
 
   const openMenu = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    setMenuRect(menuAnchorRef.current?.getBoundingClientRect() ?? null);
-    setMenuOpen((v) => !v);
+    const rect = menuAnchorRef.current?.getBoundingClientRect();
+    if (rect) {
+      setMenuPos({ x: rect.right - 240, y: rect.bottom + 4 });
+    }
+    setMenuOpen(true);
   }, []);
 
   if (!showNowPlaying || !currentTrack) return null;
@@ -213,7 +216,7 @@ export default function NowPlayingSheet() {
 
       <TrackContextMenu
         open={menuOpen}
-        anchorRect={menuRect}
+        position={menuPos}
         actions={menuActions}
         onClose={() => setMenuOpen(false)}
       />

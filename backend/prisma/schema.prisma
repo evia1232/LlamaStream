@@ -102,6 +102,7 @@ model Track {
   thumbnailUrl String?
   quality      AudioQuality  @default(HIGH)
   isDownloaded Boolean       @default(false)
+  downloadedAt DateTime?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 

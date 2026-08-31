@@ -179,6 +179,7 @@ export async function saveTrackRecord(
     thumbnailUrl: download.thumbnailUrl,
     quality,
     isDownloaded: true,
+    downloadedAt: new Date(),
   };
 
   const track = existing

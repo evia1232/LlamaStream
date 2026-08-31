@@ -19,6 +19,10 @@ export default function ArtistPage() {
     }
   }, [id]);
 
+  const refresh = () => {
+    if (id) api.get(`/home/artists/${id}`).then(({ data }) => setArtist(data.artist)).catch(console.error);
+  };
+
   if (!artist) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -46,7 +50,7 @@ export default function ArtistPage() {
       <div className="px-2 mt-6">
         <h2 className="text-heading-sm px-4 mb-3">{t('tracks')}</h2>
         {artist.tracks.map((track, i) => (
-          <TrackRow key={track.id} track={track} index={i} />
+          <TrackRow key={track.id} track={track} index={i} onDeleted={refresh} />
         ))}
       </div>
     </div>
