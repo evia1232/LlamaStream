@@ -147,6 +147,9 @@ const resources = {
       autoplay: 'ניגון אוטומטי',
       autoplayHint: 'המשך לנגן שירים דומים כשהתור נגמר',
       findingNext: 'מחפש שיר הבא...',
+      researchTrack: 'חפש מחדש',
+      researching: 'מחפש...',
+      confirmResearchTrack: 'לחפש התאמה אחרת ב-YouTube? הקובץ הנוכחי יוחלף.',
     },
   },
   en: {
@@ -293,6 +296,9 @@ const resources = {
       autoplay: 'Autoplay',
       autoplayHint: 'Keep playing similar songs when your queue ends',
       findingNext: 'Finding next song...',
+      researchTrack: 'Re-search song',
+      researching: 'Searching...',
+      confirmResearchTrack: 'Find a different YouTube match? The current file will be replaced.',
     },
   },
 };

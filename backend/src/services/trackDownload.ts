@@ -22,6 +22,10 @@ export function isDownloadInProgress(trackId: string): boolean {
   return activeDownloads.has(trackId);
 }
 
+export function cancelBackgroundDownload(trackId: string): void {
+  activeDownloads.delete(trackId);
+}
+
 export function trackStreamUrl(track: { id: string; isDownloaded: boolean; sourceUrl?: string | null }): string | null {
   if (track.isDownloaded || track.sourceUrl) {
     return `/api/tracks/${track.id}/stream`;
@@ -40,7 +44,10 @@ async function finalizeTrackDownload(
     include: { artist: true, album: true },
   });
   if (!track) return;
-
+  if (track.sourceUrl && track.sourceUrl !== download.sourceUrl) {
+    console.log(`[Download] Skipping stale finalize for track ${trackId}`);
+    return;
+  }
   const artistName = meta.artist || download.artist;
   const trackTitle = meta.title || download.title;
 

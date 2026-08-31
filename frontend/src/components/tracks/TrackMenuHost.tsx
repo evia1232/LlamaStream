@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Play, Heart, ListPlus, Download, ListMusic, Trash2 } from 'lucide-react';
+import { Play, Heart, ListPlus, Download, ListMusic, Trash2, RefreshCw } from 'lucide-react';
+import clsx from 'clsx';
 import { useTrackMenuStore } from '../../store/trackMenuStore';
 import { usePlayerStore } from '../../store';
-import { getArtistName } from '../../lib/trackUtils';
+import { getArtistName, normalizeTrack } from '../../lib/trackUtils';
 import api from '../../api/client';
 import TrackContextMenu, { TrackMenuAction } from './TrackContextMenu';
 import AddToPlaylistModal from './AddToPlaylistModal';
@@ -24,6 +25,7 @@ export default function TrackMenuHost() {
   } = usePlayerStore();
 
   const [downloading, setDownloading] = useState(false);
+  const [researching, setResearching] = useState(false);
 
   if (!track) return null;
 
@@ -98,6 +100,25 @@ export default function TrackMenuHost() {
     }
   };
 
+  const handleResearch = async () => {
+    if (!hasLibraryId || researching) return;
+    if (!confirm(t('confirmResearchTrack'))) return;
+    setResearching(true);
+    try {
+      const { data } = await api.post(`/tracks/${track.id}/research`);
+      const updated = normalizeTrack(data.track);
+      if (currentTrack?.id === track.id) {
+        setCurrentTrack(updated);
+      }
+      playTrack(updated);
+      options.onRefresh?.();
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
+    } finally {
+      setResearching(false);
+    }
+  };
+
   const menuActions: TrackMenuAction[] = [
     {
       id: 'play',
@@ -128,6 +149,13 @@ export default function TrackMenuHost() {
       label: isLiked ? t('unlike') : t('like'),
       icon: <Heart className="w-4 h-4" fill={isLiked ? 'currentColor' : 'none'} />,
       onClick: () => { void toggleLike(track.id); },
+    }] : []),
+    ...(hasLibraryId ? [{
+      id: 'research',
+      label: researching ? t('researching') : t('researchTrack'),
+      icon: <RefreshCw className={clsx('w-4 h-4', researching && 'animate-spin')} />,
+      onClick: () => { void handleResearch(); },
+      disabled: researching || downloading,
     }] : []),
     ...(!canStream ? [{
       id: 'download',

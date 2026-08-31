@@ -8,7 +8,7 @@ import { runYtDlp, findFileByPrefix, lastLines } from './ytdlp';
 import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults } from '../lib/trackMatch';
 import { lookupSpotifyTrack, isSpotifyConfigured } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
-import { ensureBackgroundDownload } from './trackDownload';
+import { ensureBackgroundDownload, cancelBackgroundDownload } from './trackDownload';
 
 export interface SearchResult {
   id: string;
@@ -102,10 +102,11 @@ async function enrichTargetFromSpotify(
 async function pickVerifiedCandidate(
   candidates: SearchResult[],
   target: { title: string; artist: string; duration?: number },
-  relaxed: boolean
+  relaxed: boolean,
+  excludeIds: Set<string> = new Set()
 ): Promise<SearchResult | null> {
   for (const candidate of candidates.slice(0, 6)) {
-    if (isYouTubeShortOrReel(candidate)) continue;
+    if (isYouTubeShortOrReel(candidate) || excludeIds.has(candidate.id)) continue;
 
     let duration = candidate.duration;
     if (target.duration && target.duration > 0) {
@@ -336,7 +337,15 @@ export async function upsertPendingTrack(
 
 export async function resolveYouTubeSource(
   input: string,
-  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string; relaxed?: boolean }
+  opts?: {
+    title?: string;
+    artist?: string;
+    url?: string;
+    duration?: number;
+    album?: string;
+    relaxed?: boolean;
+    excludeSourceIds?: string[];
+  }
 ): Promise<ResolvedSource> {
   const trimmed = input.trim();
 
@@ -393,13 +402,16 @@ export async function resolveYouTubeSource(
   const baseMinScore = opts?.relaxed ? 22 : (filterVariants ? 40 : 20);
   const rankOpts = { filterVariants, rawQuery: trimmed, minScore: baseMinScore };
   const minSearchDuration = targetDuration && targetDuration > 0 ? targetDuration : undefined;
+  const excludeIds = new Set(opts?.excludeSourceIds ?? []);
+  const isExcluded = (r: SearchResult) => excludeIds.has(r.id);
 
   let candidates: SearchResult[] = [];
   const allRaw: SearchResult[] = [];
   const seenIds = new Set<string>();
 
   const collectResults = (batch: SearchResult[]) => {
-    const filtered = filterYouTubeResults(batch, target, !!opts?.relaxed);
+    const filtered = filterYouTubeResults(batch, target, !!opts?.relaxed)
+      .filter((r) => !isExcluded(r));
     for (const r of filtered) {
       if (!seenIds.has(r.id)) {
         seenIds.add(r.id);
@@ -414,7 +426,8 @@ export async function resolveYouTubeSource(
       try {
         const batch = await searchYouTube(q, 10, minSearchDuration);
         collectResults(batch);
-        candidates.push(...batch.filter((r) => !candidates.some((c) => c.id === r.id) && !isRejectedYouTubeResult(r, target, !!opts?.relaxed)));
+        candidates.push(...batch.filter((r) => !candidates.some((c) => c.id === r.id)
+          && !isRejectedYouTubeResult(r, target, !!opts?.relaxed) && !isExcluded(r)));
       } catch (err) {
         console.error(`YouTube search failed for "${q}":`, err);
       }
@@ -472,7 +485,7 @@ export async function resolveYouTubeSource(
     throw new Error(`No YouTube results for: ${searchQuery}`);
   }
 
-  const verified = await pickVerifiedCandidate(candidates, target, !!opts?.relaxed);
+  const verified = await pickVerifiedCandidate(candidates, target, !!opts?.relaxed, excludeIds);
   if (!verified) {
     throw new Error(`No YouTube match with compatible duration for: ${searchQuery}${targetDuration ? ` (${targetDuration}s)` : ''}`);
   }
@@ -662,3 +675,68 @@ export const searchTracks = searchYouTube;
 export const downloadTrack = downloadFromYouTube;
 export const getOrCreateTrackFromSearch = (query: string, quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH') =>
   resolveAndDownload(query, quality);
+
+/** Re-search YouTube for an existing library track and replace the source/file */
+export async function researchTrack(
+  trackId: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH'
+) {
+  const track = await prisma.track.findUnique({
+    where: { id: trackId },
+    include: { artist: true, album: true, lyrics: true },
+  });
+  if (!track) throw new Error('Track not found');
+
+  const previousSourceId = track.sourceId;
+  cancelBackgroundDownload(trackId);
+
+  if (track.filePath && fs.existsSync(track.filePath)) {
+    try {
+      fs.unlinkSync(track.filePath);
+    } catch (err) {
+      console.error(`[Research] Failed to delete old file:`, err);
+    }
+  }
+
+  await prisma.track.update({
+    where: { id: trackId },
+    data: {
+      filePath: null,
+      isDownloaded: false,
+      downloadedAt: null,
+      sourceUrl: null,
+      sourceId: null,
+    },
+  });
+
+  const source = await resolveYouTubeSource(
+    `${track.artist.name} - ${track.title}`,
+    {
+      title: track.title,
+      artist: track.artist.name,
+      duration: track.duration > 0 ? track.duration : undefined,
+      album: track.album?.title,
+      excludeSourceIds: previousSourceId ? [previousSourceId] : [],
+    }
+  );
+
+  const updated = await prisma.track.update({
+    where: { id: trackId },
+    data: {
+      sourceUrl: source.url,
+      sourceId: source.sourceId,
+      thumbnailUrl: source.thumbnailUrl || track.thumbnailUrl,
+      duration: source.duration || track.duration,
+    },
+    include: { artist: true, album: true, lyrics: true },
+  });
+
+  ensureBackgroundDownload(trackId, source.url, quality, {
+    title: track.title,
+    artist: track.artist.name,
+    album: track.album?.title,
+  });
+
+  console.log(`[Research] Track ${trackId} re-matched to "${source.url}"`);
+  return updated;
+}

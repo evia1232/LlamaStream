@@ -5,7 +5,7 @@ import { body, query } from 'express-validator';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { resolveAndDownload, prepareTrackForPlayback } from '../services/downloader';
+import { resolveAndDownload, prepareTrackForPlayback, researchTrack } from '../services/downloader';
 import { fetchLyricsForTrack } from '../services/lyrics';
 import { isDownloadInProgress, pipeYouTubeAudio, trackStreamUrl, ensureBackgroundDownload } from '../services/trackDownload';
 import { unifiedSearch } from '../services/search';
@@ -388,6 +388,18 @@ router.put('/:id/lyrics', authenticate, async (req: AuthRequest, res) => {
     update: { content, synced, lines, source: 'manual' },
   });
   res.json({ lyrics });
+});
+
+router.post('/:id/research', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+    const quality = user?.audioQuality || 'HIGH';
+    const track = await researchTrack(req.params.id, quality);
+    res.json({ track: formatTrack(track) });
+  } catch (err) {
+    console.error('Research track error:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
