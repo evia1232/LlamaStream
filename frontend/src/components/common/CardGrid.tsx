@@ -31,7 +31,9 @@ export default function CardGrid({ title, items, onPlay, linkPrefix = '/playlist
         {items.map((item) => {
           const image = item.type === 'playlist' ? null : (item.coverUrl || item.thumbnailUrl || item.imageUrl);
           const label = item.name || item.title || '';
-          const href = item.type === 'artist' ? `/artist/${item.id}` : `${linkPrefix}/${item.id}`;
+          const href = item.type === 'artist'
+            ? `/artist/by-name/${encodeURIComponent(label)}`
+            : `${linkPrefix}/${item.id}`;
 
           return (
             <Link

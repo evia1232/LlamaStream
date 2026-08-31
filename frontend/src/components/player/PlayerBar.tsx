@@ -188,6 +188,52 @@ export default function PlayerBar() {
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, [isPlaying, isPreparingPlayback, isRemoteActive]);
 
+  // Smooth progress updates while local audio plays (timeupdate alone is too coarse)
+  useEffect(() => {
+    if (isSpotifyMode || isRemoteActive || !isPlaying || !currentTrack?.isDownloaded) return;
+    let raf = 0;
+    let last = -1;
+
+    const tick = () => {
+      const audio = audioRef.current;
+      if (audio && !audio.paused && Number.isFinite(audio.currentTime)) {
+        const t = audio.currentTime;
+        if (Math.abs(t - last) >= 0.025) {
+          last = t;
+          setCurrentTime(t);
+        }
+        if (Number.isFinite(audio.duration) && audio.duration > 0) {
+          setDuration(audio.duration);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, isSpotifyMode, isRemoteActive, currentTrack?.id, currentTrack?.isDownloaded, setCurrentTime, setDuration]);
+
+  // Smooth progress while remote device plays (WS sync is every ~3s)
+  useEffect(() => {
+    if (!isRemoteActive || !isPlaying) return;
+    let raf = 0;
+    let lastTs = performance.now();
+
+    const tick = (now: number) => {
+      const dt = (now - lastTs) / 1000;
+      lastTs = now;
+      const s = usePlayerStore.getState();
+      const dur = s.duration;
+      let next = s.currentTime + dt;
+      if (dur > 0) next = Math.min(next, dur);
+      if (Math.abs(next - s.currentTime) >= 0.025) setCurrentTime(next);
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isRemoteActive, isPlaying, setCurrentTime]);
+
   const handleTimeUpdate = () => {
     if (isRemoteActive) return;
     if (!audioRef.current) return;

@@ -11,7 +11,7 @@ import {
   SpotifyAlbumResult,
 } from './spotifyApi';
 
-const SPOTIFY_TIMEOUT_MS = 8000;
+const SPOTIFY_TIMEOUT_MS = 15000;
 const MAX_SPOTIFY_ALBUMS = 24;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -200,16 +200,12 @@ export async function fetchArtistSpotifyData(artistName: string): Promise<Artist
       null,
     );
 
-    if (!spotifyArtist) return empty;
+    if (!spotifyArtist) return { ...empty, configured: true };
 
-    const [topTracks, albums] = await withTimeout(
-      Promise.all([
-        fetchSpotifyArtistTopTracks(spotifyArtist.id),
-        fetchSpotifyArtistAlbums(spotifyArtist.id),
-      ]),
-      SPOTIFY_TIMEOUT_MS,
-      [[], []] as [SpotifySearchResult[], SpotifyAlbumResult[]],
-    );
+    const [topTracks, albums] = await Promise.all([
+      withTimeout(fetchSpotifyArtistTopTracks(spotifyArtist.id), SPOTIFY_TIMEOUT_MS, []),
+      withTimeout(fetchSpotifyArtistAlbums(spotifyArtist.id), SPOTIFY_TIMEOUT_MS, []),
+    ]);
 
     return {
       configured: true,

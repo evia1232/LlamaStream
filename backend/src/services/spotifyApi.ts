@@ -418,10 +418,31 @@ async function spotifyGet<T>(path: string): Promise<T | null> {
   }
 }
 
+import { splitArtistNames } from '../lib/artistMatch';
+
+function primaryArtistName(name: string): string {
+  const parts = splitArtistNames(name);
+  return parts[0]?.trim() || name.trim();
+}
+
 /** Find the best-matching Spotify artist for a name. */
 export async function searchSpotifyArtist(query: string): Promise<SpotifyArtistResult | null> {
   if (!isSpotifyConfigured()) return null;
 
+  const candidates = [
+    query.trim(),
+    primaryArtistName(query),
+    ...splitArtistNames(query),
+  ].filter((n, i, arr) => n && arr.indexOf(n) === i);
+
+  for (const candidate of candidates) {
+    const result = await searchSpotifyArtistOnce(candidate);
+    if (result) return result;
+  }
+  return null;
+}
+
+async function searchSpotifyArtistOnce(query: string): Promise<SpotifyArtistResult | null> {
   const cleaned = sanitizeSpotifyQuery(query);
   if (!cleaned) return null;
 
@@ -437,53 +458,58 @@ export async function searchSpotifyArtist(query: string): Promise<SpotifyArtistR
   let best: SpotifyArtistResult | null = null;
   let bestScore = 0;
 
-  for (const market of markets) {
-    const params = new URLSearchParams({ q: cleaned, type: 'artist', limit: '5' });
-    if (market) params.set('market', market);
+  const queries = [`artist:"${cleaned.replace(/"/g, '')}"`, cleaned];
 
-    const res = await fetch(`https://api.spotify.com/v1/search?${params}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    });
-    if (!res.ok) continue;
+  for (const searchQ of queries) {
+    for (const market of markets) {
+      const params = new URLSearchParams({ q: searchQ, type: 'artist', limit: '10' });
+      if (market) params.set('market', market);
 
-    const data = await res.json() as {
-      artists?: { items: Array<{
-        id: string;
-        name: string;
-        followers: { total: number };
-        genres: string[];
-        external_urls: { spotify: string };
-        images: { url: string }[];
-      }> };
-    };
+      const res = await fetch(`https://api.spotify.com/v1/search?${params}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      if (!res.ok) continue;
 
-    for (const a of data.artists?.items || []) {
-      const aNorm = normalizeForSpotifyMatch(a.name);
-      let score = 0;
-      if (aNorm === qNorm) score += 50;
-      else if (aNorm.includes(qNorm) || qNorm.includes(aNorm)) score += 35;
-      else {
-        const words = qNorm.split(' ').filter((w) => w.length > 1);
-        const matched = words.filter((w) => aNorm.includes(w));
-        score += Math.round((matched.length / Math.max(words.length, 1)) * 25);
+      const data = await res.json() as {
+        artists?: { items: Array<{
+          id: string;
+          name: string;
+          followers: { total: number };
+          genres: string[];
+          external_urls: { spotify: string };
+          images: { url: string }[];
+        }> };
+      };
+
+      for (const a of data.artists?.items || []) {
+        const aNorm = normalizeForSpotifyMatch(a.name);
+        let score = 0;
+        if (aNorm === qNorm) score += 50;
+        else if (aNorm.includes(qNorm) || qNorm.includes(aNorm)) score += 35;
+        else {
+          const words = qNorm.split(' ').filter((w) => w.length > 1);
+          const matched = words.filter((w) => aNorm.includes(w));
+          score += Math.round((matched.length / Math.max(words.length, 1)) * 25);
+        }
+        if (a.followers.total > 1000) score += 5;
+        if (score > bestScore) {
+          bestScore = score;
+          best = {
+            id: a.id,
+            name: a.name,
+            imageUrl: a.images[0]?.url || '',
+            followers: a.followers.total,
+            genres: a.genres,
+            spotifyUrl: a.external_urls.spotify,
+          };
+        }
       }
-      if (a.followers.total > 1000) score += 5;
-      if (score > bestScore) {
-        bestScore = score;
-        best = {
-          id: a.id,
-          name: a.name,
-          imageUrl: a.images[0]?.url || '',
-          followers: a.followers.total,
-          genres: a.genres,
-          spotifyUrl: a.external_urls.spotify,
-        };
-      }
+      if (bestScore >= 45) break;
     }
     if (bestScore >= 45) break;
   }
 
-  return bestScore >= 20 ? best : null;
+  return bestScore >= 12 ? best : null;
 }
 
 export async function fetchSpotifyArtistTopTracks(artistId: string): Promise<SpotifySearchResult[]> {

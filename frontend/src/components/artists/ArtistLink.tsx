@@ -10,18 +10,17 @@ interface ArtistLinkProps {
   onClick?: (e: React.MouseEvent) => void;
 }
 
-function artistHref(name: string, id?: string | null): string {
-  if (id) return `/artist/${id}`;
+function artistHref(name: string): string {
   return `/artist/by-name/${encodeURIComponent(name.trim())}`;
 }
 
-export default function ArtistLink({ name, id, className, onClick }: ArtistLinkProps) {
+export default function ArtistLink({ name, id: _id, className, onClick }: ArtistLinkProps) {
   const trimmed = name.trim();
   if (!trimmed) return null;
 
   return (
     <Link
-      to={artistHref(trimmed, id)}
+      to={artistHref(trimmed)}
       onClick={(e) => {
         e.stopPropagation();
         onClick?.(e);

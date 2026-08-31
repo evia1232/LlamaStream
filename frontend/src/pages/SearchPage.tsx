@@ -6,8 +6,7 @@ import api from '../api/client';
 import TrackRow from '../components/tracks/TrackRow';
 import TrackSurface from '../components/tracks/TrackSurface';
 import PlaybackMeta from '../components/player/PlaybackMeta';
-import { externalTrack } from '../lib/trackUtils';
-import { ArtistLinks } from '../components/artists/ArtistLink';
+import { externalTrack, getArtistName } from '../lib/trackUtils';
 import {
   addRecentQuery,
   addRecentSearchTrack,
@@ -205,7 +204,7 @@ export default function SearchPage() {
         </div>
         <div className="flex-1 min-w-0">
           <p className={clsx('text-base font-normal truncate', isCurrent && 'text-spotify-green')}>{title}</p>
-          <ArtistLinks artist={artist} className="text-body truncate block" linkClassName="text-body" />
+          <p className="text-body truncate">{getArtistName(artist)}</p>
           {isCurrent && <PlaybackMeta track={track} className="mt-0.5" />}
           {opts?.badge && !isCurrent && <span className="text-caption">{opts.badge}</span>}
         </div>
@@ -318,7 +317,7 @@ export default function SearchPage() {
                     </div>
                     <div className="flex-1 min-w-0 text-start">
                       <p className={clsx('truncate', isCurrent && 'text-spotify-green')}>{item.title}</p>
-                      <ArtistLinks artist={item.artist} className="text-body truncate block" linkClassName="text-body" />
+                      <p className="text-body truncate">{getArtistName(item.artist)}</p>
                       {isCurrent && <PlaybackMeta track={track} className="mt-0.5" />}
                     </div>
                     <span className="text-caption tabular-nums">{formatTime(item.duration)}</span>
@@ -353,7 +352,7 @@ export default function SearchPage() {
                   <h3 className="text-label mb-3">{t('artists')}</h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4">
                     {results.artists.map((artist) => (
-                      <Link key={artist.id} to={`/artist/${artist.id}`} className="text-center card-hover p-3 rounded-lg">
+                      <Link key={artist.id} to={`/artist/by-name/${encodeURIComponent(artist.name)}`} className="text-center card-hover p-3 rounded-lg">
                         <div className="w-full aspect-square rounded-full bg-spotify-lightgray mb-2 overflow-hidden">
                           {artist.imageUrl ? (
                             <img src={artist.imageUrl} alt="" className="w-full h-full object-cover" />

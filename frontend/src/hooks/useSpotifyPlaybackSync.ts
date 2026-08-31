@@ -7,6 +7,7 @@ import type { SpotifyPlaybackState } from '../lib/spotifySdk';
 export function useSpotifyPlaybackSync() {
   const playbackEngine = usePlayerStore((s) => s.playbackEngine);
   const volume = usePlayerStore((s) => s.volume);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
   const engine = useSpotifyPlayerStore((s) => s.engine);
   const setCurrentTime = usePlayerStore((s) => s.setCurrentTime);
   const setDuration = usePlayerStore((s) => s.setDuration);
@@ -31,6 +32,25 @@ export function useSpotifyPlaybackSync() {
       engine.player.removeListener('player_state_changed', onState);
     };
   }, [playbackEngine, engine, setCurrentTime, setDuration, setIsPlaying]);
+
+  useEffect(() => {
+    if (playbackEngine !== 'spotify' || !engine || !isPlaying) return;
+
+    const poll = async () => {
+      try {
+        const s = await engine.player.getCurrentState();
+        if (s) {
+          setCurrentTime(s.position / 1000);
+          if (s.duration > 0) setDuration(s.duration / 1000);
+          setIsPlaying(!s.paused);
+        }
+      } catch { /* ignore */ }
+    };
+
+    void poll();
+    const pollId = setInterval(poll, 400);
+    return () => clearInterval(pollId);
+  }, [playbackEngine, engine, isPlaying, setCurrentTime, setDuration, setIsPlaying]);
 
   useEffect(() => {
     if (playbackEngine !== 'spotify') return;
