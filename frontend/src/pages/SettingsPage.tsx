@@ -2,10 +2,10 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { applyDocumentDirection } from '../lib/direction';
-import { useAuthStore } from '../store';
+import { useAuthStore, usePlayerStore } from '../store';
 import api from '../api/client';
 import { User } from '../types';
-import { Trash2, UserPlus, HardDrive } from 'lucide-react';
+import { Trash2, UserPlus, HardDrive, Infinity } from 'lucide-react';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -17,6 +17,7 @@ function formatBytes(bytes: number): string {
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { user, updateProfile } = useAuthStore();
+  const { autoplay, toggleAutoplay } = usePlayerStore();
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [language, setLanguage] = useState(user?.language || 'he');
   const [audioQuality, setAudioQuality] = useState(user?.audioQuality || 'HIGH');
@@ -161,6 +162,31 @@ export default function SettingsPage() {
             {saved ? t('success') : t('save')}
           </button>
         </div>
+      </section>
+
+      {/* Playback */}
+      <section className="mb-10">
+        <h2 className="text-heading-sm mb-5 flex items-center gap-2">
+          <Infinity className="w-5 h-5 text-spotify-green" />
+          {t('autoplay')}
+        </h2>
+        <label className="flex items-center justify-between bg-spotify-lightgray rounded-lg p-4 cursor-pointer">
+          <div>
+            <p className="font-medium">{t('autoplay')}</p>
+            <p className="text-sm text-spotify-text mt-1">{t('autoplayHint')}</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoplay}
+            onClick={toggleAutoplay}
+            className={`relative w-11 h-6 rounded-full transition-colors ${autoplay ? 'bg-spotify-green' : 'bg-spotify-gray'}`}
+          >
+            <span
+              className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full transition-transform ${autoplay ? 'translate-x-5' : ''}`}
+            />
+          </button>
+        </label>
       </section>
 
       {/* Library management */}

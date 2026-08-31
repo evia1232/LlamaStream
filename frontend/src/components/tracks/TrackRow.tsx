@@ -95,13 +95,22 @@ export default function TrackRow({
     if (track.isDownloaded) return;
     setDownloading(true);
     try {
-      const { data } = await api.post('/tracks/download', {
-        query: `${artistName} - ${track.title}`,
-        title: track.title,
-        artist: artistName,
-        duration: track.duration,
-        album: track.album?.title,
-      });
+      const payload = track.youtubeUrl
+        ? {
+            url: track.youtubeUrl,
+            title: track.title,
+            artist: artistName,
+            duration: track.duration,
+            album: track.album?.title,
+          }
+        : {
+            query: `${artistName} - ${track.title}`,
+            title: track.title,
+            artist: artistName,
+            duration: track.duration,
+            album: track.album?.title,
+          };
+      const { data } = await api.post('/tracks/download', payload);
       const downloaded = data.track as Track;
       if (contextTracks && contextTracks.length > 0) {
         const startIdx = index ?? contextTracks.findIndex((t) => t.id === track.id);

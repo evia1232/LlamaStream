@@ -18,17 +18,29 @@ interface HomeData {
   history: (Track & { playedAt?: string })[];
 }
 
+interface DiscoverData {
+  seed: { id: string; title: string; artist: string } | null;
+  recommendations: Track[];
+}
+
 export default function HomePage() {
   const { t } = useTranslation();
   const [data, setData] = useState<HomeData | null>(null);
+  const [discover, setDiscover] = useState<DiscoverData | null>(null);
   const playTrack = usePlayerStore((s) => s.playTrack);
 
   useEffect(() => {
     api.get('/home').then(({ data: d }) => setData(d)).catch(console.error);
+    api.get('/discover/recommendations', { params: { limit: 10 } })
+      .then(({ data: d }) => setDiscover(d))
+      .catch(console.error);
   }, []);
 
   const refresh = () => {
     api.get('/home').then(({ data: d }) => setData(d)).catch(console.error);
+    api.get('/discover/recommendations', { params: { limit: 10 } })
+      .then(({ data: d }) => setDiscover(d))
+      .catch(console.error);
   };
 
   if (!data) {
@@ -79,6 +91,30 @@ export default function HomePage() {
         title={t('madeForYou')}
         items={data.madeForYou.map((p) => ({ ...p, type: 'playlist' as const }))}
       />
+
+      {discover && discover.recommendations.length > 0 && (
+        <section className="px-4 md:px-6 mb-8">
+          <div className="mb-4">
+            <h2 className="text-heading">{t('discover')}</h2>
+            {discover.seed && (
+              <p className="text-sm text-spotify-text mt-1">
+                {t('discoverBasedOn', { title: `${discover.seed.title} · ${discover.seed.artist}` })}
+              </p>
+            )}
+          </div>
+          <div>
+            {discover.recommendations.map((track, i) => (
+              <TrackRow
+                key={`discover-${track.id}-${i}`}
+                track={normalizeTrack(track)}
+                index={i}
+                contextTracks={discover.recommendations.map(normalizeTrack)}
+                onDeleted={refresh}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       <CardGrid
         title={t('topArtists')}

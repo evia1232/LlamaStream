@@ -14,6 +14,7 @@ import trackRoutes from './routes/tracks';
 import playlistRoutes from './routes/playlists';
 import queueRoutes from './routes/queue';
 import homeRoutes from './routes/home';
+import discoverRoutes from './routes/discover';
 import mediaRoutes from './routes/media';
 import { resumePendingImports } from './services/playlistImport';
 
@@ -92,6 +93,7 @@ app.use('/api/tracks', trackRoutes);
 app.use('/api/playlists', playlistRoutes);
 app.use('/api/queue', queueRoutes);
 app.use('/api/home', homeRoutes);
+app.use('/api/discover', discoverRoutes);
 app.use('/api/media', mediaRoutes);
 
 app.use(notFound);

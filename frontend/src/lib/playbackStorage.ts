@@ -1,4 +1,5 @@
 const VOLUME_KEY = 'llamastream_volume';
+const AUTOPLAY_KEY = 'llamastream_autoplay';
 const STORAGE_KEY = 'llamastream_playback';
 
 export interface SavedPlayback {
@@ -49,4 +50,16 @@ export function saveLocalPlayback(state: SavedPlayback): void {
 
 export function clearLocalPlayback(): void {
   localStorage.removeItem(STORAGE_KEY);
+}
+
+export function loadAutoplayEnabled(): boolean {
+  try {
+    const raw = localStorage.getItem(AUTOPLAY_KEY);
+    if (raw === 'false') return false;
+  } catch { /* ignore */ }
+  return true;
+}
+
+export function saveAutoplayEnabled(enabled: boolean): void {
+  localStorage.setItem(AUTOPLAY_KEY, String(enabled));
 }

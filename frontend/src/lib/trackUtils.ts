@@ -42,7 +42,10 @@ export function normalizeTrack(track: {
   duration?: number;
   thumbnailUrl?: string | null;
   isDownloaded?: boolean;
+  isDownloading?: boolean;
   streamUrl?: string | null;
+  source?: 'library' | 'youtube';
+  youtubeUrl?: string;
   artist: { id?: string; name?: string } | string;
   album?: { id: string; title: string; coverUrl?: string | null } | null;
 }): Track {
@@ -59,8 +62,11 @@ export function normalizeTrack(track: {
     duration: track.duration || 0,
     thumbnailUrl,
     isDownloaded: track.isDownloaded ?? !!track.streamUrl,
+    isDownloading: track.isDownloading ?? false,
     streamUrl: track.streamUrl ?? null,
     artist: artistObj,
     album: track.album ?? null,
+    source: track.source,
+    youtubeUrl: track.youtubeUrl,
   };
 }

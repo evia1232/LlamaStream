@@ -1,0 +1,248 @@
+import prisma from '../lib/prisma';
+import { searchYouTube, prepareTrackForPlayback, SearchResult } from './downloader';
+import { rankYouTubeResults, extractTrackTitleFromYouTube } from '../lib/trackMatch';
+import { trackStreamUrl } from './trackDownload';
+
+export interface DiscoverItem {
+  id: string;
+  title: string;
+  duration: number;
+  thumbnailUrl: string | null;
+  isDownloaded: boolean;
+  streamUrl: string | null;
+  artist: { id: string; name: string; imageUrl: string | null };
+  album: { id: string; title: string; coverUrl: string | null } | null;
+  source: 'library' | 'youtube';
+  youtubeUrl?: string;
+}
+
+function formatDiscoverTrack(track: {
+  id: string;
+  title: string;
+  duration: number;
+  thumbnailUrl: string | null;
+  sourceUrl: string | null;
+  sourceId: string | null;
+  quality: string;
+  isDownloaded: boolean;
+  artist: { id: string; name: string; imageUrl: string | null };
+  album?: { id: string; title: string; coverUrl: string | null } | null;
+}): DiscoverItem {
+  return {
+    id: track.id,
+    title: track.title,
+    duration: track.duration,
+    thumbnailUrl: track.thumbnailUrl,
+    isDownloaded: track.isDownloaded,
+    streamUrl: trackStreamUrl(track),
+    artist: track.artist,
+    album: track.album ?? null,
+    source: 'library',
+  };
+}
+
+async function getExcludeIds(userId: string, extraTrackId?: string) {
+  const recent = await prisma.playHistory.findMany({
+    where: { userId },
+    orderBy: { playedAt: 'desc' },
+    take: 40,
+    include: { track: { select: { id: true, sourceId: true, title: true } } },
+  });
+
+  const trackIds = new Set<string>(recent.map((h) => h.trackId));
+  const sourceIds = new Set<string>();
+  const titles = new Set<string>();
+  for (const h of recent) {
+    if (h.track.sourceId) sourceIds.add(h.track.sourceId);
+    titles.add(h.track.title.toLowerCase());
+  }
+  if (extraTrackId) trackIds.add(extraTrackId);
+  return { trackIds, sourceIds, titles };
+}
+
+async function collectLibraryRecs(
+  userId: string,
+  seed: { artistId: string; id: string },
+  exclude: Set<string>,
+  limit: number
+) {
+  const [sameArtist, liked] = await Promise.all([
+    prisma.track.findMany({
+      where: {
+        artistId: seed.artistId,
+        id: { notIn: [...exclude] },
+        OR: [{ isDownloaded: true }, { sourceUrl: { not: null } }],
+      },
+      include: { artist: true, album: true },
+      orderBy: { updatedAt: 'desc' },
+      take: limit,
+    }),
+    prisma.likedTrack.findMany({
+      where: {
+        userId,
+        track: {
+          id: { notIn: [...exclude, seed.id] },
+          OR: [{ isDownloaded: true }, { sourceUrl: { not: null } }],
+        },
+      },
+      include: { track: { include: { artist: true, album: true } } },
+      take: limit,
+    }),
+  ]);
+
+  const out = [];
+  const seen = new Set<string>();
+  for (const t of sameArtist) {
+    if (!seen.has(t.id)) { seen.add(t.id); out.push(t); }
+  }
+  for (const l of liked) {
+    if (!seen.has(l.track.id)) { seen.add(l.track.id); out.push(l.track); }
+  }
+  return out.slice(0, limit);
+}
+
+async function collectYouTubeRecs(
+  seed: { title: string; artist: { name: string }; duration: number },
+  excludeSourceIds: Set<string>,
+  excludeTitles: Set<string>,
+  limit: number
+): Promise<SearchResult[]> {
+  const artist = seed.artist.name;
+  const queries = [
+    `${artist} official audio`,
+    `${artist} - official`,
+    `songs like ${seed.title} ${artist}`,
+  ];
+
+  const found: SearchResult[] = [];
+  const seen = new Set<string>();
+
+  for (const q of queries) {
+    if (found.length >= limit) break;
+    try {
+      const results = await searchYouTube(q, 12);
+      const ranked = rankYouTubeResults(
+        results,
+        { title: seed.title, artist, duration: seed.duration },
+        { filterVariants: true, rawQuery: q, minScore: 42 }
+      );
+
+      for (const r of ranked) {
+        if (seen.has(r.id) || excludeSourceIds.has(r.id)) continue;
+        const titleKey = extractTrackTitleFromYouTube(r.title).toLowerCase();
+        if (excludeTitles.has(titleKey)) continue;
+        seen.add(r.id);
+        found.push(r);
+        if (found.length >= limit) break;
+      }
+    } catch (err) {
+      console.error('[Discover] YouTube search failed:', err);
+    }
+  }
+
+  return found;
+}
+
+export async function getDiscoverRecommendations(
+  userId: string,
+  seedTrackId?: string,
+  limit = 12
+) {
+  const { trackIds, sourceIds, titles } = await getExcludeIds(userId, seedTrackId);
+
+  let seed = seedTrackId
+    ? await prisma.track.findUnique({
+        where: { id: seedTrackId },
+        include: { artist: true, album: true },
+      })
+    : null;
+
+  if (!seed) {
+    const last = await prisma.playHistory.findFirst({
+      where: { userId },
+      orderBy: { playedAt: 'desc' },
+      include: { track: { include: { artist: true, album: true } } },
+    });
+    seed = last?.track ?? null;
+  }
+
+  if (!seed) {
+    const popular = await prisma.track.findMany({
+      where: { isDownloaded: true },
+      include: { artist: true, album: true },
+      orderBy: { updatedAt: 'desc' },
+      take: limit,
+    });
+    return { seed: null, recommendations: popular.map(formatDiscoverTrack) };
+  }
+
+  titles.add(seed.title.toLowerCase());
+  const libraryRecs = await collectLibraryRecs(userId, seed, trackIds, Math.ceil(limit / 2));
+  const recommendations: DiscoverItem[] = libraryRecs.map(formatDiscoverTrack);
+
+  const ytNeeded = limit - recommendations.length;
+  if (ytNeeded > 0) {
+    const ytResults = await collectYouTubeRecs(seed, sourceIds, titles, ytNeeded);
+    for (const r of ytResults) {
+      recommendations.push({
+        id: `discover-yt-${r.id}`,
+        title: extractTrackTitleFromYouTube(r.title),
+        duration: r.duration,
+        thumbnailUrl: r.thumbnailUrl,
+        isDownloaded: false,
+        streamUrl: null,
+        artist: { id: '', name: r.artist, imageUrl: null },
+        album: null,
+        source: 'youtube',
+        youtubeUrl: r.url,
+      });
+    }
+  }
+
+  return {
+    seed: { id: seed.id, title: seed.title, artist: seed.artist.name },
+    recommendations: recommendations.slice(0, limit),
+  };
+}
+
+export async function getNextDiscoverTrack(
+  userId: string,
+  seedTrackId: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH'
+) {
+  const { recommendations } = await getDiscoverRecommendations(userId, seedTrackId, 6);
+
+  for (const rec of recommendations) {
+    if (rec.source === 'library' && rec.streamUrl) {
+      const track = await prisma.track.findUnique({
+        where: { id: rec.id },
+        include: { artist: true, album: true },
+      });
+      if (track) {
+        return {
+          track: formatDiscoverTrack(track),
+          upcoming: recommendations.filter((r) => r.id !== rec.id).slice(0, 5),
+        };
+      }
+    }
+
+    if (rec.source === 'youtube' && rec.youtubeUrl) {
+      try {
+        const prepared = await prepareTrackForPlayback(rec.youtubeUrl, quality, {
+          url: rec.youtubeUrl,
+          title: rec.title,
+          artist: rec.artist.name,
+          duration: rec.duration,
+        });
+        return {
+          track: formatDiscoverTrack({ ...prepared, album: prepared.album }),
+          upcoming: recommendations.filter((r) => r.id !== rec.id).slice(0, 5),
+        };
+      } catch (err) {
+        console.error('[Discover] Failed to prepare:', (err as Error).message);
+      }
+    }
+  }
+
+  return { track: null, upcoming: [] as DiscoverItem[] };
+}

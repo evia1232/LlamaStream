@@ -9,7 +9,10 @@ import {
   clearLocalPlayback,
   loadSavedVolume,
   saveVolume,
+  loadAutoplayEnabled,
+  saveAutoplayEnabled,
 } from '../lib/playbackStorage';
+import { normalizeTrack } from '../lib/trackUtils';
 
 interface PlayerState {
   currentTrack: Track | null;
@@ -49,6 +52,8 @@ interface PlayerState {
   playPrevious: () => void;
   contextTracks: Track[];
   contextIndex: number;
+  autoplay: boolean;
+  _discoverLoading: boolean;
   fetchQueue: () => Promise<void>;
   addToQueue: (trackId: string, playNext?: boolean) => Promise<void>;
   removeFromQueue: (itemId: string) => Promise<void>;
@@ -61,6 +66,8 @@ interface PlayerState {
   persistPlayback: () => Promise<void>;
   persistVolume: () => Promise<void>;
   restorePlayback: () => Promise<void>;
+  toggleAutoplay: () => void;
+  playDiscoverNext: () => Promise<void>;
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -82,6 +89,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   _seekFn: null,
   contextTracks: [] as Track[],
   contextIndex: -1,
+  autoplay: loadAutoplayEnabled(),
+  _discoverLoading: false,
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
   setIsPlaying: (playing) => {
@@ -220,8 +229,50 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     } else if (repeat === 'all' && currentTrack) {
       get().seekTo(0);
       set({ isPlaying: true });
+    } else if (get().autoplay && currentTrack) {
+      void get().playDiscoverNext();
     } else {
       set({ isPlaying: false });
+    }
+  },
+
+  toggleAutoplay: () => {
+    const next = !get().autoplay;
+    saveAutoplayEnabled(next);
+    set({ autoplay: next });
+  },
+
+  playDiscoverNext: async () => {
+    const { currentTrack, autoplay, _discoverLoading } = get();
+    if (!autoplay || !currentTrack || _discoverLoading) {
+      if (!autoplay) set({ isPlaying: false });
+      return;
+    }
+
+    set({ _discoverLoading: true });
+    try {
+      const { data } = await api.get('/discover/next', { params: { seedTrackId: currentTrack.id } });
+      if (!data.track) {
+        set({ isPlaying: false });
+        return;
+      }
+
+      const track = normalizeTrack(data.track);
+      const upcoming = (data.upcoming || [])
+        .filter((t: { source?: string; streamUrl?: string | null }) => t.source === 'library' && t.streamUrl)
+        .map((t: Track) => normalizeTrack(t));
+
+      if (upcoming.length > 0) {
+        set({ contextTracks: [track, ...upcoming], contextIndex: 0 });
+      } else {
+        set({ contextTracks: [track], contextIndex: 0 });
+      }
+
+      await get().playTrack(track);
+    } catch {
+      set({ isPlaying: false });
+    } finally {
+      set({ _discoverLoading: false });
     }
   },
 

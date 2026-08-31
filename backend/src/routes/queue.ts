@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { trackStreamUrl } from '../services/trackDownload';
 import prisma from '../lib/prisma';
 
 const router = Router();
@@ -13,6 +14,7 @@ function formatQueueItem(item: {
     duration: number;
     thumbnailUrl: string | null;
     isDownloaded: boolean;
+    sourceUrl?: string | null;
     artist: { id: string; name: string };
     album?: { id: string; title: string } | null;
   };
@@ -26,7 +28,7 @@ function formatQueueItem(item: {
       duration: item.track.duration,
       thumbnailUrl: item.track.thumbnailUrl,
       isDownloaded: item.track.isDownloaded,
-      streamUrl: item.track.isDownloaded ? `/api/tracks/${item.track.id}/stream` : null,
+      streamUrl: trackStreamUrl(item.track),
       artist: item.track.artist,
       album: item.track.album,
     },

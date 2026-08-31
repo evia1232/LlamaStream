@@ -256,6 +256,28 @@ export async function processPlaylistImport(jobId: string) {
   console.log(`[Import] Job ${jobId} done: ${completed}/${tracks.length} tracks`);
 }
 
+export async function listActiveImportJobs(userId: string) {
+  const jobs = await prisma.playlistImportJob.findMany({
+    where: {
+      userId,
+      status: { in: ['parsing', 'pending', 'running'] },
+    },
+    include: { playlist: { select: { id: true, name: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return jobs.map((job) => ({
+    id: job.id,
+    status: job.status,
+    totalTracks: job.totalTracks,
+    completedTracks: job.completedTracks,
+    failedTracks: job.failedTracks,
+    playlist: job.playlist,
+    errors: job.errors,
+    createdAt: job.createdAt,
+  }));
+}
+
 export async function getImportJobStatus(jobId: string, userId: string) {
   const job = await prisma.playlistImportJob.findUnique({
     where: { id: jobId },

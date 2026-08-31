@@ -16,10 +16,17 @@ export interface RankOptions {
 
 /** Always reject — not the song */
 const BAD_KEYWORDS = [
-  'karaoke', 'cover version', 'cover by', 'tribute band', 'reaction', 'reacts to',
-  'tutorial', 'lesson', 'how to play', 'full album', 'continuous mix', 'mix tape',
-  'reading of', 'audiobook', 'interview', 'podcast', 'review', 'breakdown',
-  'behind the scenes', 'making of', 'teaser', 'trailer',
+  'karaoke', 'karaoke version', 'sing along', 'sing-along', 'singalong',
+  'with lyrics', 'lyrics on screen', 'scrolling lyrics', 'lyric video', 'lyrics video',
+  'cover version', 'cover by', 'tribute band', 'tribute to', 'in the style of',
+  'backing track', 'backtrack', 'playback track', 'minus one', 'minusone', 'no vocals',
+  'instrumental karaoke', 'pro backing', 'originally performed by',
+  'reaction', 'reacts to', 'tutorial', 'lesson', 'how to play', 'guitar tutorial',
+  'piano tutorial', 'bass cover', 'drum cover', 'full album', 'continuous mix',
+  'mix tape', 'reading of', 'audiobook', 'interview', 'podcast', 'review', 'breakdown',
+  'behind the scenes', 'making of', 'teaser', 'trailer', 'fan made', 'fanmade',
+  '8d audio', 'nightcore', 'chipmunk', 'sped up', 'slowed reverb', 'bass boosted',
+  'phonk', 'tiktok version', 'tik tok version',
 ];
 
 /** Variant keywords — penalized/rejected unless user searched for them */
@@ -41,9 +48,15 @@ const VARIANT_PATTERNS: RegExp[] = [
   /\blive from\b/i,
   /\bconcert\b/i,
   /\bperformance\b/i,
-  /\bacoustic\b/i,
+  /\bacoustic version\b/i,
+  /\bacoustic cover\b/i,
   /\bunplugged\b/i,
-  /\bcover\b/i,
+  /\bpiano cover\b/i,
+  /\bguitar cover\b/i,
+  /\bviolin cover\b/i,
+  /\bcover by\b/i,
+  /\bcover version\b/i,
+  /\bcovered by\b/i,
   /\bslowed\b/i,
   /\bslowed\s*\+\s*reverb\b/i,
   /\breverb\b/i,
@@ -54,8 +67,6 @@ const VARIANT_PATTERNS: RegExp[] = [
   /\bspeed up\b/i,
   /\bpitch shifted\b/i,
   /\binstrumental\b/i,
-  /\bpiano cover\b/i,
-  /\bguitar cover\b/i,
   /\bdemo\b/i,
   /\bouttake\b/i,
   /\balternate version\b/i,
@@ -128,9 +139,21 @@ export function hasUnwantedVariant(
   return ytVariants.some((pattern) => pattern.test(ytTitle) && !pattern.test(targetText));
 }
 
+export function extractTrackTitleFromYouTube(title: string): string {
+  const match = title.match(/^(.+?)\s[-–—]\s(.+)$/);
+  if (match) return match[2].trim();
+  return title
+    .replace(/\s*[\(\[\{](official\s*(video|audio|lyric(s)?|visualizer)|lyrics?|audio|video|hd|4k|visual|prod\.?)[^)\]\}]*[\)\]\}]/gi, '')
+    .trim();
+}
+
 export function isLikelyBadMatch(title: string): boolean {
   const lower = title.toLowerCase();
-  return BAD_KEYWORDS.some((kw) => lower.includes(kw));
+  if (BAD_KEYWORDS.some((kw) => lower.includes(kw))) return true;
+  // Channel-style karaoke labels
+  if (/\bkaraoke\b/i.test(lower)) return true;
+  if (/\bsing\s*along\b/i.test(lower)) return true;
+  return false;
 }
 
 export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, options?: RankOptions): number {
@@ -237,8 +260,7 @@ export function shouldFilterVariants(
   rawInput: string,
   opts?: { title?: string; artist?: string }
 ): boolean {
-  if (userRequestedVariant(rawInput, opts?.title)) return false;
-  // Structured metadata from Spotify/import → want original studio version
-  if (opts?.title && opts?.artist) return true;
-  return false;
+  if (userRequestedVariant(rawInput, opts?.title, opts?.artist)) return false;
+  // Always prefer studio/original versions unless user explicitly searched for remix/live/etc.
+  return true;
 }

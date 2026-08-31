@@ -5,6 +5,7 @@ import { Plus, Import } from 'lucide-react';
 import api from '../api/client';
 import { Playlist } from '../types';
 import PlaylistCover from '../components/playlists/PlaylistCover';
+import ImportStatusPanel from '../components/playlists/ImportStatusPanel';
 
 export default function LibraryPage() {
   const { t } = useTranslation();
@@ -67,6 +68,8 @@ export default function LibraryPage() {
       {importMessage && (
         <p className="mb-4 text-sm text-spotify-text">{importMessage}</p>
       )}
+
+      <ImportStatusPanel className="mb-6" onUpdate={fetchPlaylists} />
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-5">
         <Link to="/liked" className="surface-card">

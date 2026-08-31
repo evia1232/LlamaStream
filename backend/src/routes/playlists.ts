@@ -8,7 +8,8 @@ import { body, validationResult } from 'express-validator';
 import { authenticate, AuthRequest, optionalAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { exportPlaylist } from '../services/spotify';
-import { startPlaylistImport, getImportJobStatus, importSpotifyPlaylist } from '../services/playlistImport';
+import { startPlaylistImport, getImportJobStatus, importSpotifyPlaylist, listActiveImportJobs } from '../services/playlistImport';
+import { trackStreamUrl } from '../services/trackDownload';
 import { addTrackToPlaylist, nextPlaylistPosition } from '../lib/playlistTracks';
 import { extractPlaylistCoverImages, playlistCoverTracksQuery } from '../lib/playlistCovers';
 import { config } from '../config';
@@ -122,6 +123,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
   const playlist = await prisma.playlist.findUnique({
     where: { id: req.params.id },
     include: {
+      importJob: true,
       tracks: {
         orderBy: { position: 'asc' },
         include: { track: { include: { artist: true, album: true } } },
@@ -134,15 +136,27 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
+  const importJob = playlist.importJob
+    ? {
+        id: playlist.importJob.id,
+        status: playlist.importJob.status,
+        totalTracks: playlist.importJob.totalTracks,
+        completedTracks: playlist.importJob.completedTracks,
+        failedTracks: playlist.importJob.failedTracks,
+        errors: playlist.importJob.errors,
+      }
+    : null;
+
   res.json({
     playlist: {
       ...formatPlaylist(playlist),
+      importJob,
       tracks: playlist.tracks.map((pt) => ({
         id: pt.track.id,
         title: pt.track.title,
         duration: pt.track.duration,
         thumbnailUrl: pt.track.thumbnailUrl,
-        streamUrl: pt.track.isDownloaded ? `/api/tracks/${pt.track.id}/stream` : null,
+        streamUrl: trackStreamUrl(pt.track),
         isDownloaded: pt.track.isDownloaded,
         artist: pt.track.artist,
         album: pt.track.album,
@@ -269,6 +283,11 @@ router.post('/import', authenticate, async (req: AuthRequest, res) => {
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
+});
+
+router.get('/import/active', authenticate, async (req: AuthRequest, res) => {
+  const jobs = await listActiveImportJobs(req.user!.userId);
+  res.json({ jobs });
 });
 
 router.get('/import/:jobId', authenticate, async (req: AuthRequest, res) => {

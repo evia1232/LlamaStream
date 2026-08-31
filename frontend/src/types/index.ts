@@ -22,8 +22,11 @@ export interface Track {
   thumbnailUrl?: string | null;
   streamUrl?: string | null;
   isDownloaded?: boolean;
+  isDownloading?: boolean;
   artist: Artist | { name: string } | string;
   album?: { id: string; title: string; coverUrl?: string | null } | null;
+  source?: 'library' | 'youtube';
+  youtubeUrl?: string;
 }
 
 export interface Playlist {
@@ -35,6 +38,18 @@ export interface Playlist {
   visibility: 'PUBLIC' | 'PRIVATE';
   trackCount?: number;
   tracks?: Track[];
+  importJob?: ImportJobStatus | null;
+}
+
+export interface ImportJobStatus {
+  id: string;
+  status: 'parsing' | 'pending' | 'running' | 'completed' | 'failed' | string;
+  totalTracks: number;
+  completedTracks: number;
+  failedTracks: number;
+  playlist: { id: string; name: string };
+  errors?: string[];
+  createdAt?: string;
 }
 
 export interface QueueItem {

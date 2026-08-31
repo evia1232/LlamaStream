@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Play, Download, Trash2 } from 'lucide-react';
@@ -8,6 +8,8 @@ import { Track, Playlist } from '../types';
 import { normalizeTrack } from '../lib/trackUtils';
 import { usePlayerStore } from '../store';
 import PlaylistCover from '../components/playlists/PlaylistCover';
+import ImportStatusList from '../components/playlists/ImportStatusList';
+import { ImportJobStatus } from '../types';
 
 export default function PlaylistPage() {
   const { id } = useParams<{ id: string }>();
@@ -15,11 +17,23 @@ export default function PlaylistPage() {
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const playTracks = usePlayerStore((s) => s.playTracks);
 
-  useEffect(() => {
-    if (id) {
-      api.get(`/playlists/${id}`).then(({ data }) => setPlaylist(data.playlist)).catch(console.error);
-    }
+  const [importJob, setImportJob] = useState<ImportJobStatus | null>(null);
+
+  const loadPlaylist = useCallback(() => {
+    if (!id) return;
+    api.get(`/playlists/${id}`).then(({ data }) => {
+      setPlaylist(data.playlist);
+      setImportJob(data.playlist.importJob ?? null);
+    }).catch(console.error);
   }, [id]);
+
+  useEffect(() => { loadPlaylist(); }, [loadPlaylist]);
+
+  useEffect(() => {
+    if (!importJob || !['parsing', 'pending', 'running'].includes(importJob.status)) return;
+    const timer = window.setInterval(loadPlaylist, 3000);
+    return () => window.clearInterval(timer);
+  }, [importJob, loadPlaylist]);
 
   const normalizedTracks = (playlist?.tracks ?? []).map((t) => normalizeTrack(t as Track));
 
@@ -83,6 +97,12 @@ export default function PlaylistPage() {
         </div>
       </div>
 
+      {importJob && ['parsing', 'pending', 'running'].includes(importJob.status) && (
+        <div className="px-6 pb-2">
+          <ImportStatusList jobs={[{ ...importJob, playlist: { id: playlist.id, name: playlist.name } }]} />
+        </div>
+      )}
+
       <div className="px-2">
         <div className="grid grid-cols-[16px_4fr_3fr_1fr_80px] gap-4 px-4 py-2 border-b border-white/10 text-spotify-text text-sm">
           <span>#</span>
@@ -98,16 +118,8 @@ export default function PlaylistPage() {
             index={i}
             contextTracks={normalizedTracks}
             playlistId={id}
-            onRemovedFromPlaylist={() => {
-              if (id) {
-                api.get(`/playlists/${id}`).then(({ data }) => setPlaylist(data.playlist)).catch(console.error);
-              }
-            }}
-            onDeleted={() => {
-              if (id) {
-                api.get(`/playlists/${id}`).then(({ data }) => setPlaylist(data.playlist)).catch(console.error);
-              }
-            }}
+            onRemovedFromPlaylist={loadPlaylist}
+            onDeleted={loadPlaylist}
           />
         ))}
       </div>

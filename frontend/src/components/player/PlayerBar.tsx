@@ -2,7 +2,7 @@ import { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
-  Volume2, VolumeX, Heart, Mic2, ListMusic,
+  Volume2, VolumeX, Heart, Mic2, ListMusic, Infinity,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
@@ -10,7 +10,7 @@ import { streamUrl } from '../../lib/apiUrl';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import { progressGradient } from '../../lib/direction';
 import { openTrackContextMenu } from '../../store/trackMenuStore';
-
+import { useMediaSession } from '../../hooks/useMediaSession';
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -32,10 +32,15 @@ export default function PlayerBar() {
     toggleShuffle, cycleRepeat, playNext, playPrevious,
     toggleLike, setShowQueue, setShowLyrics, showLyrics,
     clearPendingSeek, persistPlayback, registerSeek, seekTo, setShowNowPlaying,
+    autoplay, toggleAutoplay, _discoverLoading,
   } = usePlayerStore();
+
+  const isBuffering = currentTrack?.isDownloading && !currentTrack?.isDownloaded;
 
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
   const lastPersistRef = useRef(0);
+
+  useMediaSession();
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -69,6 +74,19 @@ export default function PlayerBar() {
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
   }, [volume]);
+
+  // Resume playback when returning to the app (mobile browsers may pause background tabs)
+  useEffect(() => {
+    const onVisibility = () => {
+      const audio = audioRef.current;
+      if (!audio || document.visibilityState !== 'visible') return;
+      if (isPlaying && audio.paused) {
+        audio.play().catch(() => usePlayerStore.getState().setIsPlaying(false));
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [isPlaying]);
 
   const handleTimeUpdate = () => {
     if (!audioRef.current) return;
@@ -127,6 +145,15 @@ export default function PlayerBar() {
       <button type="button" onClick={cycleRepeat} className={clsx('icon-btn', repeat !== 'off' && 'active text-spotify-green')}>
         {repeat === 'one' ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
       </button>
+      <button
+        type="button"
+        onClick={toggleAutoplay}
+        className={clsx('icon-btn', autoplay && 'active text-spotify-green')}
+        aria-label={t('autoplay')}
+        title={t('autoplayHint')}
+      >
+        <Infinity className="w-4 h-4" />
+      </button>
     </>
   );
 
@@ -149,6 +176,8 @@ export default function PlayerBar() {
         onLoadedMetadata={handleLoadedMetadata}
         onEnded={handleEnded}
         crossOrigin="anonymous"
+        playsInline
+        preload="auto"
       />
 
       {/* Mobile progress */}
@@ -224,6 +253,8 @@ export default function PlayerBar() {
           <div className="min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
+            {isBuffering && <p className="text-2xs text-spotify-green truncate">{t('downloading')}</p>}
+            {_discoverLoading && <p className="text-2xs text-spotify-green truncate">{t('findingNext')}</p>}
           </div>
           <button
             type="button"

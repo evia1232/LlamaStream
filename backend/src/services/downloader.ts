@@ -6,6 +6,8 @@ import { config, qualityBitrates } from '../config';
 import prisma from '../lib/prisma';
 import { runYtDlp, findFileByPrefix, lastLines } from './ytdlp';
 import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants } from '../lib/trackMatch';
+import { fetchLyricsForTrack } from './lyrics';
+import { ensureBackgroundDownload } from './trackDownload';
 
 export interface SearchResult {
   id: string;
@@ -25,6 +27,15 @@ export interface DownloadResult {
   thumbnailUrl: string;
   sourceId: string;
   sourceUrl: string;
+}
+
+export interface ResolvedSource {
+  url: string;
+  sourceId: string;
+  title: string;
+  artist: string;
+  duration: number;
+  thumbnailUrl: string;
 }
 
 function parseJsonLines<T>(output: string): T[] {
@@ -157,7 +168,8 @@ export async function saveTrackRecord(
   download: DownloadResult,
   quality: 'LOW' | 'NORMAL' | 'HIGH',
   preferredTitle?: string,
-  preferredArtist?: string
+  preferredArtist?: string,
+  preferredAlbum?: string
 ) {
   const artistName = preferredArtist || download.artist;
   const trackTitle = preferredTitle || download.title;
@@ -193,52 +205,88 @@ export async function saveTrackRecord(
         include: { artist: true, album: true, lyrics: true },
       });
 
-  fetchLyricsForTrack(track.id, trackTitle, artistName).catch(console.error);
+  fetchLyricsForTrack({
+    trackId: track.id,
+    title: trackTitle,
+    artist: artistName,
+    duration: download.duration,
+    album: preferredAlbum ?? track.album?.title ?? null,
+  }).catch(console.error);
   return track;
 }
 
-export async function resolveAndDownload(
-  input: string,
-  quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
-  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string }
+export async function upsertPendingTrack(
+  source: ResolvedSource,
+  quality: 'LOW' | 'NORMAL' | 'HIGH',
+  preferredTitle?: string,
+  preferredArtist?: string
 ) {
-  const trimmed = input.trim();
+  const artistName = preferredArtist || source.artist;
+  const trackTitle = preferredTitle || source.title;
 
-  // Direct YouTube URL
-  if (opts?.url || /youtube\.com|youtu\.be|music\.youtube\.com/i.test(trimmed)) {
-    const url = opts?.url || trimmed;
-    const existing = await prisma.track.findFirst({
-      where: { sourceUrl: url, isDownloaded: true },
-      include: { artist: true, album: true, lyrics: true },
-    });
-    if (existing?.filePath && fs.existsSync(existing.filePath)) return existing;
+  let artist = await prisma.artist.findUnique({ where: { name: artistName } });
+  if (!artist) artist = await prisma.artist.create({ data: { name: artistName } });
 
-    const download = await downloadFromYouTube(url, quality);
-    return saveTrackRecord(download, quality, opts?.title, opts?.artist);
+  const existing = source.sourceId
+    ? await prisma.track.findFirst({ where: { sourceId: source.sourceId }, include: { artist: true, album: true, lyrics: true } })
+    : null;
+
+  if (existing?.isDownloaded && existing.filePath && fs.existsSync(existing.filePath)) {
+    return existing;
   }
 
-  // Search query — find best YouTube match (especially for Spotify imports)
-  const searchQuery = opts?.artist && opts?.title
-    ? `${opts.artist} - ${opts.title}`
-    : trimmed;
+  const data = {
+    title: trackTitle,
+    artistId: artist.id,
+    duration: source.duration,
+    sourceUrl: source.url,
+    sourceId: source.sourceId,
+    thumbnailUrl: source.thumbnailUrl,
+    quality,
+    isDownloaded: false,
+    filePath: null as string | null,
+    downloadedAt: null as Date | null,
+  };
 
-  const existing = await prisma.track.findFirst({
-    where: {
-      isDownloaded: true,
-      OR: [
-        { title: { equals: opts?.title || searchQuery, mode: 'insensitive' } },
-        ...(opts?.title && opts?.artist ? [{
-          AND: [
-            { title: { contains: opts.title, mode: 'insensitive' as const } },
-            { artist: { name: { contains: opts.artist.split(/[,;&]/)[0].trim(), mode: 'insensitive' as const } } },
-          ],
-        }] : []),
-      ],
-    },
+  if (existing) {
+    return prisma.track.update({
+      where: { id: existing.id },
+      data,
+      include: { artist: true, album: true, lyrics: true },
+    });
+  }
+
+  return prisma.track.create({
+    data,
     include: { artist: true, album: true, lyrics: true },
   });
-  if (existing?.filePath && fs.existsSync(existing.filePath)) return existing;
+}
 
+export async function resolveYouTubeSource(
+  input: string,
+  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string }
+): Promise<ResolvedSource> {
+  const trimmed = input.trim();
+
+  if (opts?.url || /youtube\.com|youtu\.be|music\.youtube\.com/i.test(trimmed)) {
+    const url = opts?.url || trimmed;
+    const metaResult = await runYtDlp(['--dump-single-json', '--skip-download', url], 60000);
+    if (metaResult.code !== 0) {
+      throw new Error(lastLines(metaResult.stderr) || 'Failed to fetch video metadata');
+    }
+    const meta = JSON.parse(metaResult.stdout) as Record<string, unknown>;
+    const rawTitle = String(meta.title || opts?.title || 'Unknown');
+    return {
+      url,
+      sourceId: String(meta.id || ''),
+      title: opts?.title || extractTrackTitle(rawTitle),
+      artist: opts?.artist || String(meta.uploader || meta.channel || extractArtistFromTitle(rawTitle)),
+      duration: opts?.duration || Math.round(Number(meta.duration || 0)),
+      thumbnailUrl: String(meta.thumbnail || ''),
+    };
+  }
+
+  const searchQuery = opts?.artist && opts?.title ? `${opts.artist} - ${opts.title}` : trimmed;
   const target = {
     title: opts?.title || searchQuery,
     artist: opts?.artist || '',
@@ -278,7 +326,6 @@ export async function resolveAndDownload(
   }
 
   if (candidates.length === 0 && filterVariants) {
-    console.warn('[Match] No strict matches — retrying without variant filter');
     const fallback = await searchYouTube(searchQuery, 12);
     candidates = rankYouTubeResults(fallback, target, { ...rankOpts, filterVariants: false, minScore: 25 });
   }
@@ -287,22 +334,170 @@ export async function resolveAndDownload(
     throw new Error(`No YouTube results for: ${searchQuery}`);
   }
 
+  const best = candidates[0];
+  return {
+    url: best.url,
+    sourceId: best.id,
+    title: opts?.title || extractTrackTitle(best.title),
+    artist: opts?.artist || best.artist,
+    duration: opts?.duration || best.duration,
+    thumbnailUrl: best.thumbnailUrl,
+  };
+}
+
+/** Resolve source, create pending track, start background download — returns quickly for streaming. */
+export async function prepareTrackForPlayback(
+  input: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
+  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string }
+) {
+  const trimmed = input.trim();
+
+  if (opts?.url || /youtube\.com|youtu\.be|music\.youtube\.com/i.test(trimmed)) {
+    const url = opts?.url || trimmed;
+    const existing = await prisma.track.findFirst({
+      where: {
+        isDownloaded: true,
+        OR: [{ sourceUrl: url }, ...(opts?.title ? [{ title: { equals: opts.title, mode: 'insensitive' as const } }] : [])],
+      },
+      include: { artist: true, album: true, lyrics: true },
+    });
+    if (existing?.filePath && fs.existsSync(existing.filePath)) return existing;
+  }
+
+  const searchQuery = opts?.artist && opts?.title ? `${opts.artist} - ${opts.title}` : trimmed;
+  const existing = await prisma.track.findFirst({
+    where: {
+      isDownloaded: true,
+      OR: [
+        { title: { equals: opts?.title || searchQuery, mode: 'insensitive' } },
+        ...(opts?.title && opts?.artist ? [{
+          AND: [
+            { title: { contains: opts.title, mode: 'insensitive' as const } },
+            { artist: { name: { contains: opts.artist.split(/[,;&]/)[0].trim(), mode: 'insensitive' as const } } },
+          ],
+        }] : []),
+      ],
+    },
+    include: { artist: true, album: true, lyrics: true },
+  });
+  if (existing?.filePath && fs.existsSync(existing.filePath)) return existing;
+
+  const source = await resolveYouTubeSource(input, opts);
+
+  const bySource = await prisma.track.findFirst({
+    where: { sourceId: source.sourceId },
+    include: { artist: true, album: true, lyrics: true },
+  });
+  if (bySource?.isDownloaded && bySource.filePath && fs.existsSync(bySource.filePath)) {
+    return bySource;
+  }
+
+  const track = await upsertPendingTrack(
+    source,
+    quality,
+    opts?.title || source.title,
+    opts?.artist || source.artist
+  );
+
+  ensureBackgroundDownload(track.id, source.url, quality, {
+    title: opts?.title || source.title,
+    artist: opts?.artist || source.artist,
+    album: opts?.album,
+  });
+
+  return track;
+}
+
+export async function resolveAndDownload(
+  input: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
+  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string }
+) {
+  const trimmed = input.trim();
+
+  if (opts?.url || /youtube\.com|youtu\.be|music\.youtube\.com/i.test(trimmed)) {
+    const url = opts?.url || trimmed;
+    const existing = await prisma.track.findFirst({
+      where: { sourceUrl: url, isDownloaded: true },
+      include: { artist: true, album: true, lyrics: true },
+    });
+    if (existing?.filePath && fs.existsSync(existing.filePath)) return existing;
+
+    const download = await downloadFromYouTube(url, quality);
+    return saveTrackRecord(download, quality, opts?.title, opts?.artist, opts?.album);
+  }
+
+  const searchQuery = opts?.artist && opts?.title
+    ? `${opts.artist} - ${opts.title}`
+    : trimmed;
+
+  const existing = await prisma.track.findFirst({
+    where: {
+      isDownloaded: true,
+      OR: [
+        { title: { equals: opts?.title || searchQuery, mode: 'insensitive' } },
+        ...(opts?.title && opts?.artist ? [{
+          AND: [
+            { title: { contains: opts.title, mode: 'insensitive' as const } },
+            { artist: { name: { contains: opts.artist.split(/[,;&]/)[0].trim(), mode: 'insensitive' as const } } },
+          ],
+        }] : []),
+      ],
+    },
+    include: { artist: true, album: true, lyrics: true },
+  });
+  if (existing?.filePath && fs.existsSync(existing.filePath)) return existing;
+
+  const source = await resolveYouTubeSource(input, opts);
+
+  const bySource = await prisma.track.findFirst({
+    where: { sourceId: source.sourceId, isDownloaded: true },
+    include: { artist: true, album: true, lyrics: true },
+  });
+  if (bySource?.filePath && fs.existsSync(bySource.filePath)) return bySource;
+
   let lastError: Error | null = null;
+  const target = {
+    title: opts?.title || searchQuery,
+    artist: opts?.artist || '',
+    duration: opts?.duration,
+    album: opts?.album,
+  };
+  const filterVariants = shouldFilterVariants(trimmed, opts);
+  const rankOpts = { filterVariants, rawQuery: trimmed, minScore: filterVariants ? 40 : 20 };
+
+  let candidates: SearchResult[] = [];
+  if (opts?.title && opts?.artist) {
+    const queries = buildSearchQueries(opts.artist, opts.title, opts?.album);
+    const seen = new Set<string>();
+    for (const q of queries) {
+      try {
+        const batch = await searchYouTube(q, 8);
+        for (const r of batch) {
+          if (!seen.has(r.id)) { seen.add(r.id); candidates.push(r); }
+        }
+      } catch (err) {
+        console.error(`YouTube search failed for "${q}":`, err);
+      }
+    }
+    candidates = rankYouTubeResults(candidates, target, rankOpts);
+  }
+  if (candidates.length === 0) {
+    const fallback = await searchYouTube(searchQuery, 12);
+    candidates = rankYouTubeResults(fallback, target, rankOpts);
+  }
+
   for (const result of candidates.slice(0, 6)) {
     try {
-      const bySource = await prisma.track.findFirst({
-        where: { sourceId: result.id, isDownloaded: true },
-        include: { artist: true, album: true, lyrics: true },
-      });
-      if (bySource?.filePath && fs.existsSync(bySource.filePath)) return bySource;
-
       console.log(`[Match] Downloading: "${result.title}" (${result.url})`);
       const download = await downloadFromYouTube(result.url, quality);
       return saveTrackRecord(
         download,
         quality,
         opts?.title || result.title,
-        opts?.artist || result.artist
+        opts?.artist || result.artist,
+        opts?.album
       );
     } catch (err) {
       lastError = err as Error;
@@ -310,7 +505,13 @@ export async function resolveAndDownload(
     }
   }
 
-  throw lastError || new Error('All download attempts failed');
+  // Fallback: at least try the top resolved source
+  try {
+    const download = await downloadFromYouTube(source.url, quality);
+    return saveTrackRecord(download, quality, opts?.title || source.title, opts?.artist || source.artist, opts?.album);
+  } catch (err) {
+    throw lastError || err;
+  }
 }
 
 // Backward-compatible aliases
@@ -318,48 +519,3 @@ export const searchTracks = searchYouTube;
 export const downloadTrack = downloadFromYouTube;
 export const getOrCreateTrackFromSearch = (query: string, quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH') =>
   resolveAndDownload(query, quality);
-
-async function fetchLyricsForTrack(trackId: string, title: string, artist: string) {
-  try {
-    const existing = await prisma.lyrics.findUnique({ where: { trackId } });
-    if (existing) return;
-
-    const response = await fetch(
-      `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`
-    );
-
-    if (response.ok) {
-      const data = await response.json() as { plainLyrics?: string; syncedLyrics?: string };
-      let synced = false;
-      let lines: { time: number; text: string }[] | null = null;
-      let content = data.plainLyrics || '';
-
-      if (data.syncedLyrics) {
-        synced = true;
-        content = data.syncedLyrics;
-        lines = parseLrc(data.syncedLyrics);
-      }
-
-      if (content) {
-        await prisma.lyrics.create({
-          data: { trackId, content, synced, lines: lines ? JSON.parse(JSON.stringify(lines)) : undefined, source: 'lrclib' },
-        });
-      }
-    }
-  } catch (err) {
-    console.error('Lyrics fetch failed:', err);
-  }
-}
-
-function parseLrc(lrc: string): { time: number; text: string }[] {
-  const lines: { time: number; text: string }[] = [];
-  for (const line of lrc.split('\n')) {
-    const match = line.match(/\[(\d+):(\d+\.?\d*)\](.*)/);
-    if (match) {
-      lines.push({ time: parseInt(match[1], 10) * 60 + parseFloat(match[2]), text: match[3].trim() });
-    }
-  }
-  return lines.sort((a, b) => a.time - b.time);
-}
-
-export { fetchLyricsForTrack, parseLrc };

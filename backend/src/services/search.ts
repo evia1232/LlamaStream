@@ -1,4 +1,5 @@
 import prisma from '../lib/prisma';
+import { trackStreamUrl } from '../services/trackDownload';
 import { Prisma } from '@prisma/client';
 import { extractPlaylistCoverImages, playlistCoverTracksQuery } from '../lib/playlistCovers';
 import { searchYouTube } from './downloader';
@@ -139,7 +140,7 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
       duration: t.duration,
       thumbnailUrl: t.thumbnailUrl,
       isDownloaded: t.isDownloaded,
-      streamUrl: t.isDownloaded ? `/api/tracks/${t.id}/stream` : null,
+      streamUrl: trackStreamUrl(t),
       sourceUrl: t.sourceUrl,
       artist: { id: t.artist.id, name: t.artist.name, imageUrl: t.artist.imageUrl },
       album: t.album ? { id: t.album.id, title: t.album.title, coverUrl: t.album.coverUrl } : null,

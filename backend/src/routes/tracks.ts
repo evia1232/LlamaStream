@@ -5,7 +5,9 @@ import { body, query } from 'express-validator';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { resolveAndDownload, fetchLyricsForTrack } from '../services/downloader';
+import { resolveAndDownload, prepareTrackForPlayback } from '../services/downloader';
+import { fetchLyricsForTrack } from '../services/lyrics';
+import { isDownloadInProgress, pipeYouTubeAudio, trackStreamUrl, ensureBackgroundDownload } from '../services/trackDownload';
 import { unifiedSearch } from '../services/search';
 import { isSpotifyUrl, isYouTubeUrl, parseSpotifyUrl } from '../services/spotify';
 import { ytDlpVersion } from '../services/ytdlp';
@@ -36,9 +38,10 @@ function formatTrack(track: {
     sourceId: track.sourceId,
     quality: track.quality,
     isDownloaded: track.isDownloaded,
+    isDownloading: !track.isDownloaded && !!track.sourceUrl && isDownloadInProgress(track.id),
     artist: track.artist,
     album: track.album || null,
-    streamUrl: track.isDownloaded ? `/api/tracks/${track.id}/stream` : null,
+    streamUrl: trackStreamUrl(track),
   };
 }
 
@@ -147,7 +150,16 @@ router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
     return res.json({ track: null, position: 0, isPlaying: false, volume: 0.7 });
   }
 
-  if (!state.track?.isDownloaded) {
+  if (state.track && !state.track.isDownloaded && !state.track.sourceUrl) {
+    return res.json({
+      track: null,
+      position: 0,
+      isPlaying: false,
+      volume: state.volume ?? 0.7,
+    });
+  }
+
+  if (!state.track) {
     return res.json({
       track: null,
       position: 0,
@@ -189,8 +201,8 @@ router.put('/playback-state', authenticate, async (req: AuthRequest, res) => {
     return res.json({ success: true });
   }
 
-  const track = await prisma.track.findUnique({ where: { id: trackId } });
-  if (!track?.isDownloaded) {
+  const track = await prisma.track.findUnique({ where: { id: trackId }, include: { artist: true, album: true } });
+  if (!track || (!track.isDownloaded && !track.sourceUrl)) {
     return res.status(400).json({ error: 'Track not available' });
   }
 
@@ -242,19 +254,19 @@ router.post(
         const targetUrl = url || input;
 
         if (isYouTubeUrl(targetUrl)) {
-          const track = await resolveAndDownload(targetUrl, quality, { url: targetUrl, title, artist, duration, album });
+          const track = await prepareTrackForPlayback(targetUrl, quality, { url: targetUrl, title, artist, duration, album });
           return res.status(201).json({ track: formatTrack(track) });
         }
 
         if (isSpotifyUrl(targetUrl)) {
           if (title && artist) {
-            const track = await resolveAndDownload(`${artist} - ${title}`, quality, { title, artist, duration, album });
+            const track = await prepareTrackForPlayback(`${artist} - ${title}`, quality, { title, artist, duration, album });
             return res.status(201).json({ track: formatTrack(track) });
           }
           const parsed = await parseSpotifyUrl(targetUrl);
           if (parsed.tracks.length === 0) throw new Error('No tracks found in Spotify URL');
           const first = parsed.tracks[0];
-          const track = await resolveAndDownload(
+          const track = await prepareTrackForPlayback(
             `${first.artist} - ${first.name}`,
             quality,
             { title: first.name, artist: first.artist, duration: first.duration, album: first.album }
@@ -263,7 +275,7 @@ router.post(
         }
       }
 
-      const track = await resolveAndDownload(
+      const track = await prepareTrackForPlayback(
         input || `${artist} - ${title}`,
         quality,
         { title, artist, duration, album }
@@ -293,39 +305,47 @@ function streamAuth(req: Request, res: Response, next: () => void) {
 
 router.get('/:id/stream', streamAuth, async (req, res) => {
   const track = await prisma.track.findUnique({ where: { id: req.params.id } });
-  if (!track?.filePath || !track.isDownloaded) {
-    return res.status(404).json({ error: 'Track not available for streaming' });
+  if (!track) return res.status(404).json({ error: 'Track not found' });
+
+  if (track.isDownloaded && track.filePath && fs.existsSync(track.filePath)) {
+    const stat = fs.statSync(track.filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = end - start + 1;
+
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': 'audio/mpeg',
+      });
+      fs.createReadStream(track.filePath, { start, end }).pipe(res);
+    } else {
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': 'audio/mpeg',
+        'Accept-Ranges': 'bytes',
+      });
+      fs.createReadStream(track.filePath).pipe(res);
+    }
+    return;
   }
 
-  if (!fs.existsSync(track.filePath)) {
-    return res.status(404).json({ error: 'Audio file not found on disk' });
-  }
-
-  const stat = fs.statSync(track.filePath);
-  const fileSize = stat.size;
-  const range = req.headers.range;
-
-  if (range) {
-    const parts = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-    const chunkSize = end - start + 1;
-
-    res.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': chunkSize,
-      'Content-Type': 'audio/mpeg',
+  if (track.sourceUrl) {
+    ensureBackgroundDownload(track.id, track.sourceUrl, track.quality, {
+      title: track.title,
+      artist: (await prisma.artist.findUnique({ where: { id: track.artistId } }))?.name,
     });
-    fs.createReadStream(track.filePath, { start, end }).pipe(res);
-  } else {
-    res.writeHead(200, {
-      'Content-Length': fileSize,
-      'Content-Type': 'audio/mpeg',
-      'Accept-Ranges': 'bytes',
-    });
-    fs.createReadStream(track.filePath).pipe(res);
+    pipeYouTubeAudio(track.sourceUrl, track.quality, req, res);
+    return;
   }
+
+  return res.status(404).json({ error: 'Track not available for streaming' });
 });
 
 router.post('/:id/like', authenticate, async (req: AuthRequest, res) => {
@@ -352,7 +372,10 @@ router.post('/:id/play', authenticate, async (req: AuthRequest, res) => {
 });
 
 router.get('/:id/lyrics', authenticate, async (req, res) => {
-  const lyrics = await prisma.lyrics.findUnique({ where: { trackId: req.params.id } });
+  let lyrics = await prisma.lyrics.findUnique({ where: { trackId: req.params.id } });
+  if (!lyrics) {
+    lyrics = await fetchLyricsForTrack(req.params.id);
+  }
   if (!lyrics) return res.status(404).json({ error: 'Lyrics not found' });
   res.json({ lyrics });
 });
