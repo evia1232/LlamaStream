@@ -5,9 +5,11 @@ import { extractPlaylistCoverImages, playlistCoverTracksQuery } from '../lib/pla
 import { searchYouTube } from './downloader';
 import {
   searchSpotifyTracks,
+  searchSpotifyArtist,
   parseSpotifyUrl,
   isSpotifyUrl,
   isYouTubeUrl,
+  isSpotifyConfigured,
   SpotifySearchResult,
 } from './spotify';
 
@@ -30,7 +32,7 @@ export interface UnifiedSearchResult {
   spotifyUrlTracks: Array<{
     name: string; artist: string; album?: string; duration?: number; spotifyUrl?: string; thumbnailUrl?: string; source: 'spotify';
   }>;
-  artists: Array<{ id: string; name: string; imageUrl: string | null }>;
+  artists: Array<{ id: string; name: string; imageUrl: string | null; spotifyArtistId?: string }>;
   albums: Array<{ id: string; title: string; coverUrl: string | null; artist: { id: string; name: string } }>;
   playlists: Array<{ id: string; name: string; coverUrl: string | null; coverImages: string[]; trackCount: number; userId: string }>;
   detectedUrl?: { type: 'spotify' | 'youtube'; url: string };
@@ -148,6 +150,36 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
     }
   }
 
+  let mergedArtists: UnifiedSearchResult['artists'] = artists.map((a) => ({
+    id: a.id,
+    name: a.name,
+    imageUrl: a.imageUrl,
+  }));
+
+  if (searchSpotify && isSpotifyConfigured() && !isSpotifyUrl(trimmed) && !isYouTubeUrl(trimmed)) {
+    try {
+      const spArtist = await searchSpotifyArtist(trimmed);
+      if (spArtist) {
+        const dupe = mergedArtists.some(
+          (a) => a.name.toLowerCase() === spArtist.name.toLowerCase(),
+        );
+        if (!dupe) {
+          mergedArtists = [
+            {
+              id: `spotify-artist-${spArtist.id}`,
+              name: spArtist.name,
+              imageUrl: spArtist.imageUrl || null,
+              spotifyArtistId: spArtist.id,
+            },
+            ...mergedArtists,
+          ];
+        }
+      }
+    } catch (err) {
+      console.error('[Search] Spotify artist lookup failed:', err);
+    }
+  }
+
   return {
     library: libraryTracks.map((t) => ({
       id: t.id,
@@ -163,7 +195,7 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
     youtube,
     spotify,
     spotifyUrlTracks,
-    artists,
+    artists: mergedArtists,
     albums: albums.map((a) => ({
       id: a.id,
       title: a.title,

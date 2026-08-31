@@ -44,7 +44,7 @@ interface SearchResults {
   spotifyError?: string;
   spotifyConfigured?: boolean;
   detectedUrl?: { type: 'spotify' | 'youtube'; url: string };
-  artists: { id: string; name: string; imageUrl?: string | null }[];
+  artists: { id: string; name: string; imageUrl?: string | null; spotifyArtistId?: string }[];
   albums: { id: string; title: string; coverUrl?: string | null; artist: { id: string; name: string } }[];
   playlists: { id: string; name: string; coverUrl?: string | null; coverImages?: string[]; trackCount?: number }[];
 }
@@ -362,7 +362,11 @@ export default function SearchPage() {
                   <h3 className="text-label mb-3">{t('artists')}</h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4">
                     {results.artists.map((artist) => (
-                      <Link key={artist.id} to={`/artist/by-name/${encodeURIComponent(artist.name)}`} className="text-center card-hover p-3 rounded-lg">
+                      <Link
+                        key={artist.id}
+                        to={`/artist/by-name/${encodeURIComponent(artist.name)}${artist.spotifyArtistId ? `?spotifyArtistId=${encodeURIComponent(artist.spotifyArtistId)}` : ''}`}
+                        className="text-center card-hover p-3 rounded-lg"
+                      >
                         <div className="w-full aspect-square rounded-full bg-spotify-lightgray mb-2 overflow-hidden">
                           {artist.imageUrl ? (
                             <img src={artist.imageUrl} alt="" className="w-full h-full object-cover" />

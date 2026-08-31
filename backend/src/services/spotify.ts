@@ -14,6 +14,7 @@ import {
 
 export {
   searchSpotifyTracks,
+  searchSpotifyArtist,
   getSpotifyStatus,
   isSpotifyConfigured,
   fetchSpotifyTrackByUrl,

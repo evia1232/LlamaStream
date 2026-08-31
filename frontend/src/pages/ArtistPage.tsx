@@ -108,7 +108,7 @@ export default function ArtistPage() {
       const { data } = await api.get(spotifyUrlForName(name, hints));
       setSpotify(data.spotify);
     } catch {
-      setSpotify({ configured: false, artist: null, topTracks: [], albums: [] });
+      setSpotify({ configured: true, artist: null, topTracks: [], albums: [] });
     } finally {
       setSpotifyLoading(false);
     }

@@ -1,4 +1,5 @@
 import { config } from '../config';
+import { splitArtistNames } from '../lib/artistMatch';
 
 export interface SpotifySearchResponse {
   tracks: SpotifySearchResult[];
@@ -421,11 +422,39 @@ async function spotifyGet<T>(path: string): Promise<T | null> {
   }
 }
 
-import { splitArtistNames } from '../lib/artistMatch';
-
 function primaryArtistName(name: string): string {
   const parts = splitArtistNames(name);
   return parts[0]?.trim() || name.trim();
+}
+
+/** Resolve artist via track search — same API path as main search (most reliable). */
+async function resolveSpotifyArtistViaTrackSearch(artistName: string): Promise<SpotifyArtistResult | null> {
+  const cleaned = sanitizeSpotifyQuery(artistName);
+  if (!cleaned) return null;
+
+  const qNorm = normalizeForSpotifyMatch(cleaned);
+  const queries = [`artist:"${cleaned.replace(/"/g, '')}"`, cleaned];
+
+  for (const q of queries) {
+    const { tracks } = await searchSpotifyTracks(q, 10);
+    if (tracks.length === 0) continue;
+
+    for (const t of tracks) {
+      if (!t.primaryArtistId) continue;
+      const primaryName = normalizeForSpotifyMatch(t.artist.split(',')[0].trim());
+      if (primaryName === qNorm || primaryName.includes(qNorm) || qNorm.includes(primaryName)) {
+        const artist = await fetchSpotifyArtistById(t.primaryArtistId);
+        if (artist) return artist;
+      }
+    }
+
+    if (q.startsWith('artist:"') && tracks[0]?.primaryArtistId) {
+      const artist = await fetchSpotifyArtistById(tracks[0].primaryArtistId);
+      if (artist) return artist;
+    }
+  }
+
+  return null;
 }
 
 /** Find the best-matching Spotify artist for a name. */
@@ -439,9 +468,15 @@ export async function searchSpotifyArtist(query: string): Promise<SpotifyArtistR
   ].filter((n, i, arr) => n && arr.indexOf(n) === i);
 
   for (const candidate of candidates) {
+    const viaTracks = await resolveSpotifyArtistViaTrackSearch(candidate);
+    if (viaTracks) return viaTracks;
+  }
+
+  for (const candidate of candidates) {
     const result = await searchSpotifyArtistOnce(candidate);
     if (result) return result;
   }
+
   return null;
 }
 
@@ -484,7 +519,21 @@ async function searchSpotifyArtistOnce(query: string): Promise<SpotifyArtistResu
         }> };
       };
 
-      for (const a of data.artists?.items || []) {
+      const items = data.artists?.items || [];
+
+      if (searchQ.startsWith('artist:"') && items.length > 0) {
+        const a = items[0];
+        return {
+          id: a.id,
+          name: a.name,
+          imageUrl: a.images[0]?.url || '',
+          followers: a.followers.total,
+          genres: a.genres,
+          spotifyUrl: a.external_urls.spotify,
+        };
+      }
+
+      for (const a of items) {
         const aNorm = normalizeForSpotifyMatch(a.name);
         let score = 0;
         if (aNorm === qNorm) score += 50;
@@ -512,7 +561,7 @@ async function searchSpotifyArtistOnce(query: string): Promise<SpotifyArtistResu
     if (bestScore >= 45) break;
   }
 
-  return bestScore >= 8 ? best : null;
+  return bestScore >= 5 ? best : (bestScore > 0 ? best : null);
 }
 
 export async function fetchSpotifyArtistById(artistId: string): Promise<SpotifyArtistResult | null> {
