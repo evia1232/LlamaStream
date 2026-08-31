@@ -23,6 +23,13 @@ export function getTrackImageUrl(track: {
   return track.thumbnailUrl || track.album?.coverUrl || null;
 }
 
+/** Extract Spotify track id from open.spotify.com/track/... URL */
+export function extractSpotifyTrackId(url?: string | null): string | null {
+  if (!url) return null;
+  const match = url.match(/open\.spotify\.com\/track\/([a-zA-Z0-9]+)/i);
+  return match?.[1] ?? null;
+}
+
 /** Build a pseudo-track for search/external results (right-click menu + download). */
 export function externalTrack(
   id: string,
@@ -31,7 +38,7 @@ export function externalTrack(
   duration: number,
   thumbnailUrl?: string | null,
   album?: string,
-  opts?: { youtubeUrl?: string; spotifyUrl?: string }
+  opts?: { youtubeUrl?: string; spotifyUrl?: string; spotifyArtistId?: string }
 ): Track {
   return {
     id: `external-${id}`,
@@ -43,6 +50,7 @@ export function externalTrack(
     album: album ? { id: '', title: album } : null,
     youtubeUrl: opts?.youtubeUrl,
     spotifyUrl: opts?.spotifyUrl,
+    spotifyArtistId: opts?.spotifyArtistId,
     source: opts?.spotifyUrl ? 'spotify' : opts?.youtubeUrl ? 'youtube' : undefined,
   };
 }

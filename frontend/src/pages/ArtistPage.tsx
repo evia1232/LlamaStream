@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Play, ExternalLink } from 'lucide-react';
 import api from '../api/client';
@@ -69,12 +69,20 @@ function formatFollowers(n: number): string {
   return String(n);
 }
 
-function spotifyUrlForName(name: string): string {
-  return `/home/artists/by-name/${encodeURIComponent(name)}/spotify`;
+function spotifyUrlForName(name: string, hints?: { spotifyArtistId?: string; spotifyTrackId?: string }): string {
+  const base = `/home/artists/by-name/${encodeURIComponent(name)}/spotify`;
+  const params = new URLSearchParams();
+  if (hints?.spotifyArtistId) params.set('spotifyArtistId', hints.spotifyArtistId);
+  if (hints?.spotifyTrackId) params.set('spotifyTrackId', hints.spotifyTrackId);
+  const qs = params.toString();
+  return qs ? `${base}?${qs}` : base;
 }
 
 export default function ArtistPage() {
   const { id, name: nameParam } = useParams<{ id?: string; name?: string }>();
+  const [searchParams] = useSearchParams();
+  const spotifyArtistId = searchParams.get('spotifyArtistId') ?? undefined;
+  const spotifyTrackId = searchParams.get('spotifyTrackId') ?? undefined;
   const { t } = useTranslation();
   const [local, setLocal] = useState<ArtistLocalData | null>(null);
   const [spotify, setSpotify] = useState<SpotifySection | null>(null);
@@ -94,10 +102,10 @@ export default function ArtistPage() {
       ? `/home/artists/${id}`
       : null;
 
-  const fetchSpotify = useCallback(async (name: string) => {
+  const fetchSpotify = useCallback(async (name: string, hints?: { spotifyArtistId?: string; spotifyTrackId?: string }) => {
     setSpotifyLoading(true);
     try {
-      const { data } = await api.get(spotifyUrlForName(name));
+      const { data } = await api.get(spotifyUrlForName(name, hints));
       setSpotify(data.spotify);
     } catch {
       setSpotify({ configured: false, artist: null, topTracks: [], albums: [] });
@@ -114,11 +122,12 @@ export default function ArtistPage() {
     setSpotify(null);
 
     const spotifyName = searchName;
+    const spotifyHints = { spotifyArtistId, spotifyTrackId };
 
     try {
       const requests: [Promise<{ data: ArtistLocalData }>, Promise<void> | null] = [
         api.get(localPath),
-        spotifyName ? fetchSpotify(spotifyName) : null,
+        spotifyName ? fetchSpotify(spotifyName, spotifyHints) : null,
       ];
 
       const [localRes] = await Promise.all([
@@ -128,7 +137,7 @@ export default function ArtistPage() {
       setLocal(localRes.data);
 
       if (!spotifyName && localRes.data.artist.name) {
-        void fetchSpotify(localRes.data.artist.name);
+        void fetchSpotify(localRes.data.artist.name, spotifyHints);
       } else if (!spotifyName) {
         setSpotifyLoading(false);
       }
@@ -138,7 +147,7 @@ export default function ArtistPage() {
     } finally {
       setLoadingLocal(false);
     }
-  }, [localPath, searchName, fetchSpotify, t]);
+  }, [localPath, searchName, spotifyArtistId, spotifyTrackId, fetchSpotify, t]);
 
   useEffect(() => { void load(); }, [load]);
 

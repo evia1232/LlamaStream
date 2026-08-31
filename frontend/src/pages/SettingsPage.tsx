@@ -193,7 +193,7 @@ export default function SettingsPage() {
             <input
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full bg-spotify-lightgray rounded-md px-4 py-3 focus:outline-none"
+              className="input-spotify"
             />
           </div>
 
@@ -202,7 +202,7 @@ export default function SettingsPage() {
             <select
               value={language}
               onChange={(e) => setLanguage(e.target.value)}
-              className="w-full bg-spotify-lightgray rounded-md px-4 py-3 focus:outline-none"
+              className="input-spotify"
             >
               <option value="he">{t('hebrew')}</option>
               <option value="en">{t('english')}</option>
@@ -214,7 +214,7 @@ export default function SettingsPage() {
             <select
               value={audioQuality}
               onChange={(e) => setAudioQuality(e.target.value as 'LOW' | 'NORMAL' | 'HIGH')}
-              className="w-full bg-spotify-lightgray rounded-md px-4 py-3 focus:outline-none"
+              className="input-spotify"
             >
               <option value="LOW">{t('qualityLow')}</option>
               <option value="NORMAL">{t('qualityNormal')}</option>
@@ -442,26 +442,26 @@ export default function SettingsPage() {
                     value={newUser.email}
                     onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
                     placeholder={t('email')}
-                    className="w-full bg-spotify-lightgray rounded-md px-4 py-3 focus:outline-none"
+                    className="input-spotify"
                     dir="ltr"
                   />
                   <input
                     value={newUser.username}
                     onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
                     placeholder={t('username')}
-                    className="w-full bg-spotify-lightgray rounded-md px-4 py-3 focus:outline-none"
+                    className="input-spotify"
                   />
                   <input
                     type="password"
                     value={newUser.password}
                     onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
                     placeholder={t('password')}
-                    className="w-full bg-spotify-lightgray rounded-md px-4 py-3 focus:outline-none"
+                    className="input-spotify"
                   />
                   <select
                     value={newUser.role}
                     onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                    className="w-full bg-spotify-lightgray rounded-md px-4 py-3 focus:outline-none"
+                    className="input-spotify"
                   >
                     <option value="USER">{t('user')}</option>
                     <option value="ADMIN">{t('admin')}</option>

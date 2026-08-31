@@ -10,6 +10,7 @@ export interface SpotifySearchResult {
   id: string;
   name: string;
   artist: string;
+  primaryArtistId?: string;
   album?: string;
   duration: number;
   thumbnailUrl: string;
@@ -179,7 +180,7 @@ export async function searchSpotifyTracks(query: string, limit = SPOTIFY_SEARCH_
             id: string; name: string; duration_ms: number;
             external_urls: { spotify: string };
             album: { name: string; images: { url: string }[] };
-            artists: { name: string }[];
+            artists: { id: string; name: string }[];
           }> };
         };
 
@@ -187,6 +188,7 @@ export async function searchSpotifyTracks(query: string, limit = SPOTIFY_SEARCH_
           id: t.id,
           name: t.name,
           artist: t.artists.map((a) => a.name).join(', '),
+          primaryArtistId: t.artists[0]?.id,
           album: t.album.name,
           duration: Math.round(t.duration_ms / 1000),
           thumbnailUrl: t.album.images[0]?.url || '',
@@ -272,7 +274,7 @@ type SpotifyApiTrack = {
   duration_ms: number;
   external_urls: { spotify: string };
   album: { name: string; images: { url: string }[] };
-  artists: { name: string }[];
+  artists: { id: string; name: string }[];
 };
 
 function mapSpotifyApiTrack(t: SpotifyApiTrack): SpotifySearchResult {
@@ -280,6 +282,7 @@ function mapSpotifyApiTrack(t: SpotifyApiTrack): SpotifySearchResult {
     id: t.id,
     name: t.name,
     artist: t.artists.map((a) => a.name).join(', '),
+    primaryArtistId: t.artists[0]?.id,
     album: t.album.name,
     duration: Math.round(t.duration_ms / 1000),
     thumbnailUrl: t.album.images[0]?.url || '',
@@ -509,7 +512,32 @@ async function searchSpotifyArtistOnce(query: string): Promise<SpotifyArtistResu
     if (bestScore >= 45) break;
   }
 
-  return bestScore >= 12 ? best : null;
+  return bestScore >= 8 ? best : null;
+}
+
+export async function fetchSpotifyArtistById(artistId: string): Promise<SpotifyArtistResult | null> {
+  const data = await spotifyGet<{
+    id: string;
+    name: string;
+    followers: { total: number };
+    genres: string[];
+    external_urls: { spotify: string };
+    images: { url: string }[];
+  }>(`/artists/${artistId}`);
+  if (!data) return null;
+  return {
+    id: data.id,
+    name: data.name,
+    imageUrl: data.images[0]?.url || '',
+    followers: data.followers.total,
+    genres: data.genres,
+    spotifyUrl: data.external_urls.spotify,
+  };
+}
+
+export async function resolveSpotifyArtistIdFromTrack(trackId: string): Promise<string | null> {
+  const data = await spotifyGet<{ artists: { id: string }[] }>(`/tracks/${trackId}`);
+  return data?.artists?.[0]?.id ?? null;
 }
 
 export async function fetchSpotifyArtistTopTracks(artistId: string): Promise<SpotifySearchResult[]> {

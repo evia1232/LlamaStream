@@ -451,7 +451,7 @@ export default function PlayerBar() {
           </div>
           <div className="min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
-            <ArtistLinks artist={currentTrack.artist} className="text-caption truncate block" linkClassName="text-caption" />
+            <ArtistLinks artist={currentTrack.artist} track={currentTrack} className="text-caption truncate block" linkClassName="text-caption" />
             {isRemoteActive && activeDeviceName && (
               <p className="text-2xs text-spotify-green truncate">{t('playingOnDevice', { device: activeDeviceName })}</p>
             )}

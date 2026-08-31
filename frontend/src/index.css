@@ -124,9 +124,11 @@
 
   /* ── Inputs ── */
   .input-spotify {
-    @apply w-full bg-spotify-lightgray border border-transparent rounded-spotify
+    @apply w-full bg-spotify-gray border border-white/25 rounded-spotify
            px-4 py-3 text-sm font-normal text-white placeholder:text-spotify-text
-           focus:outline-none focus:border-white/40 focus:bg-[#333] transition-colors;
+           shadow-[inset_0_1px_2px_rgba(0,0,0,0.35)]
+           focus:outline-none focus:border-spotify-green focus:ring-1 focus:ring-spotify-green/40
+           focus:bg-spotify-dark transition-colors;
   }
 
   .search-input {

@@ -22,6 +22,37 @@ export function isDownloadInProgress(trackId: string): boolean {
   return activeDownloads.has(trackId);
 }
 
+export function getActiveDownload(trackId: string): Promise<void> | undefined {
+  return activeDownloads.get(trackId);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Wait until a track finishes downloading (or timeout). */
+export async function waitForTrackDownload(trackId: string, timeoutMs = 180000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const track = await prisma.track.findUnique({ where: { id: trackId } });
+    if (track?.isDownloaded && track.filePath && fs.existsSync(track.filePath)) return;
+
+    const job = activeDownloads.get(trackId);
+    if (job) {
+      await Promise.race([job.catch(() => { /* ignore */ }), sleep(1500)]);
+      continue;
+    }
+
+    if (track && !track.isDownloaded) {
+      await sleep(400);
+      continue;
+    }
+
+    throw new Error('Download not in progress');
+  }
+  throw new Error('Download timed out');
+}
+
 export function cancelBackgroundDownload(trackId: string): void {
   activeDownloads.delete(trackId);
 }

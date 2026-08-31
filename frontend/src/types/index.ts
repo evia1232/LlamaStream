@@ -37,6 +37,7 @@ export interface Track {
   source?: 'library' | 'youtube' | 'spotify';
   youtubeUrl?: string;
   spotifyUrl?: string;
+  spotifyArtistId?: string;
   quality?: 'LOW' | 'NORMAL' | 'HIGH';
 }
 

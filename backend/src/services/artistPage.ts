@@ -4,6 +4,8 @@ import { trackStreamUrl, isDownloadInProgress } from './trackDownload';
 import {
   isSpotifyConfigured,
   searchSpotifyArtist,
+  fetchSpotifyArtistById,
+  resolveSpotifyArtistIdFromTrack,
   fetchSpotifyArtistTopTracks,
   fetchSpotifyArtistAlbums,
   SpotifySearchResult,
@@ -183,7 +185,10 @@ export async function buildArtistPageLocal(
   };
 }
 
-export async function fetchArtistSpotifyData(artistName: string): Promise<ArtistSpotifyData> {
+export async function fetchArtistSpotifyData(
+  artistName: string,
+  hints?: { spotifyArtistId?: string | null; spotifyTrackId?: string | null },
+): Promise<ArtistSpotifyData> {
   const empty: ArtistSpotifyData = {
     configured: isSpotifyConfigured(),
     artist: null,
@@ -194,11 +199,38 @@ export async function fetchArtistSpotifyData(artistName: string): Promise<Artist
   if (!isSpotifyConfigured()) return empty;
 
   try {
-    const spotifyArtist = await withTimeout(
-      searchSpotifyArtist(artistName),
-      SPOTIFY_TIMEOUT_MS,
-      null,
-    );
+    let spotifyArtist: SpotifyArtistResult | null = null;
+
+    if (hints?.spotifyArtistId) {
+      spotifyArtist = await withTimeout(
+        fetchSpotifyArtistById(hints.spotifyArtistId),
+        SPOTIFY_TIMEOUT_MS,
+        null,
+      );
+    }
+
+    if (!spotifyArtist && hints?.spotifyTrackId) {
+      const artistId = await withTimeout(
+        resolveSpotifyArtistIdFromTrack(hints.spotifyTrackId),
+        SPOTIFY_TIMEOUT_MS,
+        null,
+      );
+      if (artistId) {
+        spotifyArtist = await withTimeout(
+          fetchSpotifyArtistById(artistId),
+          SPOTIFY_TIMEOUT_MS,
+          null,
+        );
+      }
+    }
+
+    if (!spotifyArtist) {
+      spotifyArtist = await withTimeout(
+        searchSpotifyArtist(artistName),
+        SPOTIFY_TIMEOUT_MS,
+        null,
+      );
+    }
 
     if (!spotifyArtist) return { ...empty, configured: true };
 

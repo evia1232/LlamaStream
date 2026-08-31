@@ -112,7 +112,9 @@ function getGreeting(): string {
 router.get('/artists/by-name/:name/spotify', authenticate, async (req: AuthRequest, res) => {
   const name = decodeURIComponent(req.params.name);
   if (!name.trim()) return res.status(400).json({ error: 'Artist name required' });
-  const spotify = await fetchArtistSpotifyData(name);
+  const spotifyArtistId = typeof req.query.spotifyArtistId === 'string' ? req.query.spotifyArtistId : undefined;
+  const spotifyTrackId = typeof req.query.spotifyTrackId === 'string' ? req.query.spotifyTrackId : undefined;
+  const spotify = await fetchArtistSpotifyData(name, { spotifyArtistId, spotifyTrackId });
   res.json({ spotify });
 });
 

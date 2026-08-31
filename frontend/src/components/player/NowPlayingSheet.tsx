@@ -154,7 +154,7 @@ export default function NowPlayingSheet() {
 
         <div className="text-start mb-6 px-1">
           <h2 className="text-2xl font-bold truncate mb-1">{currentTrack.title}</h2>
-          <ArtistLinks artist={currentTrack.artist} className="text-body text-base truncate block" linkClassName="text-body" />
+          <ArtistLinks artist={currentTrack.artist} track={currentTrack} className="text-body text-base truncate block" linkClassName="text-body" />
           {preparingHint && (
             <p className="text-sm text-spotify-green truncate mt-1">{preparingHint}</p>
           )}

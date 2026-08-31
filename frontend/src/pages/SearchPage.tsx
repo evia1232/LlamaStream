@@ -27,6 +27,7 @@ interface YouTubeResult {
 interface SpotifyResult {
   id: string; name: string; artist: string; album?: string;
   duration: number; thumbnailUrl: string; spotifyUrl: string; source: 'spotify';
+  primaryArtistId?: string;
 }
 
 interface SpotifyUrlTrack {
@@ -115,6 +116,7 @@ export default function SearchPage() {
     album?: string;
     youtubeUrl?: string;
     spotifyUrl?: string;
+    spotifyArtistId?: string;
   }) => {
     setError('');
     const track = externalTrack(
@@ -124,7 +126,7 @@ export default function SearchPage() {
       opts.duration,
       opts.thumbnailUrl,
       opts.album,
-      { youtubeUrl: opts.youtubeUrl, spotifyUrl: opts.spotifyUrl }
+      { youtubeUrl: opts.youtubeUrl, spotifyUrl: opts.spotifyUrl, spotifyArtistId: opts.spotifyArtistId }
     );
     try {
       await playTrack(track);
@@ -158,13 +160,14 @@ export default function SearchPage() {
     artist: string,
     thumbnailUrl: string,
     duration: number,
-    opts?: { youtubeUrl?: string; spotifyUrl?: string; badge?: string; album?: string }
+    opts?: { youtubeUrl?: string; spotifyUrl?: string; spotifyArtistId?: string; badge?: string; album?: string }
   ) => {
     const externalId = `external-${id}`;
     const isCurrent = currentTrack?.id === externalId;
     const track = externalTrack(id, title, artist, duration, thumbnailUrl, opts?.album, {
       youtubeUrl: opts?.youtubeUrl,
       spotifyUrl: opts?.spotifyUrl,
+      spotifyArtistId: opts?.spotifyArtistId,
     });
 
     const play = () => {
@@ -177,6 +180,7 @@ export default function SearchPage() {
         album: opts?.album,
         youtubeUrl: opts?.youtubeUrl,
         spotifyUrl: opts?.spotifyUrl,
+        spotifyArtistId: opts?.spotifyArtistId,
       });
     };
 
@@ -459,7 +463,7 @@ export default function SearchPage() {
                   item.artist,
                   item.thumbnailUrl,
                   item.duration,
-                  { spotifyUrl: item.spotifyUrl, album: item.album }
+                  { spotifyUrl: item.spotifyUrl, album: item.album, spotifyArtistId: item.primaryArtistId }
                 )
               )}
             </section>

@@ -8,7 +8,7 @@ import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractArgs } from './
 import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults } from '../lib/trackMatch';
 import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
-import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress } from './trackDownload';
+import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress, waitForTrackDownload } from './trackDownload';
 import { getCacheAudioDir, getDownloadDirForTrack, finalizeFileStorage, promoteTrackToLibrary, isTrackPinned } from './trackStorage';
 
 export interface SearchResult {
@@ -628,11 +628,73 @@ export async function resolveAndDownload(
 
   const source = await resolveYouTubeSource(input, opts);
 
+  const pending = await prisma.track.findFirst({
+    where: { sourceId: source.sourceId },
+    include: { artist: true, album: true, lyrics: true },
+  });
+  if (pending) {
+    if (pending.isDownloaded && pending.filePath && fs.existsSync(pending.filePath)) {
+      return pending;
+    }
+    if (isDownloadInProgress(pending.id)) {
+      await waitForTrackDownload(pending.id);
+      const ready = await prisma.track.findUnique({
+        where: { id: pending.id },
+        include: { artist: true, album: true, lyrics: true },
+      });
+      if (ready?.isDownloaded && ready.filePath && fs.existsSync(ready.filePath)) return ready;
+    }
+  }
+
   const bySource = await prisma.track.findFirst({
     where: { sourceId: source.sourceId, isDownloaded: true },
     include: { artist: true, album: true, lyrics: true },
   });
   if (bySource?.filePath && fs.existsSync(bySource.filePath)) return bySource;
+
+  if (opts?.title && opts?.artist) {
+    const byMeta = await prisma.track.findFirst({
+      where: {
+        isDownloaded: true,
+        title: { equals: opts.title, mode: 'insensitive' },
+        artist: { name: { contains: opts.artist.split(/[,;&]/)[0].trim(), mode: 'insensitive' } },
+      },
+      include: { artist: true, album: true, lyrics: true },
+    });
+    if (byMeta?.filePath && fs.existsSync(byMeta.filePath)) return byMeta;
+  }
+
+  const track = await upsertPendingTrack(
+    source,
+    quality,
+    opts?.title || source.title,
+    opts?.artist || source.artist,
+  );
+
+  if (track.isDownloaded && track.filePath && fs.existsSync(track.filePath)) {
+    return track;
+  }
+
+  if (!isDownloadInProgress(track.id)) {
+    ensureBackgroundDownload(track.id, source.url, quality, {
+      title: opts?.title || source.title,
+      artist: opts?.artist || source.artist,
+      album: opts?.album,
+    });
+  }
+
+  try {
+    await waitForTrackDownload(track.id);
+    const ready = await prisma.track.findUniqueOrThrow({
+      where: { id: track.id },
+      include: { artist: true, album: true, lyrics: true },
+    });
+    if (ready.isDownloaded && ready.filePath && fs.existsSync(ready.filePath)) {
+      return ready;
+    }
+  } catch {
+    // Fall through to synchronous multi-candidate download
+  }
 
   let lastError: Error | null = null;
   const target = {
