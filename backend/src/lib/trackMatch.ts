@@ -98,7 +98,18 @@ function normalizeForMatch(s: string): string {
 }
 
 function primaryArtist(artist: string): string {
-  return artist.split(/[,;&]| feat\.?| ft\.?| featuring /i)[0].trim();
+  return sanitizeSearchText(artist).split(/[,;&]| feat\.?| ft\.?| featuring /i)[0].trim();
+}
+
+export function sanitizeSearchText(s: string): string {
+  return s
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function containsHebrew(s: string): boolean {
+  return /[\u0590-\u05FF]/.test(s);
 }
 
 function wordOverlap(a: string, b: string): number {
@@ -153,6 +164,8 @@ export function isLikelyBadMatch(title: string): boolean {
   // Channel-style karaoke labels
   if (/\bkaraoke\b/i.test(lower)) return true;
   if (/\bsing\s*along\b/i.test(lower)) return true;
+  if (/\bקאבר\b/.test(title)) return true;
+  if (/\bכיסוי\b/.test(title)) return true;
   return false;
 }
 
@@ -162,19 +175,23 @@ export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, opt
   const targetTitle = normalizeForMatch(target.title);
   const targetArtist = normalizeForMatch(primaryArtist(target.artist));
   const normYtTitle = normalizeForMatch(ytTitle);
+  const titleMatches = normYtTitle.includes(targetTitle) || targetTitle.includes(normYtTitle);
+  const hebrewTitleMatch = containsHebrew(target.title) && titleMatches;
 
   let score = 0;
 
   // Title similarity
-  if (normYtTitle.includes(targetTitle) || targetTitle.includes(normYtTitle)) {
+  if (titleMatches) {
     score += 45;
   } else {
     score += Math.round(wordOverlap(target.title, ytTitle) * 35);
   }
 
-  // Artist presence
+  // Artist presence — Spotify often uses Latin transliteration while YouTube uses Hebrew
   if (targetArtist && (normYtTitle.includes(targetArtist) || normalizeForMatch(result.artist).includes(targetArtist))) {
     score += 30;
+  } else if (hebrewTitleMatch) {
+    score += 15;
   } else {
     score += Math.round(wordOverlap(target.artist, result.artist) * 20);
   }
@@ -206,7 +223,7 @@ export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, opt
   }
 
   // Extra artist on YT not in target (often cover channels / remix artists)
-  if (target.artist && result.artist) {
+  if (target.artist && result.artist && !hebrewTitleMatch) {
     const ytArtistNorm = normalizeForMatch(result.artist);
     if (targetArtist && !ytArtistNorm.includes(targetArtist) && wordOverlap(target.artist, result.artist) < 0.3) {
       score -= 25;
@@ -239,18 +256,57 @@ export function rankYouTubeResults(
     .map((x) => x.result);
 }
 
+export function pickBestAvailableResult(
+  results: SearchResult[],
+  target: MatchTarget,
+  options?: RankOptions
+): SearchResult | null {
+  if (results.length === 0) return null;
+
+  const ranked = rankYouTubeResults(results, target, options);
+  if (ranked.length > 0) return ranked[0];
+
+  const normTitle = normalizeForMatch(target.title);
+  const safe = results.filter((r) => !isLikelyBadMatch(r.title));
+
+  for (const r of safe) {
+    const ytNorm = normalizeForMatch(r.title);
+    if (normTitle.length >= 3 && (ytNorm.includes(normTitle) || normTitle.includes(ytNorm))) {
+      if (!hasUnwantedVariant(r.title, target.title, options?.rawQuery)) return r;
+    }
+  }
+
+  const relaxed = rankYouTubeResults(safe, target, {
+    ...options,
+    filterVariants: true,
+    minScore: 12,
+  });
+  return relaxed[0] ?? null;
+}
+
 export function buildSearchQueries(artist: string, title: string, album?: string): string[] {
-  const a = primaryArtist(artist);
-  // Prefer studio/official versions in search queries
-  const queries = [
-    `${a} ${title} official audio`,
-    `${a} - ${title} official`,
-    `"${a}" "${title}" official audio`,
-    `${a} - ${title}`,
-    `${a} ${title}`,
-  ];
+  const a = sanitizeSearchText(primaryArtist(artist));
+  const t = sanitizeSearchText(title);
+  const queries: string[] = [];
+
+  // Hebrew / Mizrahi tracks: title-first searches work better than "official audio"
+  if (containsHebrew(t) || containsHebrew(a)) {
+    queries.push(t);
+    queries.push(`${a} ${t}`);
+    queries.push(`${t} ${a}`);
+    queries.push(`${a} - ${t}`);
+    if (album) queries.push(`${t} ${sanitizeSearchText(album)}`);
+  }
+
+  queries.push(
+    `${a} ${t} official audio`,
+    `${a} - ${t} official`,
+    `"${a}" "${t}" official audio`,
+    `${a} - ${t}`,
+    `${a} ${t}`,
+  );
   if (album) {
-    queries.push(`${a} ${title} ${album} official`);
+    queries.push(`${a} ${t} ${sanitizeSearchText(album)} official`);
   }
   return [...new Set(queries.filter(Boolean))];
 }

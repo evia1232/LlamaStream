@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { config, qualityBitrates } from '../config';
 import prisma from '../lib/prisma';
 import { runYtDlp, findFileByPrefix, lastLines } from './ytdlp';
-import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants } from '../lib/trackMatch';
+import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText } from '../lib/trackMatch';
 import { fetchLyricsForTrack } from './lyrics';
 import { ensureBackgroundDownload } from './trackDownload';
 
@@ -264,7 +264,7 @@ export async function upsertPendingTrack(
 
 export async function resolveYouTubeSource(
   input: string,
-  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string }
+  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string; relaxed?: boolean }
 ): Promise<ResolvedSource> {
   const trimmed = input.trim();
 
@@ -286,31 +286,40 @@ export async function resolveYouTubeSource(
     };
   }
 
-  const searchQuery = opts?.artist && opts?.title ? `${opts.artist} - ${opts.title}` : trimmed;
+  const artist = opts?.artist ? sanitizeSearchText(opts.artist) : '';
+  const title = opts?.title ? sanitizeSearchText(opts.title) : '';
+  const searchQuery = artist && title ? `${artist} - ${title}` : trimmed;
   const target = {
-    title: opts?.title || searchQuery,
-    artist: opts?.artist || '',
+    title: title || searchQuery,
+    artist,
     duration: opts?.duration,
     album: opts?.album,
   };
 
   const filterVariants = shouldFilterVariants(trimmed, opts);
-  const rankOpts = { filterVariants, rawQuery: trimmed, minScore: filterVariants ? 40 : 20 };
+  const baseMinScore = opts?.relaxed ? 22 : (filterVariants ? 40 : 20);
+  const rankOpts = { filterVariants, rawQuery: trimmed, minScore: baseMinScore };
 
   let candidates: SearchResult[] = [];
+  const allRaw: SearchResult[] = [];
+  const seenIds = new Set<string>();
 
-  if (opts?.title && opts?.artist) {
-    const queries = buildSearchQueries(opts.artist, opts.title, opts?.album);
-    const seen = new Set<string>();
+  const collectResults = (batch: SearchResult[]) => {
+    for (const r of batch) {
+      if (!seenIds.has(r.id)) {
+        seenIds.add(r.id);
+        allRaw.push(r);
+      }
+    }
+  };
+
+  if (title && artist) {
+    const queries = buildSearchQueries(artist, title, opts?.album);
     for (const q of queries) {
       try {
-        const batch = await searchYouTube(q, 8);
-        for (const r of batch) {
-          if (!seen.has(r.id)) {
-            seen.add(r.id);
-            candidates.push(r);
-          }
-        }
+        const batch = await searchYouTube(q, 10);
+        collectResults(batch);
+        candidates.push(...batch.filter((r) => !candidates.some((c) => c.id === r.id)));
       } catch (err) {
         console.error(`YouTube search failed for "${q}":`, err);
       }
@@ -319,15 +328,50 @@ export async function resolveYouTubeSource(
   }
 
   if (candidates.length === 0) {
-    const fallback = await searchYouTube(searchQuery, 12);
-    candidates = opts?.title && opts?.artist
-      ? rankYouTubeResults(fallback, target, rankOpts)
-      : rankYouTubeResults(fallback, target, { ...rankOpts, filterVariants: false });
+    try {
+      const fallback = await searchYouTube(searchQuery, 15);
+      collectResults(fallback);
+      candidates = title && artist
+        ? rankYouTubeResults(fallback, target, rankOpts)
+        : rankYouTubeResults(fallback, target, { ...rankOpts, filterVariants: false });
+    } catch (err) {
+      console.error(`YouTube search failed for "${searchQuery}":`, err);
+    }
+  }
+
+  if (candidates.length === 0 && title) {
+    try {
+      const titleOnly = await searchYouTube(title, 15);
+      collectResults(titleOnly);
+      candidates = rankYouTubeResults(titleOnly, target, { ...rankOpts, minScore: opts?.relaxed ? 18 : 25 });
+    } catch (err) {
+      console.error(`YouTube title search failed for "${title}":`, err);
+    }
   }
 
   if (candidates.length === 0 && filterVariants) {
-    const fallback = await searchYouTube(searchQuery, 12);
-    candidates = rankYouTubeResults(fallback, target, { ...rankOpts, filterVariants: false, minScore: 25 });
+    try {
+      const fallback = allRaw.length > 0 ? allRaw : await searchYouTube(searchQuery, 15);
+      collectResults(Array.isArray(fallback) ? fallback : []);
+      candidates = rankYouTubeResults(allRaw.length > 0 ? allRaw : fallback, target, {
+        ...rankOpts,
+        filterVariants: true,
+        minScore: opts?.relaxed ? 15 : 20,
+      });
+    } catch (err) {
+      console.error(`YouTube relaxed search failed for "${searchQuery}":`, err);
+    }
+  }
+
+  if (candidates.length === 0) {
+    const best = pickBestAvailableResult(allRaw, target, {
+      filterVariants: true,
+      rawQuery: trimmed,
+      minScore: opts?.relaxed ? 12 : 18,
+    });
+    if (best) {
+      candidates = [best];
+    }
   }
 
   if (candidates.length === 0) {
@@ -338,8 +382,8 @@ export async function resolveYouTubeSource(
   return {
     url: best.url,
     sourceId: best.id,
-    title: opts?.title || extractTrackTitle(best.title),
-    artist: opts?.artist || best.artist,
+    title: title || extractTrackTitle(best.title),
+    artist: artist || best.artist,
     duration: opts?.duration || best.duration,
     thumbnailUrl: best.thumbnailUrl,
   };
@@ -349,7 +393,7 @@ export async function resolveYouTubeSource(
 export async function prepareTrackForPlayback(
   input: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
-  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string }
+  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string; relaxed?: boolean }
 ) {
   const trimmed = input.trim();
 
@@ -412,7 +456,7 @@ export async function prepareTrackForPlayback(
 export async function resolveAndDownload(
   input: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
-  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string }
+  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string; relaxed?: boolean }
 ) {
   const trimmed = input.trim();
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Plus, Import } from 'lucide-react';
@@ -17,11 +17,11 @@ export default function LibraryPage() {
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
 
-  const fetchPlaylists = () => {
+  const fetchPlaylists = useCallback(() => {
     api.get('/playlists').then(({ data }) => setPlaylists(data.playlists)).catch(console.error);
-  };
+  }, []);
 
-  useEffect(() => { fetchPlaylists(); }, []);
+  useEffect(() => { fetchPlaylists(); }, [fetchPlaylists]);
 
   const createPlaylist = async () => {
     if (!newName.trim()) return;

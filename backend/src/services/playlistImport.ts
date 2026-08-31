@@ -3,6 +3,11 @@ import { resolveAndDownload } from './downloader';
 import { addTrackToPlaylist } from '../lib/playlistTracks';
 import { parseSpotifyUrl, isSpotifyUrl, isYouTubeUrl } from './spotify';
 import { runYtDlp } from './ytdlp';
+import { sanitizeSearchText } from '../lib/trackMatch';
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export interface ImportTrackItem {
   name: string;
@@ -208,16 +213,19 @@ export async function processPlaylistImport(jobId: string) {
 
   for (let i = position; i < tracks.length; i++) {
     const item = tracks[i];
+    const cleanArtist = sanitizeSearchText(item.artist);
+    const cleanTitle = sanitizeSearchText(item.name);
     try {
       const track = await resolveAndDownload(
-        item.url || `${item.artist} - ${item.name}`,
+        item.url || `${cleanArtist} - ${cleanTitle}`,
         job.quality as 'LOW' | 'NORMAL' | 'HIGH',
         {
-          title: item.name,
-          artist: item.artist,
+          title: cleanTitle,
+          artist: cleanArtist,
           duration: item.duration,
           album: item.album,
           url: item.url,
+          relaxed: true,
         }
       );
 
@@ -226,7 +234,7 @@ export async function processPlaylistImport(jobId: string) {
       completed++;
     } catch (err) {
       failed++;
-      errors.push(`${item.name}: ${(err as Error).message}`);
+      errors.push(`${cleanTitle}: ${(err as Error).message}`);
       position++;
     }
 
@@ -234,6 +242,9 @@ export async function processPlaylistImport(jobId: string) {
       where: { id: jobId },
       data: { completedTracks: completed, failedTracks: failed, errors },
     });
+
+    // Avoid YouTube search rate limits during bulk import
+    await sleep(800);
   }
 
   await prisma.playlist.update({
