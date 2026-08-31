@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown, Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
-  Heart, Mic2, ListMusic, Volume2, VolumeX, ListPlus, MoreHorizontal,
+  Heart, Mic2, ListMusic, ListPlus, MoreHorizontal,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useRef, useState, useCallback } from 'react';
@@ -29,9 +29,9 @@ export default function NowPlayingSheet() {
 
   const {
     currentTrack, showNowPlaying, setShowNowPlaying,
-    isPlaying, currentTime, duration, volume,
+    isPlaying, currentTime, duration,
     shuffle, repeat, likedTrackIds,
-    setIsPlaying, setVolume, toggleShuffle, cycleRepeat,
+    setIsPlaying, toggleShuffle, cycleRepeat,
     playNext, playPrevious, toggleLike, setShowQueue, setShowLyrics, seekTo,
     addToQueue, isPreparingPlayback, isBuffering, isRemoteActive, activeDeviceName,
   } = usePlayerStore();
@@ -62,7 +62,6 @@ export default function NowPlayingSheet() {
       ? t('preparingPlayback')
       : null;
   const progressPct = (currentTime / (duration || 1)) * 100;
-  const volumePct = volume * 100;
 
   const transportControls = (
     <>
@@ -188,7 +187,7 @@ export default function NowPlayingSheet() {
         </div>
 
         {/* Secondary actions */}
-        <div className="flex items-center justify-around px-4 mb-6">
+        <div className="flex items-center justify-around px-4 mb-6 pb-[env(safe-area-inset-bottom)]">
           <button
             onClick={() => toggleLike(currentTrack.id, currentTrack)}
             className={clsx('icon-btn p-3', isLiked && 'text-spotify-green')}
@@ -214,27 +213,6 @@ export default function NowPlayingSheet() {
           >
             <ListMusic className="w-6 h-6" />
           </button>
-        </div>
-
-        {/* Volume */}
-        <div dir="ltr" className="player-slider-row flex items-center gap-3 px-4 pb-[env(safe-area-inset-bottom)]">
-          <button
-            type="button"
-            onClick={() => setVolume(volume === 0 ? 0.7 : 0)}
-            className="icon-btn p-2 shrink-0"
-          >
-            {volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={volume}
-            onChange={(e) => setVolume(parseFloat(e.target.value))}
-            className="player-progress flex-1"
-            style={{ background: progressGradient(volumePct) }}
-          />
         </div>
       </div>
 

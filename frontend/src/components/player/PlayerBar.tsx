@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
@@ -15,6 +15,7 @@ import { DevicePickerButton } from './DevicePicker';
 import { openTrackContextMenu } from '../../store/trackMenuStore';
 import { useMediaSession } from '../../hooks/useMediaSession';
 import { useSpotifyPlaybackSync } from '../../hooks/useSpotifyPlaybackSync';
+import { effectivePlaybackVolume, isMobileViewport } from '../../lib/volume';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -30,6 +31,7 @@ export default function PlayerBar() {
   const { t } = useTranslation();
   const audioRef = useRef<HTMLAudioElement>(null);
   const preloadRef = useRef<HTMLAudioElement | null>(null);
+  const footerRef = useRef<HTMLElement>(null);
 
   const {
     currentTrack, isPlaying, currentTime, duration, volume,
@@ -143,8 +145,31 @@ export default function PlayerBar() {
   }, [isPlaying, isPreparingPlayback, isSpotifyMode, isRemoteActive, currentTrack?.isDownloaded, setIsPlaying]);
 
   useEffect(() => {
-    if (!isSpotifyMode && audioRef.current) audioRef.current.volume = volume;
+    if (!isSpotifyMode && audioRef.current) {
+      audioRef.current.volume = effectivePlaybackVolume(volume);
+    }
   }, [volume, isSpotifyMode]);
+
+  const adjustVolumeByWheel = useCallback((deltaY: number) => {
+    if (isMobileViewport() || !currentTrack) return;
+    const step = deltaY < 0 ? 0.05 : -0.05;
+    const next = Math.min(1, Math.max(0, usePlayerStore.getState().volume + step));
+    setVolume(next);
+  }, [currentTrack, setVolume]);
+
+  useEffect(() => {
+    const el = footerRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (isMobileViewport() || !currentTrack) return;
+      e.preventDefault();
+      adjustVolumeByWheel(e.deltaY);
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [currentTrack, adjustVolumeByWheel]);
 
   // Preload next local track stream for instant skip
   useEffect(() => {
@@ -336,7 +361,7 @@ export default function PlayerBar() {
   const imageUrl = getTrackImageUrl(currentTrack);
 
   return (
-    <footer className="player-bar shrink-0" dir="ltr">
+    <footer ref={footerRef} className="player-bar shrink-0" dir="ltr">
       <audio
         ref={audioRef}
         onTimeUpdate={handleTimeUpdate}

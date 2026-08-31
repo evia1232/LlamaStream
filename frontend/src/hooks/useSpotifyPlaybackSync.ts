@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { usePlayerStore } from '../store';
 import { useSpotifyPlayerStore } from '../store/spotifyPlayerStore';
 import type { SpotifyPlaybackState } from '../lib/spotifySdk';
+import { effectivePlaybackVolume } from '../lib/volume';
 
 /** Sync Spotify Web Playback SDK state into the player store */
 export function useSpotifyPlaybackSync() {
@@ -54,6 +55,6 @@ export function useSpotifyPlaybackSync() {
 
   useEffect(() => {
     if (playbackEngine !== 'spotify') return;
-    void useSpotifyPlayerStore.getState().setVolume(volume);
+    void useSpotifyPlayerStore.getState().setVolume(effectivePlaybackVolume(volume));
   }, [playbackEngine, volume]);
 }

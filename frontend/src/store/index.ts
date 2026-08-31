@@ -17,8 +17,9 @@ import { ensureTrackDownloaded, prefetchTrack, prefetchDiscoverNext, registerTra
 import { loadLikedIds, saveLikedIds } from '../lib/likedStorage';
 import { canStreamFromSpotify, getSpotifyTrackUri } from '../lib/spotifyTrack';
 import { useSpotifyPlayerStore } from './spotifyPlayerStore';
-import { sendPlaybackSync } from '../lib/playbackSyncClient';
+import { effectivePlaybackVolume } from '../lib/volume';
 import { getDeviceId, getDeviceName } from '../lib/deviceId';
+import { sendPlaybackSync } from '../lib/playbackSyncClient';
 
 interface SyncDevice {
   deviceId: string;
@@ -181,7 +182,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ volume: v });
     saveVolume(v);
     if (get().playbackEngine === 'spotify') {
-      void useSpotifyPlayerStore.getState().setVolume(v);
+      void useSpotifyPlayerStore.getState().setVolume(effectivePlaybackVolume(v));
     }
     get().persistVolume();
   },
@@ -273,7 +274,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       set({ isPreparingPlayback: true });
       try {
         const spot = useSpotifyPlayerStore.getState();
-        const ok = await spot.init(volume);
+        const ok = await spot.init(effectivePlaybackVolume(volume));
         if (stale()) return;
         if (!ok) throw new Error(spot.initError || 'Spotify player failed');
         await spot.playUri(spotifyUri, startTime * 1000);
