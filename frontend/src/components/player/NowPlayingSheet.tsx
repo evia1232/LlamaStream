@@ -56,6 +56,11 @@ export default function NowPlayingSheet() {
   const imageUrl = getTrackImageUrl(currentTrack);
   const isLiked = likedTrackIds.has(currentTrack.id);
   const showPreparing = isPreparingPlayback || isBuffering;
+  const preparingHint = isBuffering && !isPreparingPlayback
+    ? t('switchingTrack')
+    : isPreparingPlayback && isBuffering
+      ? t('preparingPlayback')
+      : null;
   const progressPct = (currentTime / (duration || 1)) * 100;
   const volumePct = volume * 100;
 
@@ -151,6 +156,9 @@ export default function NowPlayingSheet() {
         <div className="text-start mb-6 px-1">
           <h2 className="text-2xl font-bold truncate mb-1">{currentTrack.title}</h2>
           <ArtistLinks artist={currentTrack.artist} className="text-body text-base truncate block" linkClassName="text-body" />
+          {preparingHint && (
+            <p className="text-sm text-spotify-green truncate mt-1">{preparingHint}</p>
+          )}
           {isRemoteActive && activeDeviceName && (
             <p className="text-sm text-spotify-green truncate mt-1">{t('playingOnDevice', { device: activeDeviceName })}</p>
           )}

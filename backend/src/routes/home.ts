@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { trackStreamUrl } from '../services/trackDownload';
-import { buildArtistPageData } from '../services/artistPage';
+import { buildArtistPageLocal, fetchArtistSpotifyData } from '../services/artistPage';
 import prisma from '../lib/prisma';
 import { extractPlaylistCoverImages, playlistCoverTracksQuery } from '../lib/playlistCovers';
 
@@ -109,18 +109,47 @@ function getGreeting(): string {
   return 'goodEvening';
 }
 
+router.get('/artists/by-name/:name/spotify', authenticate, async (req: AuthRequest, res) => {
+  const name = decodeURIComponent(req.params.name);
+  if (!name.trim()) return res.status(400).json({ error: 'Artist name required' });
+  const spotify = await fetchArtistSpotifyData(name);
+  res.json({ spotify });
+});
+
 router.get('/artists/by-name/:name', authenticate, async (req: AuthRequest, res) => {
   const name = decodeURIComponent(req.params.name);
   if (!name.trim()) return res.status(400).json({ error: 'Artist name required' });
-  const data = await buildArtistPageData(req.user!.userId, name);
-  res.json(data);
+  try {
+    const data = await buildArtistPageLocal(req.user!.userId, name);
+    res.json(data);
+  } catch (err) {
+    console.error('[Artist] by-name failed:', err);
+    res.status(500).json({ error: 'Failed to load artist' });
+  }
+});
+
+router.get('/artists/:id/spotify', authenticate, async (req: AuthRequest, res) => {
+  const artist = await prisma.artist.findUnique({ where: { id: req.params.id } });
+  if (!artist) return res.status(404).json({ error: 'Artist not found' });
+  const spotify = await fetchArtistSpotifyData(artist.name);
+  res.json({ spotify });
 });
 
 router.get('/artists/:id', authenticate, async (req: AuthRequest, res) => {
-  const artist = await prisma.artist.findUnique({ where: { id: req.params.id } });
-  if (!artist) return res.status(404).json({ error: 'Artist not found' });
-  const data = await buildArtistPageData(req.user!.userId, artist.name, artist.id);
-  res.json(data);
+  try {
+    const artist = await prisma.artist.findUnique({ where: { id: req.params.id } });
+    if (artist) {
+      const data = await buildArtistPageLocal(req.user!.userId, artist.name, artist.id);
+      return res.json(data);
+    }
+    // Fallback: load by treating param as encoded name (legacy / malformed links)
+    const fallbackName = decodeURIComponent(req.params.id);
+    const data = await buildArtistPageLocal(req.user!.userId, fallbackName);
+    res.json(data);
+  } catch (err) {
+    console.error('[Artist] load failed:', err);
+    res.status(500).json({ error: 'Failed to load artist' });
+  }
 });
 
 router.get('/albums/:id', authenticate, async (req, res) => {

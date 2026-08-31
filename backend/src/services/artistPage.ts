@@ -11,6 +11,16 @@ import {
   SpotifyAlbumResult,
 } from './spotifyApi';
 
+const SPOTIFY_TIMEOUT_MS = 8000;
+const MAX_SPOTIFY_ALBUMS = 24;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 function formatTrack(track: {
   id: string;
   title: string;
@@ -58,7 +68,7 @@ function formatAlbum(album: {
   };
 }
 
-export interface ArtistPageData {
+export interface ArtistPageLocal {
   artist: {
     id: string | null;
     name: string;
@@ -68,12 +78,13 @@ export interface ArtistPageData {
   localTracks: ReturnType<typeof formatTrack>[];
   localAlbums: ReturnType<typeof formatAlbum>[];
   listenedTracks: ReturnType<typeof formatTrack>[];
-  spotify: {
-    configured: boolean;
-    artist: SpotifyArtistResult | null;
-    topTracks: SpotifySearchResult[];
-    albums: SpotifyAlbumResult[];
-  };
+}
+
+export interface ArtistSpotifyData {
+  configured: boolean;
+  artist: SpotifyArtistResult | null;
+  topTracks: SpotifySearchResult[];
+  albums: SpotifyAlbumResult[];
 }
 
 async function findLocalTracks(artistName: string, artistId?: string | null) {
@@ -88,6 +99,7 @@ async function findLocalTracks(artistName: string, artistId?: string | null) {
       : { artist: { name: { contains: artistName, mode: 'insensitive' } } },
     include: { artist: true, album: true },
     orderBy: { title: 'asc' },
+    take: 500,
   });
 
   return candidates.filter((t) => artistNameMatches(t.artist.name, artistName));
@@ -108,6 +120,7 @@ async function findLocalAlbums(artistName: string, artistId?: string | null) {
       _count: { select: { tracks: true } },
     },
     orderBy: { releaseYear: 'desc' },
+    take: 100,
   });
 
   return candidates.filter((a) => artistNameMatches(a.artist.name, artistName));
@@ -127,54 +140,97 @@ async function findListenedTracks(userId: string, artistName: string) {
     .filter((t) => artistNameMatches(t.artist.name, artistName));
 }
 
-export async function buildArtistPageData(
-  userId: string,
-  artistName: string,
-  artistId?: string | null,
-): Promise<ArtistPageData> {
+async function resolveArtist(artistName: string, artistId?: string | null) {
   const dbArtist = artistId
     ? await prisma.artist.findUnique({ where: { id: artistId } })
     : await prisma.artist.findFirst({
         where: { name: { equals: artistName, mode: 'insensitive' } },
       });
 
-  const resolvedName = dbArtist?.name ?? artistName;
-  const resolvedId = dbArtist?.id ?? artistId ?? null;
+  return {
+    resolvedName: dbArtist?.name ?? artistName,
+    resolvedId: dbArtist?.id ?? artistId ?? null,
+    dbArtist,
+  };
+}
 
-  const [localTrackRows, localAlbumRows, listenedRows, spotifyArtist] = await Promise.all([
+export async function buildArtistPageLocal(
+  userId: string,
+  artistName: string,
+  artistId?: string | null,
+): Promise<ArtistPageLocal> {
+  const { resolvedName, resolvedId, dbArtist } = await resolveArtist(artistName, artistId);
+
+  const [localTrackRows, localAlbumRows, listenedRows] = await Promise.all([
     findLocalTracks(resolvedName, resolvedId),
     findLocalAlbums(resolvedName, resolvedId),
     findListenedTracks(userId, resolvedName),
-    isSpotifyConfigured() ? searchSpotifyArtist(resolvedName) : Promise.resolve(null),
   ]);
-
-  let spotifyTopTracks: SpotifySearchResult[] = [];
-  let spotifyAlbums: SpotifyAlbumResult[] = [];
-
-  if (spotifyArtist) {
-    [spotifyTopTracks, spotifyAlbums] = await Promise.all([
-      fetchSpotifyArtistTopTracks(spotifyArtist.id),
-      fetchSpotifyArtistAlbums(spotifyArtist.id),
-    ]);
-  }
-
-  const imageUrl = dbArtist?.imageUrl || spotifyArtist?.imageUrl || null;
 
   return {
     artist: {
       id: resolvedId,
       name: resolvedName,
-      imageUrl,
+      imageUrl: dbArtist?.imageUrl ?? null,
       bio: dbArtist?.bio ?? null,
     },
     localTracks: localTrackRows.map(formatTrack),
     localAlbums: localAlbumRows.map(formatAlbum),
     listenedTracks: listenedRows.map(formatTrack),
-    spotify: {
-      configured: isSpotifyConfigured(),
+  };
+}
+
+export async function fetchArtistSpotifyData(artistName: string): Promise<ArtistSpotifyData> {
+  const empty: ArtistSpotifyData = {
+    configured: isSpotifyConfigured(),
+    artist: null,
+    topTracks: [],
+    albums: [],
+  };
+
+  if (!isSpotifyConfigured()) return empty;
+
+  try {
+    const spotifyArtist = await withTimeout(
+      searchSpotifyArtist(artistName),
+      SPOTIFY_TIMEOUT_MS,
+      null,
+    );
+
+    if (!spotifyArtist) return empty;
+
+    const [topTracks, albums] = await withTimeout(
+      Promise.all([
+        fetchSpotifyArtistTopTracks(spotifyArtist.id),
+        fetchSpotifyArtistAlbums(spotifyArtist.id),
+      ]),
+      SPOTIFY_TIMEOUT_MS,
+      [[], []] as [SpotifySearchResult[], SpotifyAlbumResult[]],
+    );
+
+    return {
+      configured: true,
       artist: spotifyArtist,
-      topTracks: spotifyTopTracks,
-      albums: spotifyAlbums,
-    },
+      topTracks,
+      albums: albums.slice(0, MAX_SPOTIFY_ALBUMS),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+/** @deprecated Use buildArtistPageLocal + fetchArtistSpotifyData */
+export async function buildArtistPageData(
+  userId: string,
+  artistName: string,
+  artistId?: string | null,
+) {
+  const local = await buildArtistPageLocal(userId, artistName, artistId);
+  const spotify = await fetchArtistSpotifyData(local.artist.name);
+  const imageUrl = local.artist.imageUrl || spotify.artist?.imageUrl || null;
+  return {
+    ...local,
+    artist: { ...local.artist, imageUrl },
+    spotify,
   };
 }

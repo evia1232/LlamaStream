@@ -497,40 +497,33 @@ export async function fetchSpotifyArtistTopTracks(artistId: string): Promise<Spo
 export async function fetchSpotifyArtistAlbums(artistId: string): Promise<SpotifyAlbumResult[]> {
   const seen = new Set<string>();
   const albums: SpotifyAlbumResult[] = [];
-  let offset = 0;
 
-  while (offset < 100) {
-    const data = await spotifyGet<{
-      items: Array<{
-        id: string;
-        name: string;
-        album_type: string;
-        total_tracks: number;
-        release_date: string;
-        external_urls: { spotify: string };
-        images: { url: string }[];
-      }>;
-      next: string | null;
-    }>(`/artists/${artistId}/albums?include_groups=album,single&limit=50&offset=${offset}`);
+  const data = await spotifyGet<{
+    items: Array<{
+      id: string;
+      name: string;
+      album_type: string;
+      total_tracks: number;
+      release_date: string;
+      external_urls: { spotify: string };
+      images: { url: string }[];
+    }>;
+  }>(`/artists/${artistId}/albums?include_groups=album,single&limit=50`);
 
-    if (!data?.items?.length) break;
+  if (!data?.items?.length) return albums;
 
-    for (const a of data.items) {
-      if (seen.has(a.id)) continue;
-      seen.add(a.id);
-      albums.push({
-        id: a.id,
-        name: a.name,
-        imageUrl: a.images[0]?.url || '',
-        releaseYear: a.release_date ? parseInt(a.release_date.slice(0, 4), 10) || null : null,
-        totalTracks: a.total_tracks,
-        spotifyUrl: a.external_urls.spotify,
-        albumType: a.album_type,
-      });
-    }
-
-    if (!data.next) break;
-    offset += 50;
+  for (const a of data.items) {
+    if (seen.has(a.id)) continue;
+    seen.add(a.id);
+    albums.push({
+      id: a.id,
+      name: a.name,
+      imageUrl: a.images[0]?.url || '',
+      releaseYear: a.release_date ? parseInt(a.release_date.slice(0, 4), 10) || null : null,
+      totalTracks: a.total_tracks,
+      spotifyUrl: a.external_urls.spotify,
+      albumType: a.album_type,
+    });
   }
 
   return albums;

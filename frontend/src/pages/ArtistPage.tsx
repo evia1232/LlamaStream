@@ -37,7 +37,7 @@ interface SpotifyTrackInfo {
   spotifyUrl: string;
 }
 
-interface ArtistPageData {
+interface ArtistLocalData {
   artist: {
     id: string | null;
     name: string;
@@ -54,12 +54,13 @@ interface ArtistPageData {
     artist: { id: string; name: string };
   }[];
   listenedTracks: Track[];
-  spotify: {
-    configured: boolean;
-    artist: SpotifyArtistInfo | null;
-    topTracks: SpotifyTrackInfo[];
-    albums: SpotifyAlbumInfo[];
-  };
+}
+
+interface SpotifySection {
+  configured: boolean;
+  artist: SpotifyArtistInfo | null;
+  topTracks: SpotifyTrackInfo[];
+  albums: SpotifyAlbumInfo[];
 }
 
 function formatFollowers(n: number): string {
@@ -71,37 +72,87 @@ function formatFollowers(n: number): string {
 export default function ArtistPage() {
   const { id, name: nameParam } = useParams<{ id?: string; name?: string }>();
   const { t } = useTranslation();
-  const [data, setData] = useState<ArtistPageData | null>(null);
+  const [local, setLocal] = useState<ArtistLocalData | null>(null);
+  const [spotify, setSpotify] = useState<SpotifySection | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [spotifyLoading, setSpotifyLoading] = useState(false);
+  const [error, setError] = useState('');
   const playTracks = usePlayerStore((s) => s.playTracks);
 
-  const load = useCallback(() => {
-    const req = nameParam
-      ? api.get(`/home/artists/by-name/${encodeURIComponent(nameParam)}`)
-      : id
-        ? api.get(`/home/artists/${id}`)
-        : null;
-    if (!req) return;
-    req.then(({ data: res }) => setData(res)).catch(console.error);
-  }, [id, nameParam]);
+  const localPath = nameParam
+    ? `/home/artists/by-name/${encodeURIComponent(nameParam)}`
+    : id
+      ? `/home/artists/${id}`
+      : null;
 
-  useEffect(() => { load(); }, [load]);
+  const load = useCallback(async () => {
+    if (!localPath) return;
+    setLoading(true);
+    setError('');
+    setLocal(null);
+    setSpotify(null);
 
-  if (!data) {
+    try {
+      const { data } = await api.get(localPath);
+      setLocal(data);
+    } catch {
+      setError(t('artistLoadError'));
+    } finally {
+      setLoading(false);
+    }
+  }, [localPath, t]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!local) return;
+    let cancelled = false;
+    setSpotifyLoading(true);
+
+    api.get(`/home/artists/by-name/${encodeURIComponent(local.artist.name)}/spotify`)
+      .then(({ data }) => {
+        if (!cancelled) setSpotify(data.spotify);
+      })
+      .catch(() => {
+        if (!cancelled) setSpotify({ configured: false, artist: null, topTracks: [], albums: [] });
+      })
+      .finally(() => {
+        if (!cancelled) setSpotifyLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [local]);
+
+  if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div className="flex flex-col items-center justify-center h-full gap-3">
         <div className="w-8 h-8 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+        <p className="text-caption">{t('loadingArtist')}</p>
       </div>
     );
   }
 
-  const { artist, localTracks, localAlbums, listenedTracks, spotify } = data;
-  const displayName = spotify.artist?.name || artist.name;
-  const imageUrl = artist.imageUrl || spotify.artist?.imageUrl || null;
+  if (error || !local) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center">
+        <p className="text-spotify-text">{error || t('artistLoadError')}</p>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="px-6 py-2 rounded-full text-sm bg-spotify-green text-black font-bold hover:bg-spotify-green-hover"
+        >
+          {t('retry')}
+        </button>
+      </div>
+    );
+  }
 
-  const normalizedLocal = localTracks.map((t) => normalizeTrack(t));
-  const normalizedListened = listenedTracks.map((t) => normalizeTrack(t));
+  const displayName = spotify?.artist?.name || local.artist.name;
+  const imageUrl = local.artist.imageUrl || spotify?.artist?.imageUrl || null;
 
-  const spotifyAsTracks = spotify.topTracks.map((t) =>
+  const normalizedLocal = local.localTracks.map((t) => normalizeTrack(t));
+  const normalizedListened = local.listenedTracks.map((t) => normalizeTrack(t));
+  const spotifyAsTracks = (spotify?.topTracks ?? []).map((t) =>
     externalTrack(t.id, t.name, t.artist, t.duration, t.thumbnailUrl, t.album, { spotifyUrl: t.spotifyUrl }),
   );
 
@@ -122,7 +173,10 @@ export default function ArtistPage() {
         <div className="min-w-0 pb-2 flex-1">
           <p className="text-label mb-2">{t('artists')}</p>
           <h1 className="text-hero mb-2">{displayName}</h1>
-          {spotify.artist && (
+          {spotifyLoading && !spotify?.artist && (
+            <p className="text-caption text-spotify-text">{t('loadingSpotifyArtist')}</p>
+          )}
+          {spotify?.artist && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption">
               <span>{formatFollowers(spotify.artist.followers)} {t('followersLabel')}</span>
               {spotify.artist.genres.slice(0, 3).map((g) => (
@@ -138,7 +192,7 @@ export default function ArtistPage() {
               </a>
             </div>
           )}
-          {artist.bio && <p className="text-body mt-3 max-w-2xl">{artist.bio}</p>}
+          {local.artist.bio && <p className="text-body mt-3 max-w-2xl">{local.artist.bio}</p>}
         </div>
       </div>
 
@@ -162,7 +216,17 @@ export default function ArtistPage() {
           </section>
         )}
 
-        {spotify.topTracks.length > 0 && (
+        {spotifyLoading && spotifyAsTracks.length === 0 && (
+          <section className="px-4">
+            <h2 className="text-heading-sm mb-3">{t('topTracks')}</h2>
+            <div className="flex items-center gap-2 text-caption text-spotify-text">
+              <div className="w-4 h-4 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
+              {t('loadingSpotifyArtist')}
+            </div>
+          </section>
+        )}
+
+        {spotifyAsTracks.length > 0 && (
           <section>
             <h2 className="text-heading-sm mb-3 px-4">{t('topTracks')}</h2>
             {spotifyAsTracks.map((track, i) => (
@@ -180,11 +244,11 @@ export default function ArtistPage() {
           </section>
         )}
 
-        {localAlbums.length > 0 && (
+        {local.localAlbums.length > 0 && (
           <section className="px-4">
             <h2 className="text-heading-sm mb-4">{t('localAlbums')}</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {localAlbums.map((album) => (
+              {local.localAlbums.map((album) => (
                 <div key={album.id} className="surface-card">
                   <div className="aspect-square rounded-spotify overflow-hidden bg-spotify-gray mb-3 shadow-card">
                     {album.coverUrl ? (
@@ -204,11 +268,11 @@ export default function ArtistPage() {
           </section>
         )}
 
-        {spotify.albums.length > 0 && (
+        {(spotify?.albums.length ?? 0) > 0 && (
           <section className="px-4">
             <h2 className="text-heading-sm mb-4">{t('spotifyAlbums')}</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {spotify.albums.map((album) => (
+              {spotify!.albums.map((album) => (
                 <a
                   key={album.id}
                   href={album.spotifyUrl}
@@ -234,7 +298,7 @@ export default function ArtistPage() {
           </section>
         )}
 
-        {normalizedLocal.length === 0 && spotify.topTracks.length === 0 && normalizedListened.length === 0 && (
+        {normalizedLocal.length === 0 && spotifyAsTracks.length === 0 && normalizedListened.length === 0 && !spotifyLoading && (
           <p className="text-spotify-text text-center py-12">{t('noResults')}</p>
         )}
       </div>

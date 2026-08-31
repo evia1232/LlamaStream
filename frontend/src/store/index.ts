@@ -96,6 +96,7 @@ interface PlayerState {
   toggleAutoplay: () => void;
   playDiscoverNext: () => Promise<void>;
   prefetchUpcoming: () => void;
+  resolveNextTrack: () => { track: Track; contextIndex?: number; queueItemId?: string } | null;
   downloadToLibrary: () => Promise<void>;
   initLocalDevice: (id: string, name: string) => void;
   setSyncDevices: (devices: SyncDevice[], activeId: string | null, activeName: string | null) => void;
@@ -243,9 +244,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       set({
         isPlaying: true,
         isPreparingPlayback: false,
+        isBuffering: true,
         playbackEngine: 'local',
         currentTime: startTime,
         pendingSeekTime: startTime,
+        duration: track.duration || get().duration,
       });
       saveLocalPlayback({
         trackId: track.id,
@@ -354,28 +357,65 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   prefetchUpcoming: () => {
+    const next = get().resolveNextTrack();
+    if (next && !next.track.isDownloaded) {
+      prefetchTrack(next.track);
+    }
+
     const { currentTrack, contextTracks, contextIndex, queue, shuffle, autoplay } = get();
     if (!currentTrack) return;
 
-    for (let i = contextIndex + 1; i < contextTracks.length; i++) {
-      const t = contextTracks[i];
-      if (!t.isDownloaded) {
-        prefetchTrack(t);
-        return;
+    // Prefetch one more track ahead
+    if (next?.contextIndex !== undefined && contextTracks.length > 0) {
+      for (let i = next.contextIndex + 1; i < contextTracks.length; i++) {
+        const t = contextTracks[i];
+        if (t && !t.isDownloaded) {
+          prefetchTrack(t);
+          break;
+        }
       }
-    }
-
-    if (queue.length > 0) {
-      const next = shuffle ? queue[Math.floor(Math.random() * queue.length)] : queue[0];
-      if (next?.track && !next.track.isDownloaded) {
-        prefetchTrack(next.track);
-        return;
-      }
+    } else if (queue.length > 1) {
+      const second = shuffle ? queue[1] : queue[1];
+      if (second?.track && !second.track.isDownloaded) prefetchTrack(second.track);
     }
 
     if (autoplay) {
       prefetchDiscoverNext(currentTrack.id);
     }
+  },
+
+  resolveNextTrack: () => {
+    const { queue, currentTrack, repeat, shuffle, contextTracks, contextIndex } = get();
+    if (!currentTrack) return null;
+
+    if (contextTracks.length > 0 && contextIndex >= 0) {
+      if (shuffle) {
+        const candidates = contextTracks
+          .map((t, i) => ({ t, i }))
+          .filter(({ t, i }) => i !== contextIndex && t);
+        if (candidates.length > 0) {
+          const pick = candidates[Math.floor(Math.random() * candidates.length)];
+          return { track: pick.t, contextIndex: pick.i };
+        }
+      } else {
+        for (let i = contextIndex + 1; i < contextTracks.length; i++) {
+          if (contextTracks[i]) return { track: contextTracks[i], contextIndex: i };
+        }
+        if (repeat === 'all') {
+          for (let i = 0; i < contextIndex; i++) {
+            if (contextTracks[i]) return { track: contextTracks[i], contextIndex: i };
+          }
+        }
+      }
+    }
+
+    if (queue.length > 0) {
+      const idx = shuffle ? Math.floor(Math.random() * queue.length) : 0;
+      const next = queue[idx];
+      if (next?.track) return { track: next.track, queueItemId: next.id };
+    }
+
+    return null;
   },
 
   playNext: () => {
@@ -385,64 +425,47 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
 
-    const { queue, currentTrack, repeat, shuffle, contextTracks, contextIndex } = get();
+    const { currentTrack, repeat, autoplay } = get();
     if (repeat === 'one' && currentTrack) {
       get().seekTo(0);
-      set({ isPlaying: true });
+      set({ isPlaying: true, isBuffering: false });
       return;
     }
 
-    const findNextInContext = (): Track | null => {
-      if (contextTracks.length === 0 || contextIndex < 0) return null;
-      const playable = (i: number) => !!contextTracks[i];
+    const resolved = get().resolveNextTrack();
 
-      if (shuffle) {
-        const candidates = contextTracks
-          .map((t, i) => ({ t, i }))
-          .filter(({ t, i }) => i !== contextIndex && t);
-        if (candidates.length > 0) {
-          const pick = candidates[Math.floor(Math.random() * candidates.length)];
-          set({ contextIndex: pick.i });
-          return pick.t;
-        }
-      } else {
-        for (let i = contextIndex + 1; i < contextTracks.length; i++) {
-          if (playable(i)) {
-            set({ contextIndex: i });
-            return contextTracks[i];
-          }
-        }
-        if (repeat === 'all') {
-          for (let i = 0; i < contextIndex; i++) {
-            if (playable(i)) {
-              set({ contextIndex: i });
-              return contextTracks[i];
-            }
-          }
-        }
+    if (resolved) {
+      get().stopPlaybackImmediate();
+      if (resolved.contextIndex !== undefined) {
+        set({ contextIndex: resolved.contextIndex });
       }
-      return null;
-    };
-
-    const nextInContext = findNextInContext();
-    if (nextInContext) {
-      get().playTrack(nextInContext);
+      if (resolved.queueItemId) {
+        get().removeFromQueue(resolved.queueItemId);
+      }
+      set({
+        isPreparingPlayback: !resolved.track.isDownloaded,
+        isBuffering: true,
+        isPlaying: false,
+        duration: resolved.track.duration || 0,
+      });
+      void get().playTrack(resolved.track);
       return;
     }
 
-    if (queue.length > 0) {
-      const idx = shuffle ? Math.floor(Math.random() * queue.length) : 0;
-      const next = queue[idx];
-      get().playTrack(next.track);
-      get().removeFromQueue(next.id);
-    } else if (repeat === 'all' && currentTrack) {
+    if (repeat === 'all' && currentTrack) {
       get().seekTo(0);
-      set({ isPlaying: true });
-    } else if (get().autoplay && currentTrack) {
-      void get().playDiscoverNext();
-    } else {
-      set({ isPlaying: false });
+      set({ isPlaying: true, isBuffering: false });
+      return;
     }
+
+    if (autoplay && currentTrack) {
+      get().stopPlaybackImmediate();
+      set({ isPreparingPlayback: true, isBuffering: true, isPlaying: false });
+      void get().playDiscoverNext();
+      return;
+    }
+
+    set({ isPlaying: false, isBuffering: false });
   },
 
   toggleAutoplay: () => {

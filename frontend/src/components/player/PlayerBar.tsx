@@ -29,6 +29,7 @@ function PlayIcon({ className }: { className?: string }) {
 export default function PlayerBar() {
   const { t } = useTranslation();
   const audioRef = useRef<HTMLAudioElement>(null);
+  const preloadRef = useRef<HTMLAudioElement | null>(null);
 
   const {
     currentTrack, isPlaying, currentTime, duration, volume,
@@ -38,7 +39,7 @@ export default function PlayerBar() {
     toggleLike, setShowQueue, setShowLyrics, showLyrics,
     clearPendingSeek, persistPlayback, registerSeek, registerStop, seekTo, setShowNowPlaying,
     autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback, isBuffering, playbackEngine,
-    setIsBuffering, isRemoteActive, activeDeviceName, sendRemoteCommand,
+    setIsBuffering, isRemoteActive, activeDeviceName, sendRemoteCommand, prefetchUpcoming, resolveNextTrack,
   } = usePlayerStore();
 
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
@@ -145,6 +146,36 @@ export default function PlayerBar() {
     if (!isSpotifyMode && audioRef.current) audioRef.current.volume = volume;
   }, [volume, isSpotifyMode]);
 
+  // Preload next local track stream for instant skip
+  useEffect(() => {
+    if (isSpotifyMode || isRemoteActive) return;
+    const next = resolveNextTrack();
+    if (!next?.track.isDownloaded) return;
+
+    const token = localStorage.getItem('token');
+    const src = streamUrl(next.track.id, token);
+    const el = preloadRef.current ?? new Audio();
+    preloadRef.current = el;
+    el.preload = 'auto';
+    if (el.src !== src) {
+      el.src = src;
+      el.load();
+    }
+
+    return () => {
+      el.removeAttribute('src');
+      el.load();
+    };
+  }, [currentTrack?.id, isSpotifyMode, isRemoteActive, resolveNextTrack]);
+
+  // Keep next track download ready while playing
+  useEffect(() => {
+    if (!isPlaying || isRemoteActive) return;
+    prefetchUpcoming();
+    const timer = window.setInterval(prefetchUpcoming, 15000);
+    return () => window.clearInterval(timer);
+  }, [isPlaying, currentTrack?.id, isRemoteActive, prefetchUpcoming]);
+
   useEffect(() => {
     const onVisibility = () => {
       const audio = audioRef.current;
@@ -166,6 +197,7 @@ export default function PlayerBar() {
     if (now - lastPersistRef.current > 4000) {
       lastPersistRef.current = now;
       persistPlayback();
+      prefetchUpcoming();
     }
   };
 
@@ -207,9 +239,11 @@ export default function PlayerBar() {
   const progressPct = (currentTime / (trackDuration || 1)) * 100;
   const volumePct = volume * 100;
   const showPreparing = isPreparingPlayback || isBuffering;
-  const preparingLabel = isPreparingPlayback && !isSpotifyMode && !currentTrack.isDownloaded
-    ? t('downloading')
-    : t('preparingPlayback');
+  const preparingLabel = isBuffering && !isPreparingPlayback
+    ? t('switchingTrack')
+    : isPreparingPlayback && !isSpotifyMode && !currentTrack.isDownloaded
+      ? t('downloading')
+      : t('preparingPlayback');
 
   const transportControls = (
     <>
@@ -287,7 +321,10 @@ export default function PlayerBar() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
-            <ArtistLinks artist={currentTrack.artist} className="text-caption truncate block" linkClassName="text-caption" />
+            <p className="text-caption truncate">{artistName}</p>
+            {showPreparing && (
+              <p className="text-2xs text-spotify-green truncate">{preparingLabel}</p>
+            )}
             {isRemoteActive && activeDeviceName && (
               <p className="text-2xs text-spotify-green truncate">{t('playingOnDevice', { device: activeDeviceName })}</p>
             )}
