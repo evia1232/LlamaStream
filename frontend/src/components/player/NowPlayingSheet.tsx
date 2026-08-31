@@ -7,7 +7,6 @@ import clsx from 'clsx';
 import { useRef, useState, useCallback } from 'react';
 import { usePlayerStore } from '../../store';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
-import { useDirection } from '../../hooks/useDirection';
 import { progressGradient } from '../../lib/direction';
 import AddToPlaylistModal from '../tracks/AddToPlaylistModal';
 import TrackContextMenu, { TrackMenuAction } from '../tracks/TrackContextMenu';
@@ -24,7 +23,6 @@ function PlayIcon({ className }: { className?: string }) {
 
 export default function NowPlayingSheet() {
   const { t } = useTranslation();
-  const { isRtl } = useDirection();
 
   const {
     currentTrack, showNowPlaying, setShowNowPlaying,
@@ -52,6 +50,35 @@ export default function NowPlayingSheet() {
   const imageUrl = getTrackImageUrl(currentTrack);
   const isLiked = likedTrackIds.has(currentTrack.id);
   const progressPct = (currentTime / (duration || 1)) * 100;
+  const volumePct = volume * 100;
+
+  const transportControls = (
+    <>
+      <button type="button" onClick={toggleShuffle} className={clsx('icon-btn p-3', shuffle && 'text-spotify-green')}>
+        <Shuffle className="w-6 h-6" />
+      </button>
+      <button type="button" onClick={playPrevious} className="icon-btn p-3" aria-label={t('previous')}>
+        <SkipBack className="w-8 h-8 fill-current" />
+      </button>
+      <button
+        type="button"
+        onClick={() => setIsPlaying(!isPlaying)}
+        className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-play-btn active:scale-95 transition-transform"
+      >
+        {isPlaying ? (
+          <Pause className="w-7 h-7 text-black fill-black" />
+        ) : (
+          <PlayIcon className="w-7 h-7 text-black fill-black" />
+        )}
+      </button>
+      <button type="button" onClick={playNext} className="icon-btn p-3" aria-label={t('next')}>
+        <SkipForward className="w-8 h-8 fill-current" />
+      </button>
+      <button type="button" onClick={cycleRepeat} className={clsx('icon-btn p-3', repeat !== 'off' && 'text-spotify-green')}>
+        {repeat === 'one' ? <Repeat1 className="w-6 h-6" /> : <Repeat className="w-6 h-6" />}
+      </button>
+    </>
+  );
 
   const menuActions: TrackMenuAction[] = [
     {
@@ -73,58 +100,6 @@ export default function NowPlayingSheet() {
       onClick: () => { void addToQueue(currentTrack.id, true); },
     },
   ];
-
-  const transportControls = isRtl ? (
-    <>
-      <button onClick={toggleShuffle} className={clsx('icon-btn p-3', shuffle && 'text-spotify-green')}>
-        <Shuffle className="w-6 h-6" />
-      </button>
-      <button onClick={playNext} className="icon-btn p-3" aria-label={t('next')}>
-        <SkipForward className="w-8 h-8 fill-current flip-rtl" />
-      </button>
-      <button
-        onClick={() => setIsPlaying(!isPlaying)}
-        className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-play-btn active:scale-95 transition-transform"
-      >
-        {isPlaying ? (
-          <Pause className="w-7 h-7 text-black fill-black" />
-        ) : (
-          <PlayIcon className="w-7 h-7 text-black fill-black" />
-        )}
-      </button>
-      <button onClick={playPrevious} className="icon-btn p-3" aria-label={t('previous')}>
-        <SkipBack className="w-8 h-8 fill-current flip-rtl" />
-      </button>
-      <button onClick={cycleRepeat} className={clsx('icon-btn p-3', repeat !== 'off' && 'text-spotify-green')}>
-        {repeat === 'one' ? <Repeat1 className="w-6 h-6" /> : <Repeat className="w-6 h-6" />}
-      </button>
-    </>
-  ) : (
-    <>
-      <button onClick={toggleShuffle} className={clsx('icon-btn p-3', shuffle && 'text-spotify-green')}>
-        <Shuffle className="w-6 h-6" />
-      </button>
-      <button onClick={playPrevious} className="icon-btn p-3" aria-label={t('previous')}>
-        <SkipBack className="w-8 h-8 fill-current" />
-      </button>
-      <button
-        onClick={() => setIsPlaying(!isPlaying)}
-        className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-play-btn active:scale-95 transition-transform"
-      >
-        {isPlaying ? (
-          <Pause className="w-7 h-7 text-black fill-black" />
-        ) : (
-          <PlayIcon className="w-7 h-7 text-black fill-black" />
-        )}
-      </button>
-      <button onClick={playNext} className="icon-btn p-3" aria-label={t('next')}>
-        <SkipForward className="w-8 h-8 fill-current" />
-      </button>
-      <button onClick={cycleRepeat} className={clsx('icon-btn p-3', repeat !== 'off' && 'text-spotify-green')}>
-        {repeat === 'one' ? <Repeat1 className="w-6 h-6" /> : <Repeat className="w-6 h-6" />}
-      </button>
-    </>
-  );
 
   return (
     <div className="md:hidden fixed inset-0 z-[60] flex flex-col bg-gradient-to-b from-[#333] via-spotify-dark to-spotify-black animate-slide-up">
@@ -164,8 +139,8 @@ export default function NowPlayingSheet() {
           <p className="text-body text-base truncate">{artistName}</p>
         </div>
 
-        {/* Progress */}
-        <div dir="ltr" className="slider-ltr px-1 mb-2">
+        {/* Progress + transport — LTR controls (Spotify-style) */}
+        <div dir="ltr" className="player-slider-row px-1 mb-2">
           <input
             type="range"
             min={0}
@@ -181,8 +156,7 @@ export default function NowPlayingSheet() {
           </div>
         </div>
 
-        {/* Transport */}
-        <div className="flex items-center justify-center gap-2 mb-8">
+        <div dir="ltr" className="flex items-center justify-center gap-2 mb-8">
           {transportControls}
         </div>
 
@@ -216,8 +190,9 @@ export default function NowPlayingSheet() {
         </div>
 
         {/* Volume */}
-        <div dir="ltr" className="slider-ltr flex items-center gap-3 px-4 pb-[env(safe-area-inset-bottom)]">
+        <div dir="ltr" className="player-slider-row flex items-center gap-3 px-4 pb-[env(safe-area-inset-bottom)]">
           <button
+            type="button"
             onClick={() => setVolume(volume === 0 ? 0.7 : 0)}
             className="icon-btn p-2 shrink-0"
           >
@@ -231,6 +206,7 @@ export default function NowPlayingSheet() {
             value={volume}
             onChange={(e) => setVolume(parseFloat(e.target.value))}
             className="player-progress flex-1"
+            style={{ background: progressGradient(volumePct) }}
           />
         </div>
       </div>

@@ -91,6 +91,46 @@ async function fetchSpotifyToken(): Promise<{ token: string | null; error?: stri
   }
 }
 
+function sanitizeSpotifyQuery(query: string): string {
+  // Spotify rejects queries over ~250 chars (400)
+  return query.trim().replace(/\s+/g, ' ').slice(0, 250);
+}
+
+function normalizeMarket(market: string): string | null {
+  const code = market.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? code : null;
+}
+
+async function requestSpotifySearch(
+  token: string,
+  query: string,
+  limit: number,
+  market?: string
+): Promise<Response> {
+  const params = new URLSearchParams({
+    q: query,
+    type: 'track',
+    limit: String(Math.min(50, Math.max(1, limit))),
+  });
+  if (market) params.set('market', market);
+
+  return fetch(`https://api.spotify.com/v1/search?${params}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+}
+
+function parseSpotifyErrorBody(body: string): string | undefined {
+  try {
+    const data = JSON.parse(body) as { error?: { message?: string } };
+    return data.error?.message;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function searchSpotifyTracks(query: string, limit = 15): Promise<SpotifySearchResponse> {
   if (!isSpotifyConfigured()) {
     return {
@@ -100,52 +140,69 @@ export async function searchSpotifyTracks(query: string, limit = 15): Promise<Sp
     };
   }
 
+  const cleaned = sanitizeSpotifyQuery(query);
+  if (!cleaned) {
+    return { tracks: [], configured: true };
+  }
+
   const { token, error: tokenError } = await fetchSpotifyToken();
   if (!token) {
     return { tracks: [], configured: true, error: tokenError || 'Spotify authentication failed' };
   }
 
-  const market = config.spotifyMarket;
-  const url =
-    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}` +
-    `&type=track&limit=${limit}&market=${market}`;
+  const primaryMarket = normalizeMarket(config.spotifyMarket);
+  const fallbacks = [
+    primaryMarket,
+    primaryMarket && primaryMarket !== 'US' ? 'US' : null,
+    null, // no market — last resort
+  ].filter((m, i, arr) => m !== undefined && arr.indexOf(m) === i) as (string | null)[];
 
   try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    let lastStatus = 0;
+    let lastDetail: string | undefined;
 
-    if (!res.ok) {
+    for (const market of fallbacks) {
+      const res = await requestSpotifySearch(token, cleaned, limit, market || undefined);
+      if (res.ok) {
+        const data = await res.json() as {
+          tracks?: { items: Array<{
+            id: string; name: string; duration_ms: number;
+            external_urls: { spotify: string };
+            album: { name: string; images: { url: string }[] };
+            artists: { name: string }[];
+          }> };
+        };
+
+        const tracks = (data.tracks?.items || []).map((t) => ({
+          id: t.id,
+          name: t.name,
+          artist: t.artists.map((a) => a.name).join(', '),
+          album: t.album.name,
+          duration: Math.round(t.duration_ms / 1000),
+          thumbnailUrl: t.album.images[0]?.url || '',
+          spotifyUrl: t.external_urls.spotify,
+          source: 'spotify' as const,
+        }));
+
+        return { tracks, configured: true };
+      }
+
       const body = await res.text();
-      console.error('[Spotify] Search error:', res.status, body);
-      return {
-        tracks: [],
-        configured: true,
-        error: `Spotify search failed (${res.status})`,
-      };
+      lastStatus = res.status;
+      lastDetail = parseSpotifyErrorBody(body);
+      console.error('[Spotify] Search error:', res.status, market ? `market=${market}` : 'no market', body);
+
+      // Only retry on client/request errors
+      if (res.status !== 400 && res.status !== 404) break;
     }
 
-    const data = await res.json() as {
-      tracks?: { items: Array<{
-        id: string; name: string; duration_ms: number;
-        external_urls: { spotify: string };
-        album: { name: string; images: { url: string }[] };
-        artists: { name: string }[];
-      }> };
+    return {
+      tracks: [],
+      configured: true,
+      error: lastDetail
+        ? `Spotify search failed (${lastStatus}): ${lastDetail}`
+        : `Spotify search failed (${lastStatus})`,
     };
-
-    const tracks = (data.tracks?.items || []).map((t) => ({
-      id: t.id,
-      name: t.name,
-      artist: t.artists.map((a) => a.name).join(', '),
-      album: t.album.name,
-      duration: Math.round(t.duration_ms / 1000),
-      thumbnailUrl: t.album.images[0]?.url || '',
-      spotifyUrl: t.external_urls.spotify,
-      source: 'spotify' as const,
-    }));
-
-    return { tracks, configured: true };
   } catch (err) {
     return { tracks: [], configured: true, error: (err as Error).message };
   }

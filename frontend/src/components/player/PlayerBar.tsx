@@ -8,7 +8,6 @@ import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
 import { streamUrl } from '../../lib/apiUrl';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
-import { useDirection } from '../../hooks/useDirection';
 import { progressGradient } from '../../lib/direction';
 
 function formatTime(seconds: number) {
@@ -23,7 +22,6 @@ function PlayIcon({ className }: { className?: string }) {
 
 export default function PlayerBar() {
   const { t } = useTranslation();
-  const { isRtl } = useDirection();
   const audioRef = useRef<HTMLAudioElement>(null);
 
   const {
@@ -100,42 +98,18 @@ export default function PlayerBar() {
   const handleEnded = () => playNext();
 
   const progressPct = (currentTime / (duration || 1)) * 100;
+  const volumePct = volume * 100;
 
-  const transportControls = isRtl ? (
+  const transportControls = (
     <>
-      <button onClick={toggleShuffle} className={clsx('icon-btn', shuffle && 'active text-spotify-green')}>
+      <button type="button" onClick={toggleShuffle} className={clsx('icon-btn', shuffle && 'active text-spotify-green')}>
         <Shuffle className="w-4 h-4" />
       </button>
-      <button onClick={playNext} className="icon-btn" aria-label={t('next')}>
-        <SkipForward className="w-5 h-5 fill-current flip-rtl" />
-      </button>
-      <button
-        onClick={() => setIsPlaying(!isPlaying)}
-        className="w-8 h-8 bg-white rounded-full flex items-center justify-center hover:scale-105 transition-transform"
-        aria-label={isPlaying ? t('pause') : t('play')}
-      >
-        {isPlaying ? (
-          <Pause className="w-4 h-4 text-black fill-black" />
-        ) : (
-          <PlayIcon className="w-4 h-4 text-black fill-black" />
-        )}
-      </button>
-      <button onClick={playPrevious} className="icon-btn" aria-label={t('previous')}>
-        <SkipBack className="w-5 h-5 fill-current flip-rtl" />
-      </button>
-      <button onClick={cycleRepeat} className={clsx('icon-btn', repeat !== 'off' && 'active text-spotify-green')}>
-        {repeat === 'one' ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
-      </button>
-    </>
-  ) : (
-    <>
-      <button onClick={toggleShuffle} className={clsx('icon-btn', shuffle && 'active text-spotify-green')}>
-        <Shuffle className="w-4 h-4" />
-      </button>
-      <button onClick={playPrevious} className="icon-btn" aria-label={t('previous')}>
+      <button type="button" onClick={playPrevious} className="icon-btn" aria-label={t('previous')}>
         <SkipBack className="w-5 h-5 fill-current" />
       </button>
       <button
+        type="button"
         onClick={() => setIsPlaying(!isPlaying)}
         className="w-8 h-8 bg-white rounded-full flex items-center justify-center hover:scale-105 transition-transform"
         aria-label={isPlaying ? t('pause') : t('play')}
@@ -146,10 +120,10 @@ export default function PlayerBar() {
           <PlayIcon className="w-4 h-4 text-black fill-black" />
         )}
       </button>
-      <button onClick={playNext} className="icon-btn" aria-label={t('next')}>
+      <button type="button" onClick={playNext} className="icon-btn" aria-label={t('next')}>
         <SkipForward className="w-5 h-5 fill-current" />
       </button>
-      <button onClick={cycleRepeat} className={clsx('icon-btn', repeat !== 'off' && 'active text-spotify-green')}>
+      <button type="button" onClick={cycleRepeat} className={clsx('icon-btn', repeat !== 'off' && 'active text-spotify-green')}>
         {repeat === 'one' ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
       </button>
     </>
@@ -157,7 +131,7 @@ export default function PlayerBar() {
 
   if (!currentTrack) {
     return (
-      <footer className="player-bar player-bar-empty shrink-0">
+      <footer className="player-bar player-bar-empty shrink-0" dir="ltr">
         <p className="text-spotify-text text-sm hidden md:block">{t('appName')}</p>
       </footer>
     );
@@ -167,7 +141,7 @@ export default function PlayerBar() {
   const imageUrl = getTrackImageUrl(currentTrack);
 
   return (
-    <footer className="player-bar shrink-0">
+    <footer className="player-bar shrink-0" dir="ltr">
       <audio
         ref={audioRef}
         onTimeUpdate={handleTimeUpdate}
@@ -176,12 +150,12 @@ export default function PlayerBar() {
         crossOrigin="anonymous"
       />
 
-      {/* Mobile progress — always LTR fill */}
-      <div className="md:hidden absolute top-0 inset-x-0 h-0.5 bg-spotify-hover slider-ltr">
+      {/* Mobile progress */}
+      <div className="md:hidden absolute top-0 inset-x-0 h-0.5 bg-spotify-hover">
         <div className="h-full bg-white transition-all" style={{ width: `${progressPct}%` }} />
       </div>
 
-      {/* Mobile layout — tap track info to expand */}
+      {/* Mobile layout */}
       <div className="md:hidden flex items-center gap-3 px-3 h-full min-w-0">
         <button
           type="button"
@@ -202,12 +176,14 @@ export default function PlayerBar() {
         </button>
         <div className="flex items-center gap-1 shrink-0">
           <button
+            type="button"
             onClick={(e) => { e.stopPropagation(); toggleLike(currentTrack.id); }}
             className={clsx('icon-btn p-1', isLiked && 'text-spotify-green')}
           >
             <Heart className="w-5 h-5" fill={isLiked ? 'currentColor' : 'none'} />
           </button>
           <button
+            type="button"
             onClick={(e) => { e.stopPropagation(); setIsPlaying(!isPlaying); }}
             className="w-9 h-9 bg-white rounded-full flex items-center justify-center"
             aria-label={isPlaying ? t('pause') : t('play')}
@@ -219,22 +195,18 @@ export default function PlayerBar() {
             )}
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); (isRtl ? playPrevious : playNext)(); }}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); playNext(); }}
             className="icon-btn p-1"
-            aria-label={isRtl ? t('previous') : t('next')}
+            aria-label={t('next')}
           >
-            {isRtl ? (
-              <SkipBack className="w-5 h-5 fill-current flip-rtl" />
-            ) : (
-              <SkipForward className="w-5 h-5 fill-current" />
-            )}
+            <SkipForward className="w-5 h-5 fill-current" />
           </button>
         </div>
       </div>
 
-      {/* Desktop layout — flex mirrors naturally in RTL */}
+      {/* Desktop layout — always LTR (Spotify-style) */}
       <div className="hidden md:flex items-center gap-4 px-4 h-full w-full">
-        {/* Track info — flex-1 start side (right in RTL) */}
         <div className="flex flex-1 items-center gap-3 min-w-0">
           <div className="w-14 h-14 rounded bg-spotify-gray shrink-0 overflow-hidden">
             {currentTrack.thumbnailUrl ? (
@@ -248,6 +220,7 @@ export default function PlayerBar() {
             <p className="text-caption truncate">{artistName}</p>
           </div>
           <button
+            type="button"
             onClick={() => toggleLike(currentTrack.id)}
             className={clsx('icon-btn shrink-0', isLiked && 'text-spotify-green')}
           >
@@ -255,12 +228,11 @@ export default function PlayerBar() {
           </button>
         </div>
 
-        {/* Center controls */}
         <div className="flex flex-col items-center gap-2 shrink-0">
           <div className="flex items-center gap-4">
             {transportControls}
           </div>
-          <div dir="ltr" className="slider-ltr flex items-center gap-2 w-full max-w-md">
+          <div className="player-slider-row flex items-center gap-2 w-full max-w-md">
             <span className="text-caption w-10 text-end tabular-nums">{formatTime(currentTime)}</span>
             <input
               type="range"
@@ -275,20 +247,21 @@ export default function PlayerBar() {
           </div>
         </div>
 
-        {/* Extra controls — flex-1 end side (left in RTL) */}
         <div className="flex flex-1 items-center justify-end gap-2">
           <button
+            type="button"
             onClick={() => setShowLyrics(!showLyrics)}
             className={clsx('icon-btn', showLyrics && 'text-spotify-green')}
             aria-label={t('lyrics')}
           >
             <Mic2 className="w-4 h-4" />
           </button>
-          <button onClick={() => setShowQueue(true)} className="icon-btn" aria-label={t('queue')}>
+          <button type="button" onClick={() => setShowQueue(true)} className="icon-btn" aria-label={t('queue')}>
             <ListMusic className="w-4 h-4" />
           </button>
-          <div dir="ltr" className="slider-ltr flex items-center gap-2 w-28">
+          <div className="player-slider-row flex items-center gap-2 w-28">
             <button
+              type="button"
               onClick={() => setVolume(volume === 0 ? 0.7 : 0)}
               className="icon-btn"
               aria-label={t('volume')}
@@ -303,6 +276,7 @@ export default function PlayerBar() {
               value={volume}
               onChange={(e) => setVolume(parseFloat(e.target.value))}
               className="player-progress flex-1"
+              style={{ background: progressGradient(volumePct) }}
             />
           </div>
         </div>

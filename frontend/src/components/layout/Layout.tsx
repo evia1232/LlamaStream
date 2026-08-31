@@ -18,7 +18,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         <Sidebar />
         <main
           className={clsx(
-            'flex-1 overflow-y-auto main-panel md:mx-2 md:mt-2 scrollbar-spotify',
+            'flex-1 overflow-y-auto overflow-x-hidden main-panel md:mx-2 md:mt-2 scrollbar-spotify min-w-0',
             hasTrack ? 'pb-mobile-with-player' : 'pb-mobile-nav-only'
           )}
         >

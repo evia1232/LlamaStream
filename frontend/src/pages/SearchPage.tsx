@@ -140,7 +140,7 @@ export default function SearchPage() {
     !!results?.detectedUrl;
 
   return (
-    <div className="p-4 md:p-8 pb-4">
+    <div className="p-4 md:p-8 pb-4 max-w-full overflow-x-hidden">
       <h1 className="text-heading mb-6 md:mb-8">{t('search')}</h1>
       <div className="relative mb-3">
         <SearchIcon className="absolute start-4 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-500" />
@@ -158,26 +158,26 @@ export default function SearchPage() {
       <p className="text-caption mb-6 md:mb-8">{t('searchHint')}</p>
 
       {error && (
-        <div className="flex items-center gap-2 bg-red-900/40 border border-red-500/50 rounded-lg p-3 mb-4 text-sm">
-          <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-          {error}
+        <div className="flex items-start gap-2 bg-red-900/40 border border-red-500/50 rounded-lg p-3 mb-4 text-sm max-w-full overflow-hidden">
+          <AlertCircle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
+          <p className="min-w-0 break-words">{error}</p>
         </div>
       )}
 
       {results?.spotifyError && (
-        <div className="flex items-start gap-2 bg-amber-900/30 border border-amber-500/40 rounded-lg p-3 mb-4 text-sm">
+        <div className="flex items-start gap-2 bg-amber-900/30 border border-amber-500/40 rounded-lg p-3 mb-4 text-sm max-w-full overflow-hidden">
           <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-          <div>
+          <div className="min-w-0 break-words">
             <p>{results.spotifyError}</p>
-            <p className="text-xs text-spotify-text mt-1">{t('spotifySetupHint')}</p>
+            <p className="text-xs text-spotify-text mt-1 break-words">{t('spotifySetupHint')}</p>
           </div>
         </div>
       )}
 
       {!results?.spotifyError && results?.spotifyConfigured === false && query.trim() && !loading && (
-        <div className="flex items-start gap-2 bg-spotify-lightgray rounded-lg p-3 mb-4 text-sm text-spotify-text">
+        <div className="flex items-start gap-2 bg-spotify-lightgray rounded-lg p-3 mb-4 text-sm text-spotify-text max-w-full overflow-hidden">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-          <p>{t('spotifyNotConfigured')}</p>
+          <p className="min-w-0 break-words">{t('spotifyNotConfigured')}</p>
         </div>
       )}
 
