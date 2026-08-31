@@ -1,5 +1,6 @@
 import prisma from '../lib/prisma';
 import { Prisma } from '@prisma/client';
+import { extractPlaylistCoverImages, playlistCoverTracksQuery } from '../lib/playlistCovers';
 import { searchYouTube } from './downloader';
 import {
   searchSpotifyTracks,
@@ -30,7 +31,7 @@ export interface UnifiedSearchResult {
   }>;
   artists: Array<{ id: string; name: string; imageUrl: string | null }>;
   albums: Array<{ id: string; title: string; coverUrl: string | null; artist: { id: string; name: string } }>;
-  playlists: Array<{ id: string; name: string; coverUrl: string | null; trackCount: number; userId: string }>;
+  playlists: Array<{ id: string; name: string; coverUrl: string | null; coverImages: string[]; trackCount: number; userId: string }>;
   detectedUrl?: { type: 'spotify' | 'youtube'; url: string };
   spotifyError?: string;
   spotifyConfigured?: boolean;
@@ -91,7 +92,10 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
             : { name: { contains: trimmed, mode: 'insensitive' } },
         ],
       },
-      include: { _count: { select: { tracks: true } } },
+      include: {
+        _count: { select: { tracks: true } },
+        tracks: playlistCoverTracksQuery,
+      },
       take: 10,
     }),
   ]);
@@ -154,6 +158,7 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
       id: p.id,
       name: p.name,
       coverUrl: p.coverUrl,
+      coverImages: extractPlaylistCoverImages(p),
       trackCount: p._count.tracks,
       userId: p.userId,
     })),

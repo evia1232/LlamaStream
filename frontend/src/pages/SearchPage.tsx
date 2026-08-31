@@ -8,6 +8,7 @@ import TrackSurface from '../components/tracks/TrackSurface';
 import { externalTrack } from '../lib/trackUtils';
 import { Track } from '../types';
 import { usePlayerStore } from '../store';
+import PlaylistCover from '../components/playlists/PlaylistCover';
 
 interface YouTubeResult {
   id: string; title: string; artist: string; duration: number;
@@ -34,7 +35,7 @@ interface SearchResults {
   detectedUrl?: { type: 'spotify' | 'youtube'; url: string };
   artists: { id: string; name: string; imageUrl?: string | null }[];
   albums: { id: string; title: string; coverUrl?: string | null; artist: { id: string; name: string } }[];
-  playlists: { id: string; name: string; coverUrl?: string | null; trackCount?: number }[];
+  playlists: { id: string; name: string; coverUrl?: string | null; coverImages?: string[]; trackCount?: number }[];
 }
 
 function formatTime(seconds: number) {
@@ -244,11 +245,12 @@ export default function SearchPage() {
                     {results.playlists.map((pl) => (
                       <Link key={pl.id} to={`/playlist/${pl.id}`} className="bg-spotify-lightgray p-3 rounded-lg card-hover">
                         <div className="aspect-square rounded-md bg-spotify-gray mb-2 overflow-hidden">
-                          {pl.coverUrl ? (
-                            <img src={pl.coverUrl} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-3xl">♪</div>
-                          )}
+                          <PlaylistCover
+                            coverUrl={pl.coverUrl}
+                            coverImages={pl.coverImages}
+                            className="w-full h-full"
+                            fallback={<span className="text-3xl">♪</span>}
+                          />
                         </div>
                         <p className="text-title truncate text-sm">{pl.name}</p>
                         {pl.trackCount !== undefined && (

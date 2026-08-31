@@ -7,12 +7,13 @@ import TrackRow from '../components/tracks/TrackRow';
 import { Track, Playlist } from '../types';
 import { normalizeTrack } from '../lib/trackUtils';
 import { usePlayerStore } from '../store';
+import PlaylistCover from '../components/playlists/PlaylistCover';
 
 export default function PlaylistPage() {
   const { id } = useParams<{ id: string }>();
   const { t } = useTranslation();
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
-  const playTrack = usePlayerStore((s) => s.playTrack);
+  const playTracks = usePlayerStore((s) => s.playTracks);
 
   useEffect(() => {
     if (id) {
@@ -20,8 +21,10 @@ export default function PlaylistPage() {
     }
   }, [id]);
 
+  const normalizedTracks = (playlist?.tracks ?? []).map((t) => normalizeTrack(t as Track));
+
   const handlePlayAll = () => {
-    if (playlist?.tracks?.[0]) playTrack(playlist.tracks[0]);
+    if (normalizedTracks.length > 0) void playTracks(normalizedTracks, 0);
   };
 
   const handleExport = async (format: 'json' | 'm3u' | 'txt') => {
@@ -47,11 +50,12 @@ export default function PlaylistPage() {
     <div>
       <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-end gap-6">
         <div className="w-36 h-36 md:w-48 md:h-48 rounded-spotify shadow-card bg-spotify-lightgray shrink-0 overflow-hidden">
-          {playlist.coverUrl ? (
-            <img src={playlist.coverUrl} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-6xl">♪</div>
-          )}
+          <PlaylistCover
+            coverUrl={playlist.coverUrl}
+            coverImages={playlist.coverImages}
+            className="w-full h-full"
+            fallback={<span className="text-6xl">♪</span>}
+          />
         </div>
         <div className="min-w-0 pb-2">
           <p className="text-label mb-2">{t('playlists')}</p>
@@ -87,11 +91,12 @@ export default function PlaylistPage() {
           <span />
           <span className="text-end">⏱</span>
         </div>
-        {playlist.tracks?.map((track, i) => (
+        {normalizedTracks.map((track, i) => (
           <TrackRow
             key={track.id}
-            track={normalizeTrack(track as Track)}
+            track={track}
             index={i}
+            contextTracks={normalizedTracks}
             playlistId={id}
             onRemovedFromPlaylist={() => {
               if (id) {

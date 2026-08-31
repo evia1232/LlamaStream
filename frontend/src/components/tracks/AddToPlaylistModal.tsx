@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { X, Plus, Check } from 'lucide-react';
 import api from '../../api/client';
 import { Playlist, Track } from '../../types';
+import PlaylistCover from '../playlists/PlaylistCover';
 
 interface AddToPlaylistModalProps {
   track: Track;
@@ -137,11 +138,12 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 text-start disabled:opacity-70"
                     >
                       <div className="w-12 h-12 rounded bg-spotify-gray overflow-hidden shrink-0">
-                        {pl.coverUrl ? (
-                          <img src={pl.coverUrl} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-xl">♪</div>
-                        )}
+                        <PlaylistCover
+                          coverUrl={pl.coverUrl}
+                          coverImages={pl.coverImages}
+                          className="w-full h-full"
+                          fallback={<span className="text-xl">♪</span>}
+                        />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">{pl.name}</p>

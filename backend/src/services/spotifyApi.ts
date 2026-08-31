@@ -19,6 +19,15 @@ export interface SpotifySearchResult {
 
 let tokenCache: { token: string; expiresAt: number } | null = null;
 
+/** Spotify /search limit max (API tightened from 50 → 10; values >10 return 400 Invalid limit). */
+const SPOTIFY_SEARCH_MAX_LIMIT = 10;
+
+function normalizeSpotifySearchLimit(limit: unknown): number {
+  const n = typeof limit === 'number' ? limit : parseInt(String(limit ?? ''), 10);
+  if (!Number.isFinite(n)) return SPOTIFY_SEARCH_MAX_LIMIT;
+  return Math.min(SPOTIFY_SEARCH_MAX_LIMIT, Math.max(1, Math.floor(n)));
+}
+
 export function isSpotifyConfigured(): boolean {
   return !!(config.spotifyClientId && config.spotifyClientSecret);
 }
@@ -104,13 +113,14 @@ function normalizeMarket(market: string): string | null {
 async function requestSpotifySearch(
   token: string,
   query: string,
-  limit: number,
+  limit: unknown,
   market?: string
 ): Promise<Response> {
+  const safeLimit = normalizeSpotifySearchLimit(limit);
   const params = new URLSearchParams({
     q: query,
     type: 'track',
-    limit: String(Math.min(50, Math.max(1, limit))),
+    limit: String(safeLimit),
   });
   if (market) params.set('market', market);
 
@@ -131,7 +141,7 @@ function parseSpotifyErrorBody(body: string): string | undefined {
   }
 }
 
-export async function searchSpotifyTracks(query: string, limit = 15): Promise<SpotifySearchResponse> {
+export async function searchSpotifyTracks(query: string, limit = SPOTIFY_SEARCH_MAX_LIMIT): Promise<SpotifySearchResponse> {
   if (!isSpotifyConfigured()) {
     return {
       tracks: [],

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { Play } from 'lucide-react';
+import PlaylistCover from '../playlists/PlaylistCover';
 
 interface CardGridProps {
   title: string;
@@ -9,6 +10,7 @@ interface CardGridProps {
     name?: string;
     title?: string;
     coverUrl?: string | null;
+    coverImages?: string[];
     thumbnailUrl?: string | null;
     imageUrl?: string | null;
     trackCount?: number;
@@ -27,7 +29,7 @@ export default function CardGrid({ title, items, onPlay, linkPrefix = '/playlist
       <h2 className="text-heading mb-5 px-4 md:px-6">{title}</h2>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-5 px-4 md:px-6">
         {items.map((item) => {
-          const image = item.coverUrl || item.thumbnailUrl || item.imageUrl;
+          const image = item.type === 'playlist' ? null : (item.coverUrl || item.thumbnailUrl || item.imageUrl);
           const label = item.name || item.title || '';
           const href = item.type === 'artist' ? `/artist/${item.id}` : `${linkPrefix}/${item.id}`;
 
@@ -42,7 +44,13 @@ export default function CardGrid({ title, items, onPlay, linkPrefix = '/playlist
                   'aspect-square rounded-spotify overflow-hidden bg-spotify-gray shadow-card',
                   item.type === 'artist' && 'rounded-full'
                 )}>
-                  {image ? (
+                  {item.type === 'playlist' ? (
+                    <PlaylistCover
+                      coverUrl={item.coverUrl}
+                      coverImages={item.coverImages}
+                      className="w-full h-full"
+                    />
+                  ) : image ? (
                     <img src={image} alt={label} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-4xl text-spotify-text">♪</div>

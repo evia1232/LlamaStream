@@ -12,8 +12,8 @@ interface HomeData {
   greeting: string;
   recentlyPlayed: Track[];
   likedCount: number;
-  yourPlaylists: { id: string; name: string; coverUrl?: string; trackCount: number }[];
-  madeForYou: { id: string; name: string; coverUrl?: string; trackCount: number }[];
+  yourPlaylists: { id: string; name: string; coverUrl?: string; coverImages?: string[]; trackCount: number }[];
+  madeForYou: { id: string; name: string; coverUrl?: string; coverImages?: string[]; trackCount: number }[];
   topArtists: { id: string; name: string; imageUrl?: string }[];
   history: (Track & { playedAt?: string })[];
 }

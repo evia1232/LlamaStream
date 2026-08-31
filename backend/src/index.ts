@@ -15,6 +15,7 @@ import playlistRoutes from './routes/playlists';
 import queueRoutes from './routes/queue';
 import homeRoutes from './routes/home';
 import mediaRoutes from './routes/media';
+import { resumePendingImports } from './services/playlistImport';
 
 const app = express();
 const server = http.createServer(app);
@@ -117,6 +118,7 @@ async function seedAdmin() {
 
 async function start() {
   await seedAdmin();
+  await resumePendingImports();
   server.listen(config.port, () => {
     console.log(`LlamaStream backend running on port ${config.port}`);
   });

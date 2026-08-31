@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../lib/prisma';
+import { extractPlaylistCoverImages, playlistCoverTracksQuery } from '../lib/playlistCovers';
 
 const router = Router();
 
@@ -18,7 +19,10 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
     prisma.likedTrack.count({ where: { userId } }),
     prisma.playlist.findMany({
       where: { userId },
-      include: { _count: { select: { tracks: true } } },
+      include: {
+        _count: { select: { tracks: true } },
+        tracks: playlistCoverTracksQuery,
+      },
       orderBy: { updatedAt: 'desc' },
       take: 6,
     }),
@@ -37,7 +41,10 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
 
   const publicPlaylists = await prisma.playlist.findMany({
     where: { visibility: 'PUBLIC' },
-    include: { _count: { select: { tracks: true } } },
+    include: {
+      _count: { select: { tracks: true } },
+      tracks: playlistCoverTracksQuery,
+    },
     take: 6,
   });
 
@@ -49,12 +56,14 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       id: p.id,
       name: p.name,
       coverUrl: p.coverUrl,
+      coverImages: extractPlaylistCoverImages(p),
       trackCount: p._count.tracks,
     })),
     madeForYou: publicPlaylists.map((p) => ({
       id: p.id,
       name: p.name,
       coverUrl: p.coverUrl,
+      coverImages: extractPlaylistCoverImages(p),
       trackCount: p._count.tracks,
     })),
     topArtists: artists.map((a) => ({

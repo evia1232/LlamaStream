@@ -31,6 +31,7 @@ export interface Playlist {
   name: string;
   description?: string | null;
   coverUrl?: string | null;
+  coverImages?: string[];
   visibility: 'PUBLIC' | 'PRIVATE';
   trackCount?: number;
   tracks?: Track[];

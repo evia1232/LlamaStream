@@ -20,6 +20,7 @@ interface TrackRowProps {
   index?: number;
   showIndex?: boolean;
   playlistId?: string;
+  contextTracks?: Track[];
   onRemovedFromPlaylist?: () => void;
   onDeleted?: () => void;
 }
@@ -70,11 +71,12 @@ export default function TrackRow({
   index,
   showIndex = true,
   playlistId,
+  contextTracks,
   onRemovedFromPlaylist,
   onDeleted,
 }: TrackRowProps) {
   const { t } = useTranslation();
-  const { currentTrack, isPlaying, playTrack, toggleLike, likedTrackIds } = usePlayerStore();
+  const { currentTrack, isPlaying, playTrack, playTracks, toggleLike, likedTrackIds } = usePlayerStore();
   const { openMenuFromElement, openPlaylistForTrack, menuOpen: globalMenuOpen, track: menuTrack } = useTrackMenuStore();
   const menuOpen = globalMenuOpen && menuTrack?.id === track.id;
   const [downloading, setDownloading] = useState(false);
@@ -100,7 +102,14 @@ export default function TrackRow({
         duration: track.duration,
         album: track.album?.title,
       });
-      playTrack(data.track);
+      const downloaded = data.track as Track;
+      if (contextTracks && contextTracks.length > 0) {
+        const startIdx = index ?? contextTracks.findIndex((t) => t.id === track.id);
+        const updated = contextTracks.map((t) => (t.id === track.id ? downloaded : t));
+        await playTracks(updated, startIdx >= 0 ? startIdx : 0);
+      } else {
+        playTrack(downloaded);
+      }
       onDeleted?.();
     } catch (err: unknown) {
       alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
@@ -110,6 +119,15 @@ export default function TrackRow({
   };
 
   const handlePlay = async () => {
+    if (contextTracks && contextTracks.length > 0) {
+      const startIdx = index ?? contextTracks.findIndex((t) => t.id === track.id);
+      if (track.isDownloaded || track.streamUrl) {
+        await playTracks(contextTracks, startIdx >= 0 ? startIdx : 0);
+      } else {
+        await handleDownload();
+      }
+      return;
+    }
     if (track.isDownloaded || track.streamUrl) {
       playTrack(track);
     } else {

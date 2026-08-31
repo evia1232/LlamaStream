@@ -7,8 +7,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { body, validationResult } from 'express-validator';
 import { authenticate, AuthRequest, optionalAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { importSpotifyPlaylist, exportPlaylist } from '../services/spotify';
+import { exportPlaylist } from '../services/spotify';
+import { startPlaylistImport, getImportJobStatus, importSpotifyPlaylist } from '../services/playlistImport';
 import { addTrackToPlaylist, nextPlaylistPosition } from '../lib/playlistTracks';
+import { extractPlaylistCoverImages, playlistCoverTracksQuery } from '../lib/playlistCovers';
 import { config } from '../config';
 
 const router = Router();
@@ -31,44 +33,67 @@ function formatPlaylist(playlist: {
   visibility: string;
   userId: string;
   createdAt: Date;
-  tracks?: { track: { id: string; title: string; duration: number; thumbnailUrl: string | null; artist: { name: string } } }[];
+  tracks?: Array<{
+    track: {
+      id?: string;
+      title?: string;
+      duration?: number;
+      thumbnailUrl: string | null;
+      artist?: { name: string };
+      album?: { coverUrl: string | null } | null;
+    };
+  }>;
   _count?: { tracks: number };
-}) {
+}, options?: { withTracks?: boolean }) {
+  const coverImages = extractPlaylistCoverImages(playlist);
+  const hasFullTracks = options?.withTracks && playlist.tracks?.some((pt) => pt.track.title);
+
   return {
     id: playlist.id,
     name: playlist.name,
     description: playlist.description,
     coverUrl: playlist.coverUrl,
+    coverImages,
     visibility: playlist.visibility,
     userId: playlist.userId,
     createdAt: playlist.createdAt,
-    trackCount: playlist._count?.tracks ?? playlist.tracks?.length ?? 0,
-    tracks: playlist.tracks?.map((pt) => ({
-      id: pt.track.id,
-      title: pt.track.title,
-      duration: pt.track.duration,
-      thumbnailUrl: pt.track.thumbnailUrl,
-      artist: pt.track.artist.name,
-    })),
+    trackCount: playlist._count?.tracks ?? (hasFullTracks ? playlist.tracks?.length : undefined) ?? 0,
+    ...(hasFullTracks && playlist.tracks
+      ? {
+          tracks: playlist.tracks.map((pt) => ({
+            id: pt.track.id!,
+            title: pt.track.title!,
+            duration: pt.track.duration!,
+            thumbnailUrl: pt.track.thumbnailUrl,
+            artist: pt.track.artist!.name,
+          })),
+        }
+      : {}),
   };
 }
 
 router.get('/', authenticate, async (req: AuthRequest, res) => {
   const playlists = await prisma.playlist.findMany({
     where: { userId: req.user!.userId },
-    include: { _count: { select: { tracks: true } } },
+    include: {
+      _count: { select: { tracks: true } },
+      tracks: playlistCoverTracksQuery,
+    },
     orderBy: { updatedAt: 'desc' },
   });
-  res.json({ playlists: playlists.map(formatPlaylist) });
+  res.json({ playlists: playlists.map((p) => formatPlaylist(p)) });
 });
 
 router.get('/public', optionalAuth, async (_req, res) => {
   const playlists = await prisma.playlist.findMany({
     where: { visibility: 'PUBLIC' },
-    include: { _count: { select: { tracks: true } } },
+    include: {
+      _count: { select: { tracks: true } },
+      tracks: playlistCoverTracksQuery,
+    },
     take: 20,
   });
-  res.json({ playlists: playlists.map(formatPlaylist) });
+  res.json({ playlists: playlists.map((p) => formatPlaylist(p)) });
 });
 
 router.post(
@@ -219,6 +244,40 @@ router.put('/:id/tracks/reorder', authenticate, async (req: AuthRequest, res) =>
 });
 
 router.post('/import/spotify', authenticate, async (req: AuthRequest, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'Playlist URL required' });
+
+  const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+
+  try {
+    const result = await startPlaylistImport(url, req.user!.userId, user?.audioQuality || 'HIGH');
+    res.status(202).json(result);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/import', authenticate, async (req: AuthRequest, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'Playlist URL required' });
+
+  const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+
+  try {
+    const result = await startPlaylistImport(url, req.user!.userId, user?.audioQuality || 'HIGH');
+    res.status(202).json(result);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.get('/import/:jobId', authenticate, async (req: AuthRequest, res) => {
+  const status = await getImportJobStatus(req.params.jobId, req.user!.userId);
+  if (!status) return res.status(404).json({ error: 'Import job not found' });
+  res.json(status);
+});
+
+router.post('/import/spotify/sync', authenticate, async (req: AuthRequest, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'Spotify playlist URL required' });
 

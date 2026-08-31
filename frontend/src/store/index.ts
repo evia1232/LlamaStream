@@ -44,8 +44,11 @@ interface PlayerState {
   addToLiked: (trackId: string) => void;
   removeFromLiked: (trackId: string) => void;
   playTrack: (track: Track, startTime?: number) => Promise<void>;
+  playTracks: (tracks: Track[], startIndex?: number) => Promise<void>;
   playNext: () => void;
   playPrevious: () => void;
+  contextTracks: Track[];
+  contextIndex: number;
   fetchQueue: () => Promise<void>;
   addToQueue: (trackId: string, playNext?: boolean) => Promise<void>;
   removeFromQueue: (itemId: string) => Promise<void>;
@@ -77,6 +80,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   pendingSeekTime: 0,
   playbackRestored: false,
   _seekFn: null,
+  contextTracks: [] as Track[],
+  contextIndex: -1,
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
   setIsPlaying: (playing) => {
@@ -112,6 +117,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   }),
 
   playTrack: async (track, startTime = 0) => {
+    const { contextTracks } = get();
+    const ctxIdx = contextTracks.findIndex((t) => t.id === track.id);
+    if (ctxIdx >= 0) {
+      set({ contextIndex: ctxIdx });
+    }
+
     set({
       currentTrack: track,
       isPlaying: true,
@@ -133,13 +144,74 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     } catch { /* ignore */ }
   },
 
+  playTracks: async (tracks, startIndex = 0) => {
+    if (tracks.length === 0) return;
+    const idx = Math.min(Math.max(0, startIndex), tracks.length - 1);
+    set({ contextTracks: tracks, contextIndex: idx });
+    const track = tracks[idx];
+    if (track.isDownloaded || track.streamUrl) {
+      await get().playTrack(track);
+    } else {
+      // TrackRow handles download-then-play; for play all use first playable
+      for (let i = idx; i < tracks.length; i++) {
+        if (tracks[i].isDownloaded || tracks[i].streamUrl) {
+          set({ contextIndex: i });
+          await get().playTrack(tracks[i]);
+          return;
+        }
+      }
+    }
+  },
+
   playNext: () => {
-    const { queue, currentTrack, repeat, shuffle } = get();
+    const { queue, currentTrack, repeat, shuffle, contextTracks, contextIndex } = get();
     if (repeat === 'one' && currentTrack) {
       get().seekTo(0);
       set({ isPlaying: true });
       return;
     }
+
+    const findNextInContext = (): Track | null => {
+      if (contextTracks.length === 0 || contextIndex < 0) return null;
+      const playable = (i: number) => {
+        const t = contextTracks[i];
+        return t && (t.isDownloaded || t.streamUrl);
+      };
+
+      if (shuffle) {
+        const candidates = contextTracks
+          .map((t, i) => ({ t, i }))
+          .filter(({ t, i }) => i !== contextIndex && (t.isDownloaded || t.streamUrl));
+        if (candidates.length > 0) {
+          const pick = candidates[Math.floor(Math.random() * candidates.length)];
+          set({ contextIndex: pick.i });
+          return pick.t;
+        }
+      } else {
+        for (let i = contextIndex + 1; i < contextTracks.length; i++) {
+          if (playable(i)) {
+            set({ contextIndex: i });
+            return contextTracks[i];
+          }
+        }
+        if (repeat === 'all') {
+          for (let i = 0; i < contextIndex; i++) {
+            if (playable(i)) {
+              set({ contextIndex: i });
+              return contextTracks[i];
+            }
+          }
+        }
+      }
+      return null;
+    };
+
+    const nextInContext = findNextInContext();
+    if (nextInContext) {
+      get().playTrack(nextInContext);
+      return;
+    }
+
     if (queue.length > 0) {
       const idx = shuffle ? Math.floor(Math.random() * queue.length) : 0;
       const next = queue[idx];
@@ -154,10 +226,22 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   playPrevious: () => {
-    const { currentTime, currentTrack } = get();
+    const { currentTime, currentTrack, contextTracks, contextIndex } = get();
     if (currentTime > 3) {
       get().seekTo(0);
-    } else if (currentTrack) {
+      return;
+    }
+    if (contextTracks.length > 0 && contextIndex > 0) {
+      for (let i = contextIndex - 1; i >= 0; i--) {
+        const t = contextTracks[i];
+        if (t.isDownloaded || t.streamUrl) {
+          set({ contextIndex: i });
+          get().playTrack(t);
+          return;
+        }
+      }
+    }
+    if (currentTrack) {
       get().seekTo(0);
       set({ isPlaying: true });
     }

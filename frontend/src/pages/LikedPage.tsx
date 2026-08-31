@@ -10,7 +10,7 @@ import { usePlayerStore } from '../store';
 export default function LikedPage() {
   const { t } = useTranslation();
   const [tracks, setTracks] = useState<Track[]>([]);
-  const playTrack = usePlayerStore((s) => s.playTrack);
+  const playTracks = usePlayerStore((s) => s.playTracks);
 
   useEffect(() => {
     api.get('/tracks/liked').then(({ data }) => {
@@ -40,7 +40,7 @@ export default function LikedPage() {
 
       <div className="px-6 py-4">
         <button
-          onClick={() => tracks[0] && playTrack(tracks[0])}
+          onClick={() => tracks.length > 0 && void playTracks(tracks, 0)}
           className="w-14 h-14 bg-spotify-green rounded-full flex items-center justify-center hover:scale-105 transition-transform"
         >
           <Play className="w-6 h-6 fill-black text-black play-icon-nudge" />
@@ -49,7 +49,7 @@ export default function LikedPage() {
 
       <div className="px-2">
         {tracks.map((track, i) => (
-          <TrackRow key={track.id} track={track} index={i} onDeleted={refresh} />
+          <TrackRow key={track.id} track={track} index={i} contextTracks={tracks} onDeleted={refresh} />
         ))}
       </div>
     </div>
