@@ -16,6 +16,7 @@ import {
   disconnectSpotifyUser,
   getSpotifyAccessTokenForUser,
   getSpotifyStatusForUser,
+  getSpotifyRedirectUri,
   isSpotifyOAuthConfigured,
 } from '../services/spotifyOAuth';
 
@@ -241,6 +242,7 @@ router.get('/spotify/status', authenticate, async (req: AuthRequest, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json({
     configured: isSpotifyOAuthConfigured(),
+    redirectUri: getSpotifyRedirectUri(),
     ...getSpotifyStatusForUser(user),
   });
 });

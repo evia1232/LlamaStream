@@ -38,6 +38,7 @@ export default function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [spotifyMsg, setSpotifyMsg] = useState('');
   const [spotifyLoading, setSpotifyLoading] = useState(false);
+  const [spotifyRedirectUri, setSpotifyRedirectUri] = useState('');
 
   useEffect(() => {
     const status = searchParams.get('spotify');
@@ -85,6 +86,11 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchLibraryStats();
+    api.get('/auth/spotify/status')
+      .then(({ data }) => {
+        if (data.redirectUri) setSpotifyRedirectUri(data.redirectUri as string);
+      })
+      .catch(() => { /* ignore */ });
   }, []);
 
   useEffect(() => {
@@ -271,6 +277,12 @@ export default function SettingsPage() {
         </h2>
         <div className="bg-spotify-lightgray rounded-lg p-4 space-y-3">
           <p className="text-sm text-spotify-text">{t('spotifyAccountHint')}</p>
+          {spotifyRedirectUri && (
+            <div className="text-xs bg-spotify-gray rounded-md p-3 space-y-1">
+              <p className="text-spotify-text">{t('spotifyRedirectHint')}</p>
+              <p className="font-mono text-white break-all select-all" dir="ltr">{spotifyRedirectUri}</p>
+            </div>
+          )}
           {user?.spotify?.connected ? (
             <div className="space-y-3">
               <p className="text-sm">

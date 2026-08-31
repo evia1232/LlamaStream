@@ -11,10 +11,12 @@ const SPOTIFY_SCOPES = [
   'user-modify-playback-state',
 ].join(' ');
 
+/** Must match Spotify Developer Dashboard → Redirect URIs exactly (https, no trailing slash). */
 export function getSpotifyRedirectUri(): string {
-  if (config.spotifyRedirectUri) return config.spotifyRedirectUri;
-  const base = config.corsOrigin.replace(/\/$/, '');
-  return `${base}/api/auth/spotify/callback`;
+  const uri = config.spotifyRedirectUri
+    ? config.spotifyRedirectUri.trim()
+    : `${config.corsOrigin.replace(/\/$/, '')}/api/auth/spotify/callback`;
+  return uri.replace(/\/$/, '');
 }
 
 export function isSpotifyOAuthConfigured(): boolean {
