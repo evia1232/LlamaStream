@@ -216,11 +216,66 @@ Frontend dev server runs on http://localhost:3000 with API proxy to port 3001.
 | `ADMIN_PASSWORD`            | `admin123456`                  | Initial admin password             |
 | `ALLOW_PUBLIC_REGISTRATION` | `false`                        | Enable public sign-up              |
 | `DEFAULT_AUDIO_QUALITY`     | `high`                         | Default download quality           |
-| `CORS_ORIGIN`               | `http://localhost:3000`        | Allowed frontend origin            |
+| `CORS_ORIGIN`               | `http://localhost:3000`        | Public HTTPS URL of your frontend  |
+| `VITE_API_URL`              | *(empty)*                      | Leave empty — use same-domain `/api` |
 | `BACKEND_PORT`              | `3001`                         | Backend host port                  |
 | `FRONTEND_PORT`             | `3000`                         | Frontend host port                 |
 
+## HTTPS Reverse Proxy
+
+When putting LlamaStream behind SSL (nginx, Traefik, Cloudflare), use **same-domain `/api`** routing — this avoids mixed-content errors.
+
+See `deploy/nginx-reverse-proxy.conf` for a full example.
+
+### 1. `.env` settings
+
+```env
+CORS_ORIGIN=https://llamastream.apbs.link
+VITE_API_URL=
+```
+
+Leave `VITE_API_URL` **empty**. Do **not** use `http://` when your site is HTTPS.
+
+### 2. Nginx proxy both frontend and API
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+location /api/ {
+    proxy_pass http://127.0.0.1:3001/api/;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 600s;
+}
+```
+
+### 3. Rebuild and restart
+
+```bash
+docker compose up -d --build
+```
+
+### Quick fix without rebuild
+
+Edit `frontend/public/config.js` on the server:
+
+```javascript
+window.__LLAMASTREAM_CONFIG__ = { apiBase: '/api' };
+```
+
+Or if using a separate **HTTPS** API subdomain:
+
+```javascript
+window.__LLAMASTREAM_CONFIG__ = { apiBase: 'https://api-llamastream.apbs.link/api' };
+```
+
 ## Troubleshooting
+
+**Mixed content / blocked API requests (HTTPS site calling HTTP API):**
+- Leave `VITE_API_URL` empty in `.env` and proxy `/api` on the same domain
+- Never use `http://` API URLs on an HTTPS frontend
+- Set `CORS_ORIGIN=https://your-domain.com`
 
 **Container won't start:**
 ```bash

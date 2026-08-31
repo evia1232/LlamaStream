@@ -6,8 +6,7 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
-
-const API_URL = import.meta.env.VITE_API_URL || '';
+import { streamUrl } from '../../lib/apiUrl';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -34,8 +33,7 @@ export default function PlayerBar() {
     if (!audio || !currentTrack) return;
 
     const token = localStorage.getItem('token');
-    const base = API_URL || '';
-    audio.src = `${base}/api/tracks/${currentTrack.id}/stream?token=${token}`;
+    audio.src = streamUrl(currentTrack.id, token);
     if (isPlaying) audio.play().catch(() => setIsPlaying(false));
   }, [currentTrack?.id]);
 

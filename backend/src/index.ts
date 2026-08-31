@@ -19,6 +19,9 @@ import mediaRoutes from './routes/media';
 const app = express();
 const server = http.createServer(app);
 
+// Trust reverse proxy (nginx, traefik, cloudflare) for HTTPS detection
+app.set('trust proxy', 1);
+
 // WebSocket for real-time playback sync
 const wss = new WebSocketServer({ server, path: '/ws' });
 
