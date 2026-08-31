@@ -7,6 +7,7 @@ import {
 import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
 import { streamUrl } from '../../lib/apiUrl';
+import { getArtistName } from '../../lib/trackUtils';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -74,7 +75,7 @@ export default function PlayerBar() {
     );
   }
 
-  const artistName = 'name' in currentTrack.artist ? currentTrack.artist.name : '';
+  const artistName = getArtistName(currentTrack?.artist);
 
   return (
     <footer className="h-[90px] bg-spotify-lightgray border-t border-black/30 px-4 grid grid-cols-3 items-center gap-4 shrink-0">

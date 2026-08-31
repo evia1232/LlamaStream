@@ -22,7 +22,7 @@ export interface Track {
   thumbnailUrl?: string | null;
   streamUrl?: string | null;
   isDownloaded?: boolean;
-  artist: Artist | { name: string };
+  artist: Artist | { name: string } | string;
   album?: { id: string; title: string; coverUrl?: string | null } | null;
 }
 

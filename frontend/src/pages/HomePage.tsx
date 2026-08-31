@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import api from '../api/client';
 import CardGrid from '../components/common/CardGrid';
 import { Track } from '../types';
+import { normalizeTrack } from '../lib/trackUtils';
 import TrackRow from '../components/tracks/TrackRow';
 import { usePlayerStore } from '../store';
 
@@ -13,7 +14,7 @@ interface HomeData {
   yourPlaylists: { id: string; name: string; coverUrl?: string; trackCount: number }[];
   madeForYou: { id: string; name: string; coverUrl?: string; trackCount: number }[];
   topArtists: { id: string; name: string; imageUrl?: string }[];
-  history: Track[];
+  history: (Track & { playedAt?: string })[];
 }
 
 export default function HomePage() {
@@ -43,7 +44,7 @@ export default function HomePage() {
             {data.recentlyPlayed.slice(0, 6).map((track) => (
               <button
                 key={track.id}
-                onClick={() => playTrack(track)}
+                onClick={() => playTrack(normalizeTrack(track))}
                 className="flex items-center gap-3 bg-white/10 hover:bg-white/20 rounded-md overflow-hidden transition-colors group"
               >
                 <div className="w-16 h-16 shrink-0">
@@ -81,7 +82,7 @@ export default function HomePage() {
           <h2 className="text-2xl font-bold mb-4">{t('history')}</h2>
           <div>
             {data.history.slice(0, 10).map((track, i) => (
-              <TrackRow key={`${track.id}-${i}`} track={track} index={i} />
+              <TrackRow key={`${track.id}-${i}`} track={normalizeTrack(track)} index={i} />
             ))}
           </div>
         </section>

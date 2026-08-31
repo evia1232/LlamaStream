@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, GripVertical, Trash2 } from 'lucide-react';
 import { usePlayerStore } from '../../store';
+import { getArtistName } from '../../lib/trackUtils';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -49,9 +50,7 @@ export default function QueueDrawer() {
             </div>
             <div className="min-w-0">
               <p className="text-sm font-medium truncate">{currentTrack.title}</p>
-              <p className="text-xs text-spotify-text truncate">
-                {'name' in currentTrack.artist ? currentTrack.artist.name : ''}
-              </p>
+              <p className="text-xs text-spotify-text truncate">{getArtistName(currentTrack.artist)}</p>
             </div>
             <div className="playing-indicator flex gap-0.5 ms-auto">
               {[1, 2, 3, 4].map((i) => (
@@ -82,9 +81,7 @@ export default function QueueDrawer() {
               </div>
               <div className="flex-1 min-w-0 cursor-pointer" onClick={() => playTrack(item.track)}>
                 <p className="text-sm truncate">{item.track.title}</p>
-                <p className="text-xs text-spotify-text truncate">
-                  {'name' in item.track.artist ? item.track.artist.name : ''}
-                </p>
+                <p className="text-xs text-spotify-text truncate">{getArtistName(item.track.artist)}</p>
               </div>
               <span className="text-xs text-spotify-text">{formatTime(item.track.duration)}</span>
               <button

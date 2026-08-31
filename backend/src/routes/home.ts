@@ -43,13 +43,7 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
 
   res.json({
     greeting: getGreeting(),
-    recentlyPlayed: recentTracks.map((h) => ({
-      id: h.track.id,
-      title: h.track.title,
-      artist: h.track.artist.name,
-      thumbnailUrl: h.track.thumbnailUrl,
-      duration: h.track.duration,
-    })),
+    recentlyPlayed: recentTracks.map((h) => formatHomeTrack(h.track)),
     likedCount,
     yourPlaylists: playlists.map((p) => ({
       id: p.id,
@@ -69,14 +63,32 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       imageUrl: a.imageUrl,
     })),
     history: recentHistory.map((h) => ({
-      id: h.track.id,
-      title: h.track.title,
-      artist: h.track.artist.name,
-      thumbnailUrl: h.track.thumbnailUrl,
+      ...formatHomeTrack(h.track),
       playedAt: h.playedAt,
     })),
   });
 });
+
+function formatHomeTrack(track: {
+  id: string;
+  title: string;
+  duration: number;
+  thumbnailUrl: string | null;
+  isDownloaded: boolean;
+  artist: { id: string; name: string };
+  album?: { id: string; title: string; coverUrl: string | null } | null;
+}) {
+  return {
+    id: track.id,
+    title: track.title,
+    duration: track.duration,
+    thumbnailUrl: track.thumbnailUrl,
+    isDownloaded: track.isDownloaded,
+    streamUrl: track.isDownloaded ? `/api/tracks/${track.id}/stream` : null,
+    artist: { id: track.artist.id, name: track.artist.name },
+    album: track.album ? { id: track.album.id, title: track.album.title, coverUrl: track.album.coverUrl } : null,
+  };
+}
 
 function getGreeting(): string {
   const hour = new Date().getHours();

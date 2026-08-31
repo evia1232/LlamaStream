@@ -2,6 +2,7 @@ import { Track } from '../../types';
 import { Play, Heart, Plus, MoreHorizontal, Download } from 'lucide-react';
 import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
+import { getArtistName } from '../../lib/trackUtils';
 import { useTranslation } from 'react-i18next';
 import api from '../../api/client';
 import { useState } from 'react';
@@ -25,7 +26,7 @@ export default function TrackRow({ track, index, showIndex = true }: TrackRowPro
 
   const isCurrent = currentTrack?.id === track.id;
   const isLiked = likedTrackIds.has(track.id);
-  const artistName = 'name' in track.artist ? track.artist.name : '';
+  const artistName = getArtistName(track.artist);
 
   const handleDownload = async () => {
     if (track.isDownloaded) return;

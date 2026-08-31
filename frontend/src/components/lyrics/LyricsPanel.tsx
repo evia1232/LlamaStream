@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
+import { getArtistName } from '../../lib/trackUtils';
 
 export default function LyricsPanel() {
   const { t } = useTranslation();
@@ -31,7 +32,7 @@ export default function LyricsPanel() {
         <div>
           <h2 className="text-2xl font-bold">{currentTrack.title}</h2>
           <p className="text-spotify-text">
-            {'name' in currentTrack.artist ? currentTrack.artist.name : ''}
+          {getArtistName(currentTrack.artist)}
           </p>
         </div>
         <button onClick={() => setShowLyrics(false)} className="icon-btn">
