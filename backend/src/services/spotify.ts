@@ -1,12 +1,25 @@
 import prisma from '../lib/prisma';
 import { resolveAndDownload } from './downloader';
 import { addTrackToPlaylist } from '../lib/playlistTracks';
-export {
+import {
+  fetchSpotifyUrlTracks,
+  extractSpotifyTrackId,
   searchSpotifyTracks,
   getSpotifyStatus,
   isSpotifyConfigured,
   type SpotifySearchResult,
   type SpotifySearchResponse,
+} from './spotifyApi';
+
+export {
+  searchSpotifyTracks,
+  getSpotifyStatus,
+  isSpotifyConfigured,
+  fetchSpotifyTrackByUrl,
+  fetchSpotifyUrlTracks,
+  type SpotifySearchResult,
+  type SpotifySearchResponse,
+  type SpotifyUrlParseResult,
 } from './spotifyApi';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -44,17 +57,38 @@ export async function parseSpotifyUrl(url: string): Promise<{
   name: string;
   tracks: SpotifyTrackInfo[];
 }> {
+  const apiResult = await fetchSpotifyUrlTracks(url);
+  if (apiResult && apiResult.tracks.length > 0) {
+    return {
+      name: apiResult.name,
+      tracks: apiResult.tracks.map((t) => ({
+        id: t.id,
+        name: t.name,
+        artist: t.artist,
+        album: t.album,
+        duration: t.duration,
+        thumbnailUrl: t.thumbnailUrl,
+        spotifyUrl: t.spotifyUrl,
+        source: 'spotify' as const,
+      })),
+    };
+  }
+
   const tracks = await spotifyUrlInfo.getTracks(url);
   const preview = await spotifyUrlInfo.getPreview(url).catch(() => null);
 
-  const parsed: SpotifyTrackInfo[] = tracks.map((t, i) => ({
-    id: `spotify-${i}-${t.name}`,
-    name: t.name,
-    artist: t.artist,
-    album: t.album,
-    duration: t.duration,
-    source: 'spotify' as const,
-  }));
+  const parsed: SpotifyTrackInfo[] = tracks.map((t, i) => {
+    const trackId = extractSpotifyTrackId(url);
+    return {
+      id: `spotify-${i}-${t.name}`,
+      name: t.name,
+      artist: t.artist,
+      album: t.album,
+      duration: t.duration,
+      spotifyUrl: trackId ? `https://open.spotify.com/track/${trackId}` : undefined,
+      source: 'spotify' as const,
+    };
+  });
 
   let playlistName = preview?.title || 'Imported Playlist';
   try {
@@ -97,6 +131,7 @@ export async function importSpotifyPlaylist(
           artist: spotifyTrack.artist,
           duration: spotifyTrack.duration,
           album: spotifyTrack.album,
+          spotifyUrl: spotifyTrack.spotifyUrl,
         }
       );
 

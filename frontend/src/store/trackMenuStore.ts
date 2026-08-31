@@ -7,6 +7,7 @@ export interface TrackMenuOptions {
   onRefresh?: () => void;
   external?: {
     url?: string;
+    spotifyUrl?: string;
     album?: string;
   };
 }

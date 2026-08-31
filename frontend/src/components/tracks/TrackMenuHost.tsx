@@ -49,6 +49,7 @@ export default function TrackMenuHost() {
           }
         : {
             query: `${artistName} - ${track.title}`,
+            spotifyUrl: track.spotifyUrl || options.external?.spotifyUrl,
             url: options.external?.url,
             title: track.title,
             artist: artistName,
@@ -56,7 +57,7 @@ export default function TrackMenuHost() {
             album: options.external?.album || track.album?.title,
           };
       const { data } = await api.post('/tracks/download', payload);
-      playTrack(normalizeTrack(data.track));
+      await playTrack(normalizeTrack(data.track));
       options.onRefresh?.();
     } catch (err: unknown) {
       alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));

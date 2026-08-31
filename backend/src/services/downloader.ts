@@ -6,7 +6,7 @@ import { config, qualityBitrates } from '../config';
 import prisma from '../lib/prisma';
 import { runYtDlp, findFileByPrefix, lastLines } from './ytdlp';
 import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults } from '../lib/trackMatch';
-import { lookupSpotifyTrack, isSpotifyConfigured } from './spotifyApi';
+import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
 import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress } from './trackDownload';
 
@@ -341,6 +341,7 @@ export async function resolveYouTubeSource(
     title?: string;
     artist?: string;
     url?: string;
+    spotifyUrl?: string;
     duration?: number;
     album?: string;
     relaxed?: boolean;
@@ -384,11 +385,21 @@ export async function resolveYouTubeSource(
   let album = opts?.album;
   let targetDuration = opts?.duration;
 
-  const enriched = await enrichTargetFromSpotify(artist, title, targetDuration, album);
-  artist = enriched.artist;
-  title = enriched.title;
-  targetDuration = enriched.duration;
-  album = enriched.album;
+  if (opts?.spotifyUrl) {
+    const spotifyMeta = await fetchSpotifyTrackByUrl(opts.spotifyUrl);
+    if (spotifyMeta) {
+      artist = sanitizeSearchText(spotifyMeta.artist);
+      title = sanitizeSearchText(spotifyMeta.name);
+      targetDuration = spotifyMeta.duration || targetDuration;
+      album = spotifyMeta.album || album;
+    }
+  } else {
+    const enriched = await enrichTargetFromSpotify(artist, title, targetDuration, album);
+    artist = enriched.artist;
+    title = enriched.title;
+    targetDuration = enriched.duration;
+    album = enriched.album;
+  }
 
   const searchQuery = artist && title ? `${artist} - ${title}` : trimmed;
   const target = {
@@ -505,7 +516,7 @@ export async function resolveYouTubeSource(
 export async function prepareTrackForPlayback(
   input: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
-  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string; relaxed?: boolean }
+  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string; relaxed?: boolean }
 ) {
   const trimmed = input.trim();
 
@@ -568,7 +579,7 @@ export async function prepareTrackForPlayback(
 export async function resolveAndDownload(
   input: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
-  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string; relaxed?: boolean }
+  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string; relaxed?: boolean }
 ) {
   const trimmed = input.trim();
 

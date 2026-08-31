@@ -28,7 +28,7 @@ export interface UnifiedSearchResult {
   youtube: Awaited<ReturnType<typeof searchYouTube>>;
   spotify: SpotifySearchResult[];
   spotifyUrlTracks: Array<{
-    name: string; artist: string; album?: string; duration?: number; source: 'spotify';
+    name: string; artist: string; album?: string; duration?: number; spotifyUrl?: string; thumbnailUrl?: string; source: 'spotify';
   }>;
   artists: Array<{ id: string; name: string; imageUrl: string | null }>;
   albums: Array<{ id: string; title: string; coverUrl: string | null; artist: { id: string; name: string } }>;

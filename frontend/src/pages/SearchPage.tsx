@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Search as SearchIcon, Download, Play, AlertCircle, HardDrive } from 'lucide-react';
+import { Search as SearchIcon, Play, AlertCircle, HardDrive, Import } from 'lucide-react';
 import api from '../api/client';
 import TrackRow from '../components/tracks/TrackRow';
 import TrackSurface from '../components/tracks/TrackSurface';
@@ -9,6 +9,7 @@ import { externalTrack } from '../lib/trackUtils';
 import { Track } from '../types';
 import { usePlayerStore } from '../store';
 import PlaylistCover from '../components/playlists/PlaylistCover';
+import clsx from 'clsx';
 
 interface YouTubeResult {
   id: string; title: string; artist: string; duration: number;
@@ -21,7 +22,8 @@ interface SpotifyResult {
 }
 
 interface SpotifyUrlTrack {
-  name: string; artist: string; album?: string; duration?: number; source: 'spotify';
+  name: string; artist: string; album?: string; duration?: number;
+  spotifyUrl?: string; thumbnailUrl?: string; source: 'spotify';
 }
 
 interface SearchResults {
@@ -49,9 +51,11 @@ export default function SearchPage() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResults | null>(null);
   const [loading, setLoading] = useState(false);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
   const playTrack = usePlayerStore((s) => s.playTrack);
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPreparingPlayback = usePlayerStore((s) => s.isPreparingPlayback);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const search = useCallback(async (q: string) => {
@@ -74,69 +78,114 @@ export default function SearchPage() {
     debounceRef.current = setTimeout(() => search(value), 350);
   };
 
-  const handlePlay = async (opts: {
-    id: string; title: string; artist: string; url?: string; duration?: number; album?: string;
+  const playExternal = async (opts: {
+    id: string;
+    title: string;
+    artist: string;
+    duration: number;
+    thumbnailUrl?: string;
+    album?: string;
+    youtubeUrl?: string;
+    spotifyUrl?: string;
   }) => {
-    setDownloadingId(opts.id);
     setError('');
+    const track = externalTrack(
+      opts.id,
+      opts.title,
+      opts.artist,
+      opts.duration,
+      opts.thumbnailUrl,
+      opts.album,
+      { youtubeUrl: opts.youtubeUrl, spotifyUrl: opts.spotifyUrl }
+    );
     try {
-      const { data } = await api.post('/tracks/download', {
-        query: `${opts.artist} - ${opts.title}`,
-        url: opts.url,
-        title: opts.title,
-        artist: opts.artist,
-        duration: opts.duration,
-        album: opts.album,
-      });
-      playTrack(data.track);
+      await playTrack(track);
       search(query);
     } catch (err: unknown) {
       setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
+    }
+  };
+
+  const importSpotifyPlaylist = async (url: string) => {
+    setImporting(true);
+    setError('');
+    try {
+      await api.post('/playlists/import', { url });
+      setQuery('');
+      setResults(null);
+    } catch (err: unknown) {
+      setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
     } finally {
-      setDownloadingId(null);
+      setImporting(false);
     }
   };
 
   const localTracks = results?.library || results?.tracks || [];
 
   const renderExternalRow = (
-    id: string, title: string, artist: string, thumbnailUrl: string,
-    duration: number, url?: string, badge?: string, album?: string
+    id: string,
+    title: string,
+    artist: string,
+    thumbnailUrl: string,
+    duration: number,
+    opts?: { youtubeUrl?: string; spotifyUrl?: string; badge?: string; album?: string }
   ) => {
-    const track = externalTrack(id, title, artist, duration, thumbnailUrl, album);
+    const externalId = `external-${id}`;
+    const isCurrent = currentTrack?.id === externalId;
+    const isPreparing = isCurrent && (isPreparingPlayback || !currentTrack?.isDownloaded);
+    const track = externalTrack(id, title, artist, duration, thumbnailUrl, opts?.album, {
+      youtubeUrl: opts?.youtubeUrl,
+      spotifyUrl: opts?.spotifyUrl,
+    });
+
+    const play = () => {
+      void playExternal({
+        id,
+        title,
+        artist,
+        duration,
+        thumbnailUrl,
+        album: opts?.album,
+        youtubeUrl: opts?.youtubeUrl,
+        spotifyUrl: opts?.spotifyUrl,
+      });
+    };
+
     return (
       <TrackSurface
         key={id}
         track={track}
-        options={{ external: { url, album }, onRefresh: () => search(query) }}
-        className="flex items-center gap-3 md:gap-4 p-2 md:p-3 rounded-md card-hover group"
+        onClick={play}
+        options={{
+          external: { url: opts?.youtubeUrl, spotifyUrl: opts?.spotifyUrl, album: opts?.album },
+          onRefresh: () => search(query),
+        }}
+        className="flex items-center gap-3 md:gap-4 p-2 md:p-3 rounded-md card-hover group cursor-pointer"
       >
-        <div className="w-11 h-11 md:w-12 md:h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
+        <div className="relative w-11 h-11 md:w-12 md:h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
           {thumbnailUrl ? (
             <img src={thumbnailUrl} alt="" className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-spotify-text">♪</div>
           )}
+          <div className={clsx(
+            'absolute inset-0 flex items-center justify-center bg-black/50 transition-opacity',
+            isPreparing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          )}>
+            {isPreparing ? (
+              <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+            ) : (
+              <Play className="w-4 h-4 fill-white text-white play-icon-nudge" />
+            )}
+          </div>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-base font-normal truncate">{title}</p>
+          <p className={clsx('text-base font-normal truncate', isCurrent && 'text-spotify-green')}>{title}</p>
           <p className="text-body truncate">{artist}</p>
-          {badge && <span className="text-caption">{badge}</span>}
+          {opts?.badge && <span className="text-caption">{opts.badge}</span>}
+          {isPreparing && <p className="text-2xs text-spotify-green">{t('preparingPlayback')}</p>}
         </div>
         <span className="text-caption hidden sm:inline tabular-nums">{formatTime(duration)}</span>
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); void handlePlay({ id, title, artist, url, duration, album }); }}
-          disabled={downloadingId === id}
-          className="green-btn py-2 px-3 md:px-4 text-xs md:text-sm flex items-center gap-1.5 shrink-0"
-        >
-          {downloadingId === id ? (
-            <span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-          ) : (
-            <Play className="w-4 h-4 fill-black" />
-          )}
-          <span className="hidden sm:inline">{downloadingId === id ? t('downloading') : t('play')}</span>
-        </button>
       </TrackSurface>
     );
   };
@@ -150,6 +199,9 @@ export default function SearchPage() {
     (results?.spotify.length ?? 0) > 0 ||
     (results?.spotifyUrlTracks.length ?? 0) > 0 ||
     !!results?.detectedUrl;
+
+  const isSpotifyPlaylistUrl = results?.detectedUrl?.type === 'spotify'
+    && /\/playlist\//i.test(results.detectedUrl.url);
 
   return (
     <div className="p-4 md:p-8 pb-4 max-w-full overflow-x-hidden">
@@ -201,7 +253,6 @@ export default function SearchPage() {
 
       {!loading && results && (
         <>
-          {/* ── LOCAL RESULTS (always shown first) ── */}
           {hasLocal && (
             <section className="mb-10">
               <h2 className="text-heading-sm mb-4 flex items-center gap-2">
@@ -264,46 +315,84 @@ export default function SearchPage() {
             </section>
           )}
 
-          {/* ── SPOTIFY URL tracks ── */}
-          {(results.spotifyUrlTracks?.length ?? 0) > 0 && (
+          {isSpotifyPlaylistUrl && (
             <section className="mb-8">
-              <h2 className="text-heading-sm mb-4">{t('spotifyResults')}</h2>
-              {results.spotifyUrlTracks.map((item, i) =>
-                renderExternalRow(`sp-url-${i}`, item.name, item.artist, '', item.duration || 0, undefined, 'Spotify', item.album)
-              )}
-            </section>
-          )}
-
-          {/* ── YouTube URL ── */}
-          {results.detectedUrl?.type === 'youtube' && (
-            <section className="mb-8">
-              <h2 className="text-heading-sm mb-4">{t('youtubeResults')}</h2>
               <button
-                onClick={() => handlePlay({ id: 'yt-url', title: query, artist: '', url: results.detectedUrl!.url })}
-                className="green-btn flex items-center gap-2"
+                type="button"
+                onClick={() => void importSpotifyPlaylist(results.detectedUrl!.url)}
+                disabled={importing}
+                className="green-btn flex items-center gap-2 disabled:opacity-50"
               >
-                <Download className="w-4 h-4" />
-                {t('download')} & {t('play')}
+                <Import className="w-4 h-4" />
+                {importing ? t('importing') : t('importPlaylist')}
               </button>
             </section>
           )}
 
-          {/* ── SPOTIFY text search ── */}
-          {(results.spotify?.length ?? 0) > 0 && (
+          {(results.spotifyUrlTracks?.length ?? 0) > 0 && (
             <section className="mb-8">
               <h2 className="text-heading-sm mb-4">{t('spotifyResults')}</h2>
-              {results.spotify.map((item) =>
-                renderExternalRow(item.id, item.name, item.artist, item.thumbnailUrl, item.duration, undefined, item.album, item.album)
+              {results.spotifyUrlTracks.map((item, i) =>
+                renderExternalRow(
+                  `sp-url-${i}`,
+                  item.name,
+                  item.artist,
+                  item.thumbnailUrl || '',
+                  item.duration || 0,
+                  { spotifyUrl: item.spotifyUrl, badge: 'Spotify', album: item.album }
+                )
               )}
             </section>
           )}
 
-          {/* ── YOUTUBE text search ── */}
+          {results.detectedUrl?.type === 'youtube' && (
+            <section className="mb-8">
+              <h2 className="text-heading-sm mb-4">{t('youtubeResults')}</h2>
+              <button
+                type="button"
+                onClick={() => void playExternal({
+                  id: 'yt-url',
+                  title: query,
+                  artist: '',
+                  duration: 0,
+                  youtubeUrl: results.detectedUrl!.url,
+                })}
+                className="green-btn flex items-center gap-2"
+              >
+                <Play className="w-4 h-4 fill-black" />
+                {t('play')}
+              </button>
+            </section>
+          )}
+
+          {(results.spotify?.length ?? 0) > 0 && (
+            <section className="mb-8">
+              <h2 className="text-heading-sm mb-4">{t('spotifyResults')}</h2>
+              {results.spotify.map((item) =>
+                renderExternalRow(
+                  item.id,
+                  item.name,
+                  item.artist,
+                  item.thumbnailUrl,
+                  item.duration,
+                  { spotifyUrl: item.spotifyUrl, album: item.album }
+                )
+              )}
+            </section>
+          )}
+
           {(results.youtube?.length ?? 0) > 0 && (
             <section className="mb-8">
               <h2 className="text-heading-sm mb-4">{t('youtubeResults')}</h2>
               {results.youtube.map((item) =>
-                renderExternalRow(item.id, item.title, item.artist, item.thumbnailUrl, item.duration, item.url)
+                renderExternalRow(
+                  item.id,
+                  item.title,
+                  item.artist,
+                  item.thumbnailUrl,
+                  item.duration,
+                  { youtubeUrl: item.url }
+                )
               )}
             </section>
           )}

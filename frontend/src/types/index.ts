@@ -25,8 +25,9 @@ export interface Track {
   isDownloading?: boolean;
   artist: Artist | { name: string } | string;
   album?: { id: string; title: string; coverUrl?: string | null } | null;
-  source?: 'library' | 'youtube';
+  source?: 'library' | 'youtube' | 'spotify';
   youtubeUrl?: string;
+  spotifyUrl?: string;
 }
 
 export interface Playlist {

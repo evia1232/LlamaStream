@@ -80,6 +80,7 @@ export async function parsePlaylistUrl(url: string): Promise<{ name: string; tra
         artist: t.artist,
         album: t.album,
         duration: t.duration,
+        url: t.spotifyUrl,
       })),
     };
   }
@@ -224,7 +225,8 @@ export async function processPlaylistImport(jobId: string) {
           artist: cleanArtist,
           duration: item.duration,
           album: item.album,
-          url: item.url,
+          url: item.url?.includes('youtube') ? item.url : undefined,
+          spotifyUrl: item.url?.includes('spotify') ? item.url : undefined,
           relaxed: true,
         }
       );

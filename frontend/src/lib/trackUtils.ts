@@ -22,7 +22,8 @@ export function externalTrack(
   artist: string,
   duration: number,
   thumbnailUrl?: string | null,
-  album?: string
+  album?: string,
+  opts?: { youtubeUrl?: string; spotifyUrl?: string }
 ): Track {
   return {
     id: `external-${id}`,
@@ -32,6 +33,9 @@ export function externalTrack(
     isDownloaded: false,
     artist: { name: artist },
     album: album ? { id: '', title: album } : null,
+    youtubeUrl: opts?.youtubeUrl,
+    spotifyUrl: opts?.spotifyUrl,
+    source: opts?.spotifyUrl ? 'spotify' : opts?.youtubeUrl ? 'youtube' : undefined,
   };
 }
 
@@ -44,8 +48,9 @@ export function normalizeTrack(track: {
   isDownloaded?: boolean;
   isDownloading?: boolean;
   streamUrl?: string | null;
-  source?: 'library' | 'youtube';
+  source?: 'library' | 'youtube' | 'spotify';
   youtubeUrl?: string;
+  spotifyUrl?: string;
   artist: { id?: string; name?: string } | string;
   album?: { id: string; title: string; coverUrl?: string | null } | null;
 }): Track {
@@ -68,5 +73,6 @@ export function normalizeTrack(track: {
     album: track.album ?? null,
     source: track.source,
     youtubeUrl: track.youtubeUrl,
+    spotifyUrl: track.spotifyUrl,
   };
 }

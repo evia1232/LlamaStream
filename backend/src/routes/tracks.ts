@@ -9,7 +9,7 @@ import { resolveAndDownload, downloadLibraryTrack, prefetchLibraryTrack, researc
 import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress } from '../services/trackDownload';
 import { fetchLyricsForTrack } from '../services/lyrics';
 import { unifiedSearch } from '../services/search';
-import { isSpotifyUrl, isYouTubeUrl, parseSpotifyUrl } from '../services/spotify';
+import { isSpotifyUrl, isYouTubeUrl } from '../services/spotify';
 import { ytDlpVersion } from '../services/ytdlp';
 import { getSpotifyStatus } from '../services/spotifyApi';
 import { cleanupLibrary, deleteTrackById, getLibraryStats } from '../services/trackCleanup';
@@ -241,35 +241,29 @@ router.post(
   async (req: AuthRequest, res) => {
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
     const quality = user?.audioQuality || 'HIGH';
-    const { query: searchQuery, url, title, artist, duration, album } = req.body;
+    const { query: searchQuery, url, spotifyUrl, title, artist, duration, album } = req.body;
 
     try {
-      let input = searchQuery || url || '';
+      let input = searchQuery || url || spotifyUrl || '';
       if (!input && !title) {
         return res.status(400).json({ error: 'Provide query, url, title, or artist' });
       }
 
-      // Spotify/YouTube URL or search query
+      const downloadOpts = { title, artist, duration, album, spotifyUrl };
+
       if (url || isSpotifyUrl(input) || isYouTubeUrl(input)) {
         const targetUrl = url || input;
 
         if (isYouTubeUrl(targetUrl)) {
-          const track = await resolveAndDownload(targetUrl, quality, { url: targetUrl, title, artist, duration, album });
+          const track = await resolveAndDownload(targetUrl, quality, { ...downloadOpts, url: targetUrl });
           return res.status(201).json({ track: formatTrack(track) });
         }
 
         if (isSpotifyUrl(targetUrl)) {
-          if (title && artist) {
-            const track = await resolveAndDownload(`${artist} - ${title}`, quality, { title, artist, duration, album });
-            return res.status(201).json({ track: formatTrack(track) });
-          }
-          const parsed = await parseSpotifyUrl(targetUrl);
-          if (parsed.tracks.length === 0) throw new Error('No tracks found in Spotify URL');
-          const first = parsed.tracks[0];
           const track = await resolveAndDownload(
-            `${first.artist} - ${first.name}`,
+            title && artist ? `${artist} - ${title}` : targetUrl,
             quality,
-            { title: first.name, artist: first.artist, duration: first.duration, album: first.album }
+            { ...downloadOpts, spotifyUrl: targetUrl }
           );
           return res.status(201).json({ track: formatTrack(track) });
         }
@@ -278,7 +272,7 @@ router.post(
       const track = await resolveAndDownload(
         input || `${artist} - ${title}`,
         quality,
-        { title, artist, duration, album }
+        downloadOpts
       );
       return res.status(201).json({ track: formatTrack(track) });
     } catch (err) {
@@ -397,13 +391,25 @@ router.post('/prefetch', authenticate, async (req: AuthRequest, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
     const quality = user?.audioQuality || 'HIGH';
-    const { url, title, artist, duration } = req.body as {
+    const { url, spotifyUrl, title, artist, duration } = req.body as {
       url?: string;
+      spotifyUrl?: string;
       title?: string;
       artist?: string;
       duration?: number;
     };
-    if (!url) return res.status(400).json({ error: 'url required' });
+
+    if (spotifyUrl) {
+      const source = await resolveYouTubeSource(
+        title && artist ? `${artist} - ${title}` : spotifyUrl,
+        { spotifyUrl, title, artist, duration, relaxed: true }
+      );
+      const track = await upsertPendingTrack(source, quality, title, artist);
+      ensureBackgroundDownload(track.id, source.url, quality, { title, artist });
+      return res.json({ trackId: track.id, status: 'prefetching' });
+    }
+
+    if (!url) return res.status(400).json({ error: 'url or spotifyUrl required' });
 
     const source = await resolveYouTubeSource(url, { url, title, artist, duration, relaxed: true });
     const track = await upsertPendingTrack(source, quality, title, artist);

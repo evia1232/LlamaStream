@@ -26,6 +26,7 @@ export async function ensureTrackDownloaded(track: Track): Promise<Track> {
       }
     : {
         query: `${artistName} - ${track.title}`,
+        spotifyUrl: track.spotifyUrl,
         title: track.title,
         artist: artistName,
         duration: track.duration,
@@ -45,13 +46,24 @@ export function prefetchTrack(track: Track): void {
     return;
   }
 
+  const artistName = getArtistName(track.artist);
   if (track.youtubeUrl) {
-    const artistName = getArtistName(track.artist);
     api.post('/tracks/prefetch', {
       url: track.youtubeUrl,
       title: track.title,
       artist: artistName,
       duration: track.duration,
+    }).catch(() => { /* ignore */ });
+    return;
+  }
+
+  if (track.spotifyUrl) {
+    api.post('/tracks/prefetch', {
+      spotifyUrl: track.spotifyUrl,
+      title: track.title,
+      artist: artistName,
+      duration: track.duration,
+      album: track.album?.title,
     }).catch(() => { /* ignore */ });
   }
 }

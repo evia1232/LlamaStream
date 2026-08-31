@@ -265,3 +265,120 @@ export async function lookupSpotifyTrack(
 
   return bestScore >= 25 ? best : null;
 }
+
+type SpotifyApiTrack = {
+  id: string;
+  name: string;
+  duration_ms: number;
+  external_urls: { spotify: string };
+  album: { name: string; images: { url: string }[] };
+  artists: { name: string }[];
+};
+
+function mapSpotifyApiTrack(t: SpotifyApiTrack): SpotifySearchResult {
+  return {
+    id: t.id,
+    name: t.name,
+    artist: t.artists.map((a) => a.name).join(', '),
+    album: t.album.name,
+    duration: Math.round(t.duration_ms / 1000),
+    thumbnailUrl: t.album.images[0]?.url || '',
+    spotifyUrl: t.external_urls.spotify,
+    source: 'spotify',
+  };
+}
+
+export function extractSpotifyTrackId(url: string): string | null {
+  const match = url.match(/open\.spotify\.com\/track\/([a-zA-Z0-9]+)/i);
+  return match?.[1] ?? null;
+}
+
+/** Fetch canonical metadata for a Spotify track URL (requires API credentials). */
+export async function fetchSpotifyTrackByUrl(url: string): Promise<SpotifySearchResult | null> {
+  if (!isSpotifyConfigured()) return null;
+  const trackId = extractSpotifyTrackId(url);
+  if (!trackId) return null;
+
+  const { token } = await fetchSpotifyToken();
+  if (!token) return null;
+
+  try {
+    const res = await fetch(`https://api.spotify.com/v1/tracks/${trackId}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as SpotifyApiTrack;
+    return mapSpotifyApiTrack(data);
+  } catch {
+    return null;
+  }
+}
+
+export interface SpotifyUrlParseResult {
+  name: string;
+  tracks: SpotifySearchResult[];
+}
+
+/** Resolve a Spotify track/album/playlist URL to tracks with spotifyUrl (API when configured). */
+export async function fetchSpotifyUrlTracks(url: string): Promise<SpotifyUrlParseResult | null> {
+  if (!isSpotifyConfigured()) return null;
+
+  const { token } = await fetchSpotifyToken();
+  if (!token) return null;
+
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  const trackMatch = url.match(/open\.spotify\.com\/track\/([a-zA-Z0-9]+)/i);
+  const albumMatch = url.match(/open\.spotify\.com\/album\/([a-zA-Z0-9]+)/i);
+  const playlistMatch = url.match(/open\.spotify\.com\/playlist\/([a-zA-Z0-9]+)/i);
+
+  try {
+    if (trackMatch) {
+      const res = await fetch(`https://api.spotify.com/v1/tracks/${trackMatch[1]}`, { headers });
+      if (!res.ok) return null;
+      const data = await res.json() as SpotifyApiTrack;
+      const track = mapSpotifyApiTrack(data);
+      return { name: track.name, tracks: [track] };
+    }
+
+    if (albumMatch) {
+      const albumRes = await fetch(`https://api.spotify.com/v1/albums/${albumMatch[1]}`, { headers });
+      if (!albumRes.ok) return null;
+      const album = await albumRes.json() as { name: string; tracks: { items: SpotifyApiTrack[] } };
+      return {
+        name: album.name,
+        tracks: album.tracks.items.map(mapSpotifyApiTrack),
+      };
+    }
+
+    if (playlistMatch) {
+      const tracks: SpotifySearchResult[] = [];
+      let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${playlistMatch[1]}/tracks?limit=100`;
+      let playlistName = 'Imported Playlist';
+
+      const metaRes = await fetch(`https://api.spotify.com/v1/playlists/${playlistMatch[1]}?fields=name`, { headers });
+      if (metaRes.ok) {
+        const meta = await metaRes.json() as { name?: string };
+        if (meta.name) playlistName = meta.name;
+      }
+
+      while (nextUrl) {
+        const res = await fetch(nextUrl, { headers });
+        if (!res.ok) break;
+        const data = await res.json() as {
+          items: Array<{ track: SpotifyApiTrack | null }>;
+          next: string | null;
+        };
+        for (const item of data.items) {
+          if (item.track?.id) tracks.push(mapSpotifyApiTrack(item.track));
+        }
+        nextUrl = data.next;
+      }
+
+      return tracks.length > 0 ? { name: playlistName, tracks } : null;
+    }
+  } catch (err) {
+    console.error('[Spotify] URL fetch failed:', (err as Error).message);
+  }
+
+  return null;
+}
