@@ -41,6 +41,8 @@ services:
       AVATAR_PATH: /app/storage/avatars
       DEFAULT_AUDIO_QUALITY: ${DEFAULT_AUDIO_QUALITY:-high}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
     volumes:
       - ./storage/music:/app/storage/music
       - ./storage/cache:/app/storage/cache

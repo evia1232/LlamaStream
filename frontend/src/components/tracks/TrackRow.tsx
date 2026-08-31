@@ -33,8 +33,9 @@ export default function TrackRow({ track, index, showIndex = true }: TrackRowPro
     try {
       const { data } = await api.post('/tracks/download', { query: `${artistName} - ${track.title}` });
       playTrack(data.track);
-    } catch (err) {
-      console.error(err);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error');
+      alert(msg);
     } finally {
       setDownloading(false);
     }

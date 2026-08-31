@@ -1,11 +1,14 @@
 import { Router, Response, Request } from 'express';
 import fs from 'fs';
 import jwt from 'jsonwebtoken';
-import { body, query, validationResult } from 'express-validator';
+import { body, query } from 'express-validator';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { searchTracks, downloadTrack, getOrCreateTrackFromSearch, fetchLyricsForTrack } from '../services/downloader';
+import { resolveAndDownload, fetchLyricsForTrack } from '../services/downloader';
+import { unifiedSearch } from '../services/search';
+import { isSpotifyUrl, isYouTubeUrl, parseSpotifyUrl } from '../services/spotify';
+import { ytDlpVersion } from '../services/ytdlp';
 
 const router = Router();
 
@@ -38,55 +41,34 @@ function formatTrack(track: {
 }
 
 router.get('/search', authenticate, query('q').notEmpty(), async (req: AuthRequest, res) => {
-  const q = req.query.q as string;
-  const limit = parseInt(req.query.limit as string) || 20;
-
-  // Search local library
-  const localTracks = await prisma.track.findMany({
-    where: {
-      OR: [
-        { title: { contains: q, mode: 'insensitive' } },
-        { artist: { name: { contains: q, mode: 'insensitive' } } },
-      ],
-    },
-    include: { artist: true, album: true },
-    take: limit,
-  });
-
-  // Search external sources
-  let external: Awaited<ReturnType<typeof searchTracks>> = [];
   try {
-    external = await searchTracks(q, limit);
+    const q = req.query.q as string;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const results = await unifiedSearch(q, req.user!.userId, limit);
+
+    // Backward-compatible shape + new fields
+    res.json({
+      tracks: results.library.map((t) => ({
+        ...t,
+        artist: { ...t.artist, imageUrl: null },
+        album: null,
+        sourceUrl: null,
+        sourceId: null,
+        quality: 'HIGH',
+      })),
+      external: results.youtube,
+      youtube: results.youtube,
+      spotify: results.spotify,
+      spotifyUrlTracks: results.spotifyUrlTracks,
+      detectedUrl: results.detectedUrl,
+      artists: results.artists,
+      albums: results.albums,
+      playlists: results.playlists,
+    });
   } catch (err) {
-    console.error('External search failed:', err);
+    console.error('Search error:', err);
+    res.status(500).json({ error: (err as Error).message });
   }
-
-  const artists = await prisma.artist.findMany({
-    where: { name: { contains: q, mode: 'insensitive' } },
-    take: 10,
-  });
-
-  const albums = await prisma.album.findMany({
-    where: { title: { contains: q, mode: 'insensitive' } },
-    include: { artist: true },
-    take: 10,
-  });
-
-  const playlists = await prisma.playlist.findMany({
-    where: {
-      name: { contains: q, mode: 'insensitive' },
-      OR: [{ visibility: 'PUBLIC' }, { userId: req.user!.userId }],
-    },
-    take: 10,
-  });
-
-  res.json({
-    tracks: localTracks.map(formatTrack),
-    external,
-    artists,
-    albums,
-    playlists,
-  });
 });
 
 router.get('/liked', authenticate, async (req: AuthRequest, res) => {
@@ -119,6 +101,15 @@ router.get('/recent', authenticate, async (req: AuthRequest, res) => {
   res.json({ tracks: recent.map((h) => formatTrack(h.track)) });
 });
 
+router.get('/health/media', authenticate, async (_req, res) => {
+  try {
+    const version = await ytDlpVersion();
+    res.json({ ok: true, ytdlp: version, spotifyApi: !!(config.spotifyClientId && config.spotifyClientSecret) });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
+});
+
 router.get('/:id', authenticate, async (req, res) => {
   const track = await prisma.track.findUnique({
     where: { id: req.params.id },
@@ -131,44 +122,51 @@ router.get('/:id', authenticate, async (req, res) => {
 router.post(
   '/download',
   authenticate,
-  body('query').optional().isString(),
-  body('url').optional().isURL(),
   async (req: AuthRequest, res) => {
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
     const quality = user?.audioQuality || 'HIGH';
+    const { query: searchQuery, url, title, artist } = req.body;
 
     try {
-      if (req.body.url) {
-        const download = await downloadTrack(req.body.url, quality);
-        let artist = await prisma.artist.findUnique({ where: { name: download.artist } });
-        if (!artist) artist = await prisma.artist.create({ data: { name: download.artist } });
+      let input = searchQuery || url || '';
+      if (!input && !title) {
+        return res.status(400).json({ error: 'Provide query, url, title, or artist' });
+      }
 
-        const track = await prisma.track.create({
-          data: {
-            title: download.title,
-            artistId: artist.id,
-            duration: download.duration,
-            filePath: download.filePath,
-            sourceUrl: download.sourceUrl,
-            sourceId: download.sourceId,
-            thumbnailUrl: download.thumbnailUrl,
+      // Spotify/YouTube URL or search query
+      if (url || isSpotifyUrl(input) || isYouTubeUrl(input)) {
+        const targetUrl = url || input;
+
+        if (isYouTubeUrl(targetUrl)) {
+          const track = await resolveAndDownload(targetUrl, quality, { url: targetUrl, title, artist });
+          return res.status(201).json({ track: formatTrack(track) });
+        }
+
+        if (isSpotifyUrl(targetUrl)) {
+          if (title && artist) {
+            const track = await resolveAndDownload(`${artist} - ${title}`, quality, { title, artist });
+            return res.status(201).json({ track: formatTrack(track) });
+          }
+          const parsed = await parseSpotifyUrl(targetUrl);
+          if (parsed.tracks.length === 0) throw new Error('No tracks found in Spotify URL');
+          const first = parsed.tracks[0];
+          const track = await resolveAndDownload(
+            `${first.artist} - ${first.name}`,
             quality,
-            isDownloaded: true,
-          },
-          include: { artist: true, album: true },
-        });
-
-        fetchLyricsForTrack(track.id, download.title, download.artist).catch(console.error);
-        return res.status(201).json({ track: formatTrack(track) });
+            { title: first.name, artist: first.artist }
+          );
+          return res.status(201).json({ track: formatTrack(track) });
+        }
       }
 
-      if (req.body.query) {
-        const track = await getOrCreateTrackFromSearch(req.body.query, quality);
-        return res.status(201).json({ track: formatTrack(track) });
-      }
-
-      return res.status(400).json({ error: 'Provide query or url' });
+      const track = await resolveAndDownload(
+        input || `${artist} - ${title}`,
+        quality,
+        { title, artist }
+      );
+      return res.status(201).json({ track: formatTrack(track) });
     } catch (err) {
+      console.error('Download error:', err);
       return res.status(500).json({ error: (err as Error).message });
     }
   }
