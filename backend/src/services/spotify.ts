@@ -1,7 +1,13 @@
 import prisma from '../lib/prisma';
-import { config } from '../config';
 import { resolveAndDownload } from './downloader';
 import { addTrackToPlaylist } from '../lib/playlistTracks';
+export {
+  searchSpotifyTracks,
+  getSpotifyStatus,
+  isSpotifyConfigured,
+  type SpotifySearchResult,
+  type SpotifySearchResponse,
+} from './spotifyApi';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const createSpotifyUrlInfo = require('spotify-url-info') as (fetchFn: typeof fetch) => {
@@ -26,84 +32,12 @@ export interface SpotifyTrackInfo {
   source: 'spotify';
 }
 
-export interface SpotifySearchResult {
-  id: string;
-  name: string;
-  artist: string;
-  album?: string;
-  duration: number;
-  thumbnailUrl: string;
-  spotifyUrl: string;
-  source: 'spotify';
-}
-
-let tokenCache: { token: string; expiresAt: number } | null = null;
-
-async function getSpotifyApiToken(): Promise<string | null> {
-  if (!config.spotifyClientId || !config.spotifyClientSecret) return null;
-
-  if (tokenCache && Date.now() < tokenCache.expiresAt - 60000) {
-    return tokenCache.token;
-  }
-
-  const credentials = Buffer.from(`${config.spotifyClientId}:${config.spotifyClientSecret}`).toString('base64');
-  const res = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${credentials}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: 'grant_type=client_credentials',
-  });
-
-  if (!res.ok) return null;
-
-  const data = await res.json() as { access_token: string; expires_in: number };
-  tokenCache = {
-    token: data.access_token,
-    expiresAt: Date.now() + data.expires_in * 1000,
-  };
-  return data.access_token;
-}
-
 export function isSpotifyUrl(input: string): boolean {
   return /open\.spotify\.com\/(track|album|playlist|artist|episode)/i.test(input);
 }
 
 export function isYouTubeUrl(input: string): boolean {
   return /youtube\.com|youtu\.be|music\.youtube\.com/i.test(input);
-}
-
-export async function searchSpotifyTracks(query: string, limit = 15): Promise<SpotifySearchResult[]> {
-  const token = await getSpotifyApiToken();
-  if (!token) return [];
-
-  const res = await fetch(
-    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  if (!res.ok) return [];
-
-  const data = await res.json() as {
-    tracks?: { items: Array<{
-      id: string; name: string; duration_ms: number;
-      external_urls: { spotify: string };
-      album: { name: string; images: { url: string }[] };
-      artists: { name: string }[];
-    }> };
-  };
-
-  return (data.tracks?.items || []).map((t) => ({
-    id: t.id,
-    name: t.name,
-    artist: t.artists.map((a) => a.name).join(', '),
-    album: t.album.name,
-    duration: Math.round(t.duration_ms / 1000),
-    thumbnailUrl: t.album.images[0]?.url || '',
-    spotifyUrl: t.external_urls.spotify,
-    source: 'spotify' as const,
-  }));
 }
 
 export async function parseSpotifyUrl(url: string): Promise<{
@@ -158,7 +92,12 @@ export async function importSpotifyPlaylist(
       const track = await resolveAndDownload(
         `${spotifyTrack.artist} - ${spotifyTrack.name}`,
         quality,
-        { title: spotifyTrack.name, artist: spotifyTrack.artist }
+        {
+          title: spotifyTrack.name,
+          artist: spotifyTrack.artist,
+          duration: spotifyTrack.duration,
+          album: spotifyTrack.album,
+        }
       );
 
       const { added } = await addTrackToPlaylist(playlist.id, track.id, position);

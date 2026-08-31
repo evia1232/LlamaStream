@@ -37,24 +37,24 @@ export default function HomePage() {
   return (
     <div className="pb-8">
       {/* Hero */}
-      <div className="gradient-bg px-6 pt-8 pb-6">
-        <h1 className="text-3xl font-bold mb-6">{t(data.greeting)}</h1>
+      <div className="gradient-bg px-4 md:px-8 pt-6 md:pt-10 pb-8">
+        <h1 className="text-display mb-6 md:mb-8">{t(data.greeting)}</h1>
         {data.recentlyPlayed.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
             {data.recentlyPlayed.slice(0, 6).map((track) => (
               <button
                 key={track.id}
                 onClick={() => playTrack(normalizeTrack(track))}
-                className="flex items-center gap-3 bg-white/10 hover:bg-white/20 rounded-md overflow-hidden transition-colors group"
+                className="flex items-center gap-0 bg-white/10 hover:bg-white/20 rounded-spotify overflow-hidden transition-all duration-200 group text-start"
               >
-                <div className="w-16 h-16 shrink-0">
+                <div className="w-16 h-16 md:w-[4.5rem] md:h-[4.5rem] shrink-0 shadow-card">
                   {track.thumbnailUrl ? (
                     <img src={track.thumbnailUrl} alt="" className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full bg-spotify-lightgray flex items-center justify-center">♪</div>
                   )}
                 </div>
-                <span className="font-semibold truncate pe-4">{track.title}</span>
+                <span className="text-sm font-bold truncate px-4 group-hover:text-white">{track.title}</span>
               </button>
             ))}
           </div>
@@ -78,8 +78,8 @@ export default function HomePage() {
       />
 
       {data.history.length > 0 && (
-        <section className="px-6">
-          <h2 className="text-2xl font-bold mb-4">{t('history')}</h2>
+        <section className="px-4 md:px-6 mb-8">
+          <h2 className="text-heading mb-4">{t('history')}</h2>
           <div>
             {data.history.slice(0, 10).map((track, i) => (
               <TrackRow key={`${track.id}-${i}`} track={normalizeTrack(track)} index={i} />

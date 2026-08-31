@@ -5,6 +5,7 @@ import { Play, Download, Trash2 } from 'lucide-react';
 import api from '../api/client';
 import TrackRow from '../components/tracks/TrackRow';
 import { Track, Playlist } from '../types';
+import { normalizeTrack } from '../lib/trackUtils';
 import { usePlayerStore } from '../store';
 
 export default function PlaylistPage() {
@@ -44,25 +45,25 @@ export default function PlaylistPage() {
 
   return (
     <div>
-      <div className="gradient-bg px-6 pt-8 pb-6 flex items-end gap-6">
-        <div className="w-48 h-48 rounded-md shadow-2xl bg-spotify-lightgray shrink-0 overflow-hidden">
+      <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-end gap-6">
+        <div className="w-36 h-36 md:w-48 md:h-48 rounded-spotify shadow-card bg-spotify-lightgray shrink-0 overflow-hidden">
           {playlist.coverUrl ? (
             <img src={playlist.coverUrl} alt="" className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-6xl">♪</div>
           )}
         </div>
-        <div>
-          <p className="text-sm font-medium uppercase">{t('playlists')}</p>
-          <h1 className="text-5xl font-bold mb-4">{playlist.name}</h1>
-          {playlist.description && <p className="text-spotify-text mb-2">{playlist.description}</p>}
-          <p className="text-sm text-spotify-text">{t('trackCount', { count: playlist.tracks?.length || 0 })}</p>
+        <div className="min-w-0 pb-2">
+          <p className="text-label mb-2">{t('playlists')}</p>
+          <h1 className="text-hero mb-3 md:mb-4">{playlist.name}</h1>
+          {playlist.description && <p className="text-body mb-2">{playlist.description}</p>}
+          <p className="text-caption">{t('trackCount', { count: playlist.tracks?.length || 0 })}</p>
         </div>
       </div>
 
       <div className="px-6 py-4 flex items-center gap-4">
         <button onClick={handlePlayAll} className="w-14 h-14 bg-spotify-green rounded-full flex items-center justify-center hover:scale-105 transition-transform hover:bg-spotify-green-hover">
-          <Play className="w-6 h-6 fill-black text-black ms-1" />
+          <Play className="w-6 h-6 fill-black text-black play-icon-nudge" />
         </button>
         <div className="flex gap-2 ms-auto">
           <button onClick={() => handleExport('json')} className="icon-btn flex items-center gap-2 px-3">
@@ -87,7 +88,7 @@ export default function PlaylistPage() {
           <span className="text-end">⏱</span>
         </div>
         {playlist.tracks?.map((track, i) => (
-          <TrackRow key={track.id} track={track as Track} index={i} />
+          <TrackRow key={track.id} track={normalizeTrack(track as Track)} index={i} />
         ))}
       </div>
     </div>

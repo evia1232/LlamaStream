@@ -21,12 +21,12 @@ export default function Sidebar() {
   ];
 
   return (
-    <aside className="w-64 bg-spotify-black flex flex-col shrink-0 p-2 gap-2">
+    <aside className="hidden md:flex w-64 bg-spotify-black flex-col shrink-0 p-2 gap-2">
       {/* Logo */}
-      <div className="px-3 py-4">
+      <div className="px-4 py-5">
         <div className="flex items-center gap-2">
-          <Music2 className="w-8 h-8 text-spotify-green" />
-          <span className="text-xl font-bold text-white">{t('appName')}</span>
+          <Music2 className="w-8 h-8 text-spotify-green" strokeWidth={2.5} />
+          <span className="text-xl font-black tracking-tight">{t('appName')}</span>
         </div>
       </div>
 
@@ -46,8 +46,8 @@ export default function Sidebar() {
 
       {/* Library */}
       <div className="bg-spotify-gray rounded-lg p-2 flex-1 overflow-y-auto">
-        <div className="flex items-center justify-between px-3 py-2">
-          <span className="text-sm font-semibold text-spotify-text">{t('library')}</span>
+        <div className="flex items-center justify-between px-3 py-2 mb-1">
+          <span className="text-label">{t('library')}</span>
           <button className="icon-btn p-1">
             <Plus className="w-5 h-5" />
           </button>
@@ -75,8 +75,8 @@ export default function Sidebar() {
             )}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold truncate">{user?.displayName || user?.username}</p>
-            <p className="text-xs text-spotify-text truncate">{user?.email}</p>
+            <p className="text-sm font-bold truncate">{user?.displayName || user?.username}</p>
+            <p className="text-caption truncate">{user?.email}</p>
           </div>
         </div>
         <div className="flex gap-1">

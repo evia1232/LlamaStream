@@ -14,8 +14,9 @@ export const config = {
   adminEmail: process.env.ADMIN_EMAIL || 'admin@llamastream.local',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin123456',
   adminUsername: process.env.ADMIN_USERNAME || 'admin',
-  spotifyClientId: process.env.SPOTIFY_CLIENT_ID || '',
-  spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET || '',
+  spotifyClientId: (process.env.SPOTIFY_CLIENT_ID || '').trim(),
+  spotifyClientSecret: (process.env.SPOTIFY_CLIENT_SECRET || '').trim(),
+  spotifyMarket: (process.env.SPOTIFY_MARKET || 'IL').trim().toUpperCase(),
 };
 
 export const qualityBitrates: Record<string, string> = {

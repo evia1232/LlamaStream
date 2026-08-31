@@ -32,6 +32,8 @@ export interface UnifiedSearchResult {
   albums: Array<{ id: string; title: string; coverUrl: string | null; artist: { id: string; name: string } }>;
   playlists: Array<{ id: string; name: string; coverUrl: string | null; trackCount: number; userId: string }>;
   detectedUrl?: { type: 'spotify' | 'youtube'; url: string };
+  spotifyError?: string;
+  spotifyConfigured?: boolean;
 }
 
 function buildTrackFilter(query: string): Prisma.TrackWhereInput {
@@ -99,6 +101,9 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
   let spotifyUrlTracks: UnifiedSearchResult['spotifyUrlTracks'] = [];
   let detectedUrl: UnifiedSearchResult['detectedUrl'];
 
+  let spotifyError: string | undefined;
+  let spotifyConfigured = false;
+
   if (isSpotifyUrl(trimmed)) {
     detectedUrl = { type: 'spotify', url: trimmed };
     try {
@@ -111,16 +116,16 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
     detectedUrl = { type: 'youtube', url: trimmed };
   } else {
     // Text query: search YouTube + Spotify in parallel (local already done above)
-    const [ytResults, spResults] = await Promise.allSettled([
-      searchYouTube(trimmed, limit),
-      searchSpotifyTracks(trimmed, limit),
-    ]);
+    const spResult = await searchSpotifyTracks(trimmed, limit);
+    spotify = spResult.tracks;
+    spotifyError = spResult.error;
+    spotifyConfigured = spResult.configured;
 
-    if (ytResults.status === 'fulfilled') youtube = ytResults.value;
-    else console.error('YouTube search failed:', ytResults.reason);
-
-    if (spResults.status === 'fulfilled') spotify = spResults.value;
-    else console.error('Spotify search failed:', spResults.reason);
+    const ytResults = await searchYouTube(trimmed, limit).catch((err) => {
+      console.error('YouTube search failed:', err);
+      return [] as UnifiedSearchResult['youtube'];
+    });
+    youtube = ytResults;
   }
 
   return {
@@ -153,5 +158,7 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
       userId: p.userId,
     })),
     detectedUrl,
+    spotifyError,
+    spotifyConfigured,
   };
 }

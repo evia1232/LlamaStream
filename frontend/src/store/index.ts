@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import i18n from '../i18n';
 import { Track, RepeatMode, User, QueueItem, Lyrics } from '../types';
 import api from '../api/client';
+import { applyDocumentDirection } from '../lib/direction';
+import { loadLocalPlayback, saveLocalPlayback, clearLocalPlayback } from '../lib/playbackStorage';
 
 interface PlayerState {
   currentTrack: Track | null;
@@ -16,6 +18,8 @@ interface PlayerState {
   showLyrics: boolean;
   lyrics: Lyrics | null;
   likedTrackIds: Set<string>;
+  pendingSeekTime: number;
+  playbackRestored: boolean;
 
   setCurrentTrack: (track: Track | null) => void;
   setIsPlaying: (playing: boolean) => void;
@@ -30,7 +34,7 @@ interface PlayerState {
   setQueue: (queue: QueueItem[]) => void;
   addToLiked: (trackId: string) => void;
   removeFromLiked: (trackId: string) => void;
-  playTrack: (track: Track) => Promise<void>;
+  playTrack: (track: Track, startTime?: number) => Promise<void>;
   playNext: () => void;
   playPrevious: () => void;
   fetchQueue: () => Promise<void>;
@@ -39,6 +43,9 @@ interface PlayerState {
   clearQueue: () => Promise<void>;
   toggleLike: (trackId: string) => Promise<void>;
   fetchLyrics: (trackId: string) => Promise<void>;
+  clearPendingSeek: () => void;
+  persistPlayback: () => Promise<void>;
+  restorePlayback: () => Promise<void>;
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -54,12 +61,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   showLyrics: false,
   lyrics: null,
   likedTrackIds: new Set(),
+  pendingSeekTime: 0,
+  playbackRestored: false,
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
-  setIsPlaying: (playing) => set({ isPlaying: playing }),
+  setIsPlaying: (playing) => {
+    set({ isPlaying: playing });
+    get().persistPlayback();
+  },
   setCurrentTime: (time) => set({ currentTime: time }),
   setDuration: (duration) => set({ duration }),
-  setVolume: (volume) => set({ volume }),
+  setVolume: (volume) => {
+    set({ volume });
+    localStorage.setItem('volume', String(volume));
+  },
   toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
   cycleRepeat: () => set((s) => ({
     repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off',
@@ -79,11 +94,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     return { likedTrackIds: ids };
   }),
 
-  playTrack: async (track) => {
-    set({ currentTrack: track, isPlaying: true, currentTime: 0, lyrics: null });
+  playTrack: async (track, startTime = 0) => {
+    set({
+      currentTrack: track,
+      isPlaying: true,
+      currentTime: startTime,
+      pendingSeekTime: startTime,
+      lyrics: null,
+    });
+    saveLocalPlayback({ trackId: track.id, position: startTime, isPlaying: true, savedAt: Date.now() });
     try {
       await api.post(`/tracks/${track.id}/play`);
       get().fetchLyrics(track.id);
+      await get().persistPlayback();
     } catch { /* ignore */ }
   },
 
@@ -150,6 +173,75 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       set({ lyrics: null });
     }
   },
+
+  clearPendingSeek: () => set({ pendingSeekTime: 0 }),
+
+  persistPlayback: async () => {
+    const { currentTrack, currentTime, isPlaying } = get();
+    if (!currentTrack) return;
+
+    saveLocalPlayback({
+      trackId: currentTrack.id,
+      position: currentTime,
+      isPlaying,
+      savedAt: Date.now(),
+    });
+
+    try {
+      await api.put('/tracks/playback-state', {
+        trackId: currentTrack.id,
+        position: currentTime,
+        isPlaying,
+      });
+    } catch { /* ignore */ }
+  },
+
+  restorePlayback: async () => {
+    if (get().playbackRestored) return;
+    set({ playbackRestored: true });
+
+    const savedVolume = localStorage.getItem('volume');
+    if (savedVolume) {
+      const vol = parseFloat(savedVolume);
+      if (!Number.isNaN(vol)) set({ volume: vol });
+    }
+
+    let track: Track | null = null;
+    let position = 0;
+    let isPlaying = false;
+
+    try {
+      const { data } = await api.get('/tracks/playback-state');
+      if (data.track) {
+        track = data.track;
+        position = data.position ?? 0;
+        isPlaying = !!data.isPlaying;
+      }
+    } catch { /* fall back to local */ }
+
+    if (!track) {
+      const local = loadLocalPlayback();
+      if (!local) return;
+      try {
+        const { data } = await api.get(`/tracks/${local.trackId}`);
+        track = data.track;
+        position = local.position;
+        isPlaying = local.isPlaying;
+      } catch {
+        clearLocalPlayback();
+        return;
+      }
+    }
+
+    if (!track?.streamUrl && !track?.isDownloaded) return;
+
+    set({
+      currentTrack: track,
+      currentTime: position,
+      pendingSeekTime: position,
+      isPlaying: false,
+    });
+  },
 }));
 
 interface AuthState {
@@ -174,8 +266,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (data.user.language) {
       localStorage.setItem('language', data.user.language);
       i18n.changeLanguage(data.user.language);
-      document.documentElement.lang = data.user.language;
-      document.documentElement.dir = data.user.language === 'he' ? 'rtl' : 'ltr';
+      applyDocumentDirection(data.user.language);
     }
   },
 
@@ -194,8 +285,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const { data } = await api.get('/auth/me');
       set({ user: data.user, token, isLoading: false });
       if (data.user.language) {
-        document.documentElement.lang = data.user.language;
-        document.documentElement.dir = data.user.language === 'he' ? 'rtl' : 'ltr';
+        applyDocumentDirection(data.user.language);
       }
     } catch {
       localStorage.removeItem('token');
@@ -208,8 +298,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ user: data.user });
     if (data.user.language) {
       localStorage.setItem('language', data.user.language);
-      document.documentElement.lang = data.user.language;
-      document.documentElement.dir = data.user.language === 'he' ? 'rtl' : 'ltr';
+      applyDocumentDirection(data.user.language);
     }
   },
 }));

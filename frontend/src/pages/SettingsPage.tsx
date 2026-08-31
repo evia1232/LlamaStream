@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
+import { applyDocumentDirection } from '../lib/direction';
 import { useAuthStore } from '../store';
 import api from '../api/client';
 import { User } from '../types';
@@ -29,8 +30,7 @@ export default function SettingsPage() {
     await updateProfile({ displayName, language, audioQuality: audioQuality as 'LOW' | 'NORMAL' | 'HIGH' });
     i18n.changeLanguage(language);
     localStorage.setItem('language', language);
-    document.documentElement.lang = language;
-    document.documentElement.dir = language === 'he' ? 'rtl' : 'ltr';
+    applyDocumentDirection(language);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -59,12 +59,12 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="p-6 max-w-2xl">
-      <h1 className="text-3xl font-bold mb-8">{t('settings')}</h1>
+    <div className="p-4 md:p-8 max-w-2xl">
+      <h1 className="text-heading mb-8 md:mb-10">{t('settings')}</h1>
 
       {/* Profile */}
-      <section className="mb-8">
-        <h2 className="text-xl font-bold mb-4">{t('profile')}</h2>
+      <section className="mb-10">
+        <h2 className="text-heading-sm mb-5">{t('profile')}</h2>
         <div className="flex items-center gap-4 mb-4">
           <div className="w-20 h-20 rounded-full bg-spotify-lightgray overflow-hidden">
             {user?.avatarUrl ? (

@@ -5,6 +5,9 @@ import { registerSW } from 'virtual:pwa-register';
 import App from './App';
 import './i18n';
 import './index.css';
+import { applyDocumentDirection } from './lib/direction';
+
+applyDocumentDirection();
 
 // PWA: auto-update service worker when new version is deployed
 registerSW({

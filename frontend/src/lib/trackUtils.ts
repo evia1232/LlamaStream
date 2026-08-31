@@ -7,6 +7,14 @@ export function getArtistName(artist: { name?: string } | string | null | undefi
   return artist.name || '';
 }
 
+/** Best available cover art for a track row. */
+export function getTrackImageUrl(track: {
+  thumbnailUrl?: string | null;
+  album?: { coverUrl?: string | null } | null;
+}): string | null {
+  return track.thumbnailUrl || track.album?.coverUrl || null;
+}
+
 /** Normalize a track from any API shape into a consistent format. */
 export function normalizeTrack(track: {
   id: string;
@@ -23,11 +31,13 @@ export function normalizeTrack(track: {
     ? { id: track.artist.id, name: track.artist.name || artistName }
     : { name: artistName };
 
+  const thumbnailUrl = track.thumbnailUrl || track.album?.coverUrl || null;
+
   return {
     id: track.id,
     title: track.title,
     duration: track.duration || 0,
-    thumbnailUrl: track.thumbnailUrl,
+    thumbnailUrl,
     isDownloaded: track.isDownloaded ?? !!track.streamUrl,
     streamUrl: track.streamUrl ?? null,
     artist: artistObj,

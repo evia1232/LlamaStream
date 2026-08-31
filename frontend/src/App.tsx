@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useAuthStore } from './store';
+import { useAuthStore, usePlayerStore } from './store';
 import Layout from './components/layout/Layout';
 import LoginPage from './pages/LoginPage';
 import HomePage from './pages/HomePage';
@@ -26,10 +26,19 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const fetchUser = useAuthStore((s) => s.fetchUser);
+  const token = useAuthStore((s) => s.token);
+  const isLoading = useAuthStore((s) => s.isLoading);
+  const restorePlayback = usePlayerStore((s) => s.restorePlayback);
 
   useEffect(() => {
     fetchUser();
   }, [fetchUser]);
+
+  useEffect(() => {
+    if (token && !isLoading) {
+      restorePlayback();
+    }
+  }, [token, isLoading, restorePlayback]);
 
   return (
     <Routes>

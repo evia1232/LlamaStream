@@ -24,8 +24,13 @@ export default function QueueDrawer() {
   if (!showQueue) return null;
 
   return (
-    <div className="fixed inset-y-0 start-0 w-80 bg-spotify-gray shadow-2xl z-50 flex flex-col border-e border-black/30">
-      <div className="flex items-center justify-between p-4 border-b border-white/10">
+    <>
+      <div
+        className="md:hidden fixed inset-0 bg-black/60 z-40"
+        onClick={() => setShowQueue(false)}
+      />
+      <div className="fixed inset-y-0 inset-x-0 md:inset-x-auto md:w-80 md:start-0 md:end-auto bg-spotify-gray shadow-2xl z-50 flex flex-col border-inline-end border-black/30 max-md:pb-[env(safe-area-inset-bottom)]">
+        <div className="flex items-center justify-between p-4 border-b border-white/10">
         <h2 className="text-lg font-bold">{t('queue')}</h2>
         <div className="flex gap-2">
           {queue.length > 0 && (
@@ -48,7 +53,7 @@ export default function QueueDrawer() {
                 <img src={currentTrack.thumbnailUrl} alt="" className="w-full h-full object-cover" />
               )}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 text-start">
               <p className="text-sm font-medium truncate">{currentTrack.title}</p>
               <p className="text-xs text-spotify-text truncate">{getArtistName(currentTrack.artist)}</p>
             </div>
@@ -61,7 +66,7 @@ export default function QueueDrawer() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="flex-1 overflow-y-auto p-2 text-start">
         {queue.length === 0 ? (
           <p className="text-spotify-text text-sm text-center py-8">{t('queue')} —</p>
         ) : (
@@ -79,7 +84,7 @@ export default function QueueDrawer() {
                   <img src={item.track.thumbnailUrl} alt="" className="w-full h-full object-cover" />
                 )}
               </div>
-              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => playTrack(item.track)}>
+              <div className="flex-1 min-w-0 cursor-pointer text-start" onClick={() => playTrack(item.track)}>
                 <p className="text-sm truncate">{item.track.title}</p>
                 <p className="text-xs text-spotify-text truncate">{getArtistName(item.track.artist)}</p>
               </div>
@@ -93,7 +98,8 @@ export default function QueueDrawer() {
             </div>
           ))
         )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

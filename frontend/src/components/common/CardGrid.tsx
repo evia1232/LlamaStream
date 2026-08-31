@@ -23,9 +23,9 @@ export default function CardGrid({ title, items, onPlay, linkPrefix = '/playlist
   if (!items.length) return null;
 
   return (
-    <section className="mb-8">
-      <h2 className="text-2xl font-bold mb-4 px-6">{title}</h2>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 px-6">
+    <section className="mb-10">
+      <h2 className="text-heading mb-5 px-4 md:px-6">{title}</h2>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-5 px-4 md:px-6">
         {items.map((item) => {
           const image = item.coverUrl || item.thumbnailUrl || item.imageUrl;
           const label = item.name || item.title || '';
@@ -35,11 +35,11 @@ export default function CardGrid({ title, items, onPlay, linkPrefix = '/playlist
             <Link
               key={item.id}
               to={href}
-              className="bg-spotify-lightgray p-4 rounded-lg card-hover group relative"
+              className="surface-card group relative"
             >
               <div className="relative mb-4">
                 <div className={clsx(
-                  'aspect-square rounded-md overflow-hidden bg-spotify-gray shadow-lg',
+                  'aspect-square rounded-spotify overflow-hidden bg-spotify-gray shadow-card',
                   item.type === 'artist' && 'rounded-full'
                 )}>
                   {image ? (
@@ -51,16 +51,16 @@ export default function CardGrid({ title, items, onPlay, linkPrefix = '/playlist
                 {onPlay && (
                   <button
                     onClick={(e) => { e.preventDefault(); onPlay(item.id); }}
-                    className="absolute bottom-2 end-2 w-12 h-12 bg-spotify-green rounded-full flex items-center justify-center shadow-xl opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all hover:scale-105 hover:bg-spotify-green-hover"
+                    className="absolute bottom-2 end-2 w-12 h-12 bg-spotify-green rounded-full flex items-center justify-center shadow-play-btn opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300 hover:scale-105 hover:bg-spotify-green-hover"
                   >
-                    <Play className="w-5 h-5 fill-black text-black ms-0.5" />
+                    <Play className="w-5 h-5 fill-black text-black play-icon-nudge" strokeWidth={0} />
                   </button>
                 )}
               </div>
-              <p className="font-semibold truncate">{label}</p>
-              {item.artist && <p className="text-sm text-spotify-text truncate">{item.artist}</p>}
+              <p className="text-title truncate mb-0.5">{label}</p>
+              {item.artist && <p className="text-body truncate">{item.artist}</p>}
               {item.trackCount !== undefined && (
-                <p className="text-sm text-spotify-text">{item.trackCount} tracks</p>
+                <p className="text-caption mt-1">{item.trackCount} tracks</p>
               )}
             </Link>
           );

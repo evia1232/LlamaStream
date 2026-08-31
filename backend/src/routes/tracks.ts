@@ -9,6 +9,7 @@ import { resolveAndDownload, fetchLyricsForTrack } from '../services/downloader'
 import { unifiedSearch } from '../services/search';
 import { isSpotifyUrl, isYouTubeUrl, parseSpotifyUrl } from '../services/spotify';
 import { ytDlpVersion } from '../services/ytdlp';
+import { getSpotifyStatus } from '../services/spotifyApi';
 
 const router = Router();
 
@@ -58,7 +59,9 @@ router.get('/search', authenticate, query('q').notEmpty(), async (req: AuthReque
       spotify: results.spotify,
       spotifyUrlTracks: results.spotifyUrlTracks,
       detectedUrl: results.detectedUrl,
-      external: results.youtube, // backward compat
+      spotifyError: results.spotifyError,
+      spotifyConfigured: results.spotifyConfigured,
+      external: results.youtube,
     });
   } catch (err) {
     console.error('Search error:', err);
@@ -98,11 +101,66 @@ router.get('/recent', authenticate, async (req: AuthRequest, res) => {
 
 router.get('/health/media', authenticate, async (_req, res) => {
   try {
-    const version = await ytDlpVersion();
-    res.json({ ok: true, ytdlp: version, spotifyApi: !!(config.spotifyClientId && config.spotifyClientSecret) });
+    const [version, spotify] = await Promise.all([
+      ytDlpVersion(),
+      getSpotifyStatus(),
+    ]);
+    res.json({ ok: true, ytdlp: version, spotify });
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
   }
+});
+
+router.get('/playback-state', authenticate, async (req: AuthRequest, res) => {
+  const state = await prisma.userPlayback.findUnique({
+    where: { userId: req.user!.userId },
+    include: { track: { include: { artist: true, album: true } } },
+  });
+
+  if (!state?.track?.isDownloaded) {
+    return res.json({ track: null, position: 0, isPlaying: false });
+  }
+
+  res.json({
+    track: formatTrack(state.track),
+    position: state.position,
+    isPlaying: state.isPlaying,
+  });
+});
+
+router.put('/playback-state', authenticate, async (req: AuthRequest, res) => {
+  const { trackId, position, isPlaying } = req.body as {
+    trackId?: string | null;
+    position?: number;
+    isPlaying?: boolean;
+  };
+
+  if (!trackId) {
+    await prisma.userPlayback.deleteMany({ where: { userId: req.user!.userId } });
+    return res.json({ success: true });
+  }
+
+  const track = await prisma.track.findUnique({ where: { id: trackId } });
+  if (!track?.isDownloaded) {
+    return res.status(400).json({ error: 'Track not available' });
+  }
+
+  await prisma.userPlayback.upsert({
+    where: { userId: req.user!.userId },
+    create: {
+      userId: req.user!.userId,
+      trackId,
+      position: Math.max(0, position ?? 0),
+      isPlaying: !!isPlaying,
+    },
+    update: {
+      trackId,
+      position: Math.max(0, position ?? 0),
+      isPlaying: !!isPlaying,
+    },
+  });
+
+  res.json({ success: true });
 });
 
 router.get('/:id', authenticate, async (req, res) => {
@@ -120,7 +178,7 @@ router.post(
   async (req: AuthRequest, res) => {
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
     const quality = user?.audioQuality || 'HIGH';
-    const { query: searchQuery, url, title, artist } = req.body;
+    const { query: searchQuery, url, title, artist, duration, album } = req.body;
 
     try {
       let input = searchQuery || url || '';
@@ -133,13 +191,13 @@ router.post(
         const targetUrl = url || input;
 
         if (isYouTubeUrl(targetUrl)) {
-          const track = await resolveAndDownload(targetUrl, quality, { url: targetUrl, title, artist });
+          const track = await resolveAndDownload(targetUrl, quality, { url: targetUrl, title, artist, duration, album });
           return res.status(201).json({ track: formatTrack(track) });
         }
 
         if (isSpotifyUrl(targetUrl)) {
           if (title && artist) {
-            const track = await resolveAndDownload(`${artist} - ${title}`, quality, { title, artist });
+            const track = await resolveAndDownload(`${artist} - ${title}`, quality, { title, artist, duration, album });
             return res.status(201).json({ track: formatTrack(track) });
           }
           const parsed = await parseSpotifyUrl(targetUrl);
@@ -148,7 +206,7 @@ router.post(
           const track = await resolveAndDownload(
             `${first.artist} - ${first.name}`,
             quality,
-            { title: first.name, artist: first.artist }
+            { title: first.name, artist: first.artist, duration: first.duration, album: first.album }
           );
           return res.status(201).json({ track: formatTrack(track) });
         }
@@ -157,7 +215,7 @@ router.post(
       const track = await resolveAndDownload(
         input || `${artist} - ${title}`,
         quality,
-        { title, artist }
+        { title, artist, duration, album }
       );
       return res.status(201).json({ track: formatTrack(track) });
     } catch (err) {

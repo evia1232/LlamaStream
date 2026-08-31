@@ -29,22 +29,22 @@ export default function ArtistPage() {
 
   return (
     <div>
-      <div className="gradient-bg px-6 pt-8 pb-6 flex items-end gap-6">
-        <div className="w-48 h-48 rounded-full shadow-2xl bg-spotify-lightgray shrink-0 overflow-hidden">
+      <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-end gap-6">
+        <div className="w-36 h-36 md:w-48 md:h-48 rounded-full shadow-card bg-spotify-lightgray shrink-0 overflow-hidden">
           {artist.imageUrl ? (
             <img src={artist.imageUrl} alt="" className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-6xl">🎤</div>
           )}
         </div>
-        <div>
-          <p className="text-sm font-medium uppercase">{t('artists')}</p>
-          <h1 className="text-5xl font-bold">{artist.name}</h1>
+        <div className="min-w-0 pb-2">
+          <p className="text-label mb-2">{t('artists')}</p>
+          <h1 className="text-hero">{artist.name}</h1>
         </div>
       </div>
 
-      <div className="px-2 mt-4">
-        <h2 className="text-xl font-bold px-4 mb-2">{t('tracks')}</h2>
+      <div className="px-2 mt-6">
+        <h2 className="text-heading-sm px-4 mb-3">{t('tracks')}</h2>
         {artist.tracks.map((track, i) => (
           <TrackRow key={track.id} track={track} index={i} />
         ))}

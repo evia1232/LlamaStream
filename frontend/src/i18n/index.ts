@@ -1,5 +1,6 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
+import { applyDocumentDirection } from '../lib/direction';
 
 const resources = {
   he: {
@@ -106,6 +107,8 @@ const resources = {
       installApp: 'התקן את LlamaStream',
       installAppHint: 'הוסף למסך הבית לגישה מהירה',
       install: 'התקן',
+      spotifyNotConfigured: 'חיפוש Spotify לא מוגדר. הוסף SPOTIFY_CLIENT_ID ו-SPOTIFY_CLIENT_SECRET ל-.env והפעל מחדש את השרת.',
+      spotifySetupHint: 'Redirect URIs אינם נדרשים לחיפוש — רק Client ID ו-Secret. ודא שהמשתנים מועברים לקונטיינר backend.',
       updateAvailable: 'גרסה חדשה זמינה. לרענן?',
     },
   },
@@ -213,6 +216,8 @@ const resources = {
       installApp: 'Install LlamaStream',
       installAppHint: 'Add to home screen for quick access',
       install: 'Install',
+      spotifyNotConfigured: 'Spotify search is not configured. Add SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET to .env and restart the backend.',
+      spotifySetupHint: 'Redirect URIs are not needed for search — only Client ID and Secret. Ensure vars are passed to the backend container.',
       updateAvailable: 'A new version is available. Reload?',
     },
   },
@@ -223,6 +228,12 @@ i18n.use(initReactI18next).init({
   lng: localStorage.getItem('language') || 'he',
   fallbackLng: 'he',
   interpolation: { escapeValue: false },
+});
+
+applyDocumentDirection(i18n.language);
+
+i18n.on('languageChanged', (lng) => {
+  applyDocumentDirection(lng);
 });
 
 export default i18n;

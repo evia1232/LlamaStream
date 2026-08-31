@@ -27,6 +27,8 @@ interface SearchResults {
   youtube: YouTubeResult[];
   spotify: SpotifyResult[];
   spotifyUrlTracks: SpotifyUrlTrack[];
+  spotifyError?: string;
+  spotifyConfigured?: boolean;
   detectedUrl?: { type: 'spotify' | 'youtube'; url: string };
   artists: { id: string; name: string; imageUrl?: string | null }[];
   albums: { id: string; title: string; coverUrl?: string | null; artist: { id: string; name: string } }[];
@@ -69,7 +71,9 @@ export default function SearchPage() {
     debounceRef.current = setTimeout(() => search(value), 350);
   };
 
-  const handlePlay = async (opts: { id: string; title: string; artist: string; url?: string }) => {
+  const handlePlay = async (opts: {
+    id: string; title: string; artist: string; url?: string; duration?: number; album?: string;
+  }) => {
     setDownloadingId(opts.id);
     setError('');
     try {
@@ -78,6 +82,8 @@ export default function SearchPage() {
         url: opts.url,
         title: opts.title,
         artist: opts.artist,
+        duration: opts.duration,
+        album: opts.album,
       });
       playTrack(data.track);
       search(query);
@@ -92,10 +98,10 @@ export default function SearchPage() {
 
   const renderExternalRow = (
     id: string, title: string, artist: string, thumbnailUrl: string,
-    duration: number, url?: string, badge?: string
+    duration: number, url?: string, badge?: string, album?: string
   ) => (
-    <div key={id} className="flex items-center gap-4 p-3 rounded-md card-hover group">
-      <div className="w-12 h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
+    <div key={id} className="flex items-center gap-3 md:gap-4 p-2 md:p-3 rounded-md card-hover group">
+      <div className="w-11 h-11 md:w-12 md:h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
         {thumbnailUrl ? (
           <img src={thumbnailUrl} alt="" className="w-full h-full object-cover" />
         ) : (
@@ -103,22 +109,22 @@ export default function SearchPage() {
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="font-medium truncate">{title}</p>
-        <p className="text-sm text-spotify-text truncate">{artist}</p>
-        {badge && <span className="text-xs text-spotify-text">{badge}</span>}
+        <p className="text-base font-normal truncate">{title}</p>
+        <p className="text-body truncate">{artist}</p>
+        {badge && <span className="text-caption">{badge}</span>}
       </div>
-      <span className="text-xs text-spotify-text">{formatTime(duration)}</span>
+      <span className="text-caption hidden sm:inline tabular-nums">{formatTime(duration)}</span>
       <button
-        onClick={() => handlePlay({ id, title, artist, url })}
+        onClick={() => handlePlay({ id, title, artist, url, duration, album })}
         disabled={downloadingId === id}
-        className="green-btn py-2 px-4 text-sm flex items-center gap-2 shrink-0"
+        className="green-btn py-2 px-3 md:px-4 text-xs md:text-sm flex items-center gap-1.5 shrink-0"
       >
         {downloadingId === id ? (
           <span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
         ) : (
           <Play className="w-4 h-4 fill-black" />
         )}
-        {downloadingId === id ? t('downloading') : t('play')}
+        <span className="hidden sm:inline">{downloadingId === id ? t('downloading') : t('play')}</span>
       </button>
     </div>
   );
@@ -134,26 +140,44 @@ export default function SearchPage() {
     !!results?.detectedUrl;
 
   return (
-    <div className="p-6 pb-32">
-      <div className="relative mb-4">
-        <SearchIcon className="absolute start-4 top-1/2 -translate-y-1/2 w-5 h-5 text-spotify-text" />
+    <div className="p-4 md:p-8 pb-4">
+      <h1 className="text-heading mb-6 md:mb-8">{t('search')}</h1>
+      <div className="relative mb-3">
+        <SearchIcon className="absolute start-4 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-500" />
         <input
           type="text"
           value={query}
           onChange={(e) => handleQueryChange(e.target.value)}
           placeholder={t('searchPlaceholder')}
-          className="w-full bg-white rounded-full py-3.5 ps-12 pe-4 text-black text-base focus:outline-none focus:ring-2 focus:ring-white"
+          className="search-input"
           autoFocus
           dir="auto"
         />
       </div>
 
-      <p className="text-xs text-spotify-text mb-6">{t('searchHint')}</p>
+      <p className="text-caption mb-6 md:mb-8">{t('searchHint')}</p>
 
       {error && (
         <div className="flex items-center gap-2 bg-red-900/40 border border-red-500/50 rounded-lg p-3 mb-4 text-sm">
           <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
           {error}
+        </div>
+      )}
+
+      {results?.spotifyError && (
+        <div className="flex items-start gap-2 bg-amber-900/30 border border-amber-500/40 rounded-lg p-3 mb-4 text-sm">
+          <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+          <div>
+            <p>{results.spotifyError}</p>
+            <p className="text-xs text-spotify-text mt-1">{t('spotifySetupHint')}</p>
+          </div>
+        </div>
+      )}
+
+      {!results?.spotifyError && results?.spotifyConfigured === false && query.trim() && !loading && (
+        <div className="flex items-start gap-2 bg-spotify-lightgray rounded-lg p-3 mb-4 text-sm text-spotify-text">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <p>{t('spotifyNotConfigured')}</p>
         </div>
       )}
 
@@ -168,14 +192,14 @@ export default function SearchPage() {
           {/* ── LOCAL RESULTS (always shown first) ── */}
           {hasLocal && (
             <section className="mb-10">
-              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <h2 className="text-heading-sm mb-4 flex items-center gap-2">
                 <HardDrive className="w-5 h-5 text-spotify-green" />
                 {t('localLibrary')}
               </h2>
 
               {localTracks.length > 0 && (
                 <div className="mb-6">
-                  <h3 className="text-sm font-semibold text-spotify-text uppercase mb-2">{t('tracks')}</h3>
+                  <h3 className="text-label mb-2">{t('tracks')}</h3>
                   {localTracks.map((track, i) => (
                     <TrackRow key={track.id} track={track} index={i} />
                   ))}
@@ -184,8 +208,8 @@ export default function SearchPage() {
 
               {(results.artists?.length ?? 0) > 0 && (
                 <div className="mb-6">
-                  <h3 className="text-sm font-semibold text-spotify-text uppercase mb-3">{t('artists')}</h3>
-                  <div className="grid grid-cols-3 md:grid-cols-5 gap-4">
+                  <h3 className="text-label mb-3">{t('artists')}</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4">
                     {results.artists.map((artist) => (
                       <Link key={artist.id} to={`/artist/${artist.id}`} className="text-center card-hover p-3 rounded-lg">
                         <div className="w-full aspect-square rounded-full bg-spotify-lightgray mb-2 overflow-hidden">
@@ -195,7 +219,7 @@ export default function SearchPage() {
                             <div className="w-full h-full flex items-center justify-center text-2xl">🎤</div>
                           )}
                         </div>
-                        <p className="font-semibold truncate text-sm">{artist.name}</p>
+                        <p className="text-title truncate text-sm">{artist.name}</p>
                       </Link>
                     ))}
                   </div>
@@ -204,7 +228,7 @@ export default function SearchPage() {
 
               {(results.playlists?.length ?? 0) > 0 && (
                 <div className="mb-6">
-                  <h3 className="text-sm font-semibold text-spotify-text uppercase mb-3">{t('playlists')}</h3>
+                  <h3 className="text-label mb-3">{t('playlists')}</h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                     {results.playlists.map((pl) => (
                       <Link key={pl.id} to={`/playlist/${pl.id}`} className="bg-spotify-lightgray p-3 rounded-lg card-hover">
@@ -215,7 +239,7 @@ export default function SearchPage() {
                             <div className="w-full h-full flex items-center justify-center text-3xl">♪</div>
                           )}
                         </div>
-                        <p className="font-semibold truncate text-sm">{pl.name}</p>
+                        <p className="text-title truncate text-sm">{pl.name}</p>
                         {pl.trackCount !== undefined && (
                           <p className="text-xs text-spotify-text">{t('trackCount', { count: pl.trackCount })}</p>
                         )}
@@ -230,9 +254,9 @@ export default function SearchPage() {
           {/* ── SPOTIFY URL tracks ── */}
           {(results.spotifyUrlTracks?.length ?? 0) > 0 && (
             <section className="mb-8">
-              <h2 className="text-xl font-bold mb-4">{t('spotifyResults')}</h2>
+              <h2 className="text-heading-sm mb-4">{t('spotifyResults')}</h2>
               {results.spotifyUrlTracks.map((item, i) =>
-                renderExternalRow(`sp-url-${i}`, item.name, item.artist, '', item.duration || 0, undefined, 'Spotify')
+                renderExternalRow(`sp-url-${i}`, item.name, item.artist, '', item.duration || 0, undefined, 'Spotify', item.album)
               )}
             </section>
           )}
@@ -240,7 +264,7 @@ export default function SearchPage() {
           {/* ── YouTube URL ── */}
           {results.detectedUrl?.type === 'youtube' && (
             <section className="mb-8">
-              <h2 className="text-xl font-bold mb-4">{t('youtubeResults')}</h2>
+              <h2 className="text-heading-sm mb-4">{t('youtubeResults')}</h2>
               <button
                 onClick={() => handlePlay({ id: 'yt-url', title: query, artist: '', url: results.detectedUrl!.url })}
                 className="green-btn flex items-center gap-2"
@@ -254,9 +278,9 @@ export default function SearchPage() {
           {/* ── SPOTIFY text search ── */}
           {(results.spotify?.length ?? 0) > 0 && (
             <section className="mb-8">
-              <h2 className="text-xl font-bold mb-4">{t('spotifyResults')}</h2>
+              <h2 className="text-heading-sm mb-4">{t('spotifyResults')}</h2>
               {results.spotify.map((item) =>
-                renderExternalRow(item.id, item.name, item.artist, item.thumbnailUrl, item.duration, undefined, item.album)
+                renderExternalRow(item.id, item.name, item.artist, item.thumbnailUrl, item.duration, undefined, item.album, item.album)
               )}
             </section>
           )}
@@ -264,7 +288,7 @@ export default function SearchPage() {
           {/* ── YOUTUBE text search ── */}
           {(results.youtube?.length ?? 0) > 0 && (
             <section className="mb-8">
-              <h2 className="text-xl font-bold mb-4">{t('youtubeResults')}</h2>
+              <h2 className="text-heading-sm mb-4">{t('youtubeResults')}</h2>
               {results.youtube.map((item) =>
                 renderExternalRow(item.id, item.title, item.artist, item.thumbnailUrl, item.duration, item.url)
               )}

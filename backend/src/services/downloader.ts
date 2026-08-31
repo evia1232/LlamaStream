@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { config, qualityBitrates } from '../config';
 import prisma from '../lib/prisma';
 import { runYtDlp, findFileByPrefix, lastLines } from './ytdlp';
+import { buildSearchQueries, rankYouTubeResults } from '../lib/trackMatch';
 
 export interface SearchResult {
   id: string;
@@ -198,7 +199,7 @@ export async function saveTrackRecord(
 export async function resolveAndDownload(
   input: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
-  opts?: { title?: string; artist?: string; url?: string }
+  opts?: { title?: string; artist?: string; url?: string; duration?: number; album?: string }
 ) {
   const trimmed = input.trim();
 
@@ -215,7 +216,7 @@ export async function resolveAndDownload(
     return saveTrackRecord(download, quality, opts?.title, opts?.artist);
   }
 
-  // Search query — find on YouTube
+  // Search query — find best YouTube match (especially for Spotify imports)
   const searchQuery = opts?.artist && opts?.title
     ? `${opts.artist} - ${opts.title}`
     : trimmed;
@@ -225,21 +226,59 @@ export async function resolveAndDownload(
       isDownloaded: true,
       OR: [
         { title: { equals: opts?.title || searchQuery, mode: 'insensitive' } },
-        { AND: [
-          { title: { contains: opts?.title || '', mode: 'insensitive' } },
-          { artist: { name: { contains: opts?.artist || '', mode: 'insensitive' } } },
-        ]},
+        ...(opts?.title && opts?.artist ? [{
+          AND: [
+            { title: { contains: opts.title, mode: 'insensitive' as const } },
+            { artist: { name: { contains: opts.artist.split(/[,;&]/)[0].trim(), mode: 'insensitive' as const } } },
+          ],
+        }] : []),
       ],
     },
     include: { artist: true, album: true, lyrics: true },
   });
   if (existing?.filePath && fs.existsSync(existing.filePath)) return existing;
 
-  const results = await searchYouTube(searchQuery, 5);
-  if (results.length === 0) throw new Error(`No YouTube results for: ${searchQuery}`);
+  const target = {
+    title: opts?.title || searchQuery,
+    artist: opts?.artist || '',
+    duration: opts?.duration,
+    album: opts?.album,
+  };
+
+  let candidates: SearchResult[] = [];
+
+  if (opts?.title && opts?.artist) {
+    const queries = buildSearchQueries(opts.artist, opts.title, opts?.album);
+    const seen = new Set<string>();
+    for (const q of queries) {
+      try {
+        const batch = await searchYouTube(q, 8);
+        for (const r of batch) {
+          if (!seen.has(r.id)) {
+            seen.add(r.id);
+            candidates.push(r);
+          }
+        }
+      } catch (err) {
+        console.error(`YouTube search failed for "${q}":`, err);
+      }
+    }
+    candidates = rankYouTubeResults(candidates, target);
+  }
+
+  if (candidates.length === 0) {
+    const fallback = await searchYouTube(searchQuery, 10);
+    candidates = opts?.title && opts?.artist
+      ? rankYouTubeResults(fallback, target)
+      : fallback;
+  }
+
+  if (candidates.length === 0) {
+    throw new Error(`No YouTube results for: ${searchQuery}`);
+  }
 
   let lastError: Error | null = null;
-  for (const result of results) {
+  for (const result of candidates.slice(0, 8)) {
     try {
       const bySource = await prisma.track.findFirst({
         where: { sourceId: result.id, isDownloaded: true },

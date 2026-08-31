@@ -30,50 +30,50 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-spotify-black flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <Music2 className="w-12 h-12 text-spotify-green" />
-          <h1 className="text-4xl font-bold">{t('appName')}</h1>
+        <div className="flex items-center justify-center gap-3 mb-10">
+          <Music2 className="w-12 h-12 text-spotify-green" strokeWidth={2.5} />
+          <h1 className="text-4xl font-black tracking-tight">{t('appName')}</h1>
         </div>
 
-        <div className="bg-spotify-gray rounded-lg p-8">
-          <h2 className="text-2xl font-bold mb-2">{t('loginTitle')}</h2>
-          <p className="text-spotify-text mb-6">{t('loginSubtitle')}</p>
+        <div className="surface-elevated p-8 md:p-10">
+          <h2 className="text-heading-sm mb-2">{t('loginTitle')}</h2>
+          <p className="text-body mb-8">{t('loginSubtitle')}</p>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-sm font-medium mb-1">{t('email')}</label>
+              <label className="block text-sm font-bold mb-2">{t('email')}</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="w-full bg-spotify-lightgray border border-transparent rounded-md px-4 py-3 text-white focus:outline-none focus:border-white"
+                className="input-spotify"
                 placeholder="admin@llamastream.local"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">{t('password')}</label>
+              <label className="block text-sm font-bold mb-2">{t('password')}</label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="w-full bg-spotify-lightgray border border-transparent rounded-md px-4 py-3 text-white focus:outline-none focus:border-white"
+                className="input-spotify"
               />
             </div>
 
-            {error && <p className="text-red-400 text-sm">{error}</p>}
+            {error && <p className="text-red-400 text-sm font-medium">{error}</p>}
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full green-btn py-4 disabled:opacity-50"
+              className="w-full green-btn py-3.5 text-base disabled:opacity-50 mt-2"
             >
               {loading ? t('loading') : t('login')}
             </button>
           </form>
 
-          <p className="text-spotify-text text-xs text-center mt-6">{t('publicRegDisabled')}</p>
+          <p className="text-caption text-center mt-8">{t('publicRegDisabled')}</p>
         </div>
       </div>
     </div>
