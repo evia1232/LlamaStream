@@ -39,6 +39,8 @@ export default function PlayerBar() {
 
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
   const lastPersistRef = useRef(0);
+  /** For YouTube pipe streams, audio.currentTime is relative to stream start */
+  const streamOffsetRef = useRef(0);
 
   useMediaSession();
 
@@ -46,14 +48,43 @@ export default function PlayerBar() {
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
 
+    const { pendingSeekTime, isPlaying } = usePlayerStore.getState();
     const token = localStorage.getItem('token');
-    audio.src = streamUrl(currentTrack.id, token);
+    const isDownloaded = !!currentTrack.isDownloaded;
+
+    if (isDownloaded) {
+      streamOffsetRef.current = 0;
+      audio.src = streamUrl(currentTrack.id, token);
+    } else {
+      const start = pendingSeekTime > 0 ? pendingSeekTime : 0;
+      streamOffsetRef.current = start;
+      audio.src = streamUrl(currentTrack.id, token, start);
+    }
+
     if (isPlaying) audio.play().catch(() => setIsPlaying(false));
   }, [currentTrack?.id]);
 
   useEffect(() => {
     registerSeek((time) => {
-      if (audioRef.current) audioRef.current.currentTime = time;
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      const { currentTrack: track, isPlaying } = usePlayerStore.getState();
+      if (!track) return;
+
+      if (track.isDownloaded) {
+        streamOffsetRef.current = 0;
+        audio.currentTime = time;
+        return;
+      }
+
+      streamOffsetRef.current = Math.max(0, time);
+      const token = localStorage.getItem('token');
+      audio.src = streamUrl(track.id, token, streamOffsetRef.current);
+      audio.load();
+      if (isPlaying) {
+        audio.play().catch(() => usePlayerStore.getState().setIsPlaying(false));
+      }
     });
     return () => registerSeek(null);
   }, [registerSeek]);
@@ -90,7 +121,7 @@ export default function PlayerBar() {
 
   const handleTimeUpdate = () => {
     if (!audioRef.current) return;
-    const time = audioRef.current.currentTime;
+    const time = streamOffsetRef.current + audioRef.current.currentTime;
     setCurrentTime(time);
     const now = Date.now();
     if (now - lastPersistRef.current > 4000) {
@@ -100,12 +131,21 @@ export default function PlayerBar() {
   };
 
   const handleLoadedMetadata = () => {
-    if (!audioRef.current) return;
-    setDuration(audioRef.current.duration);
-    if (pendingSeekTime > 0) {
+    if (!audioRef.current || !currentTrack) return;
+
+    let d = audioRef.current.duration;
+    if (!Number.isFinite(d)) {
+      d = currentTrack.duration || 0;
+    }
+    setDuration(d);
+
+    if (currentTrack.isDownloaded && pendingSeekTime > 0) {
       const t = Math.min(pendingSeekTime, audioRef.current.duration || pendingSeekTime);
       audioRef.current.currentTime = t;
       setCurrentTime(t);
+      clearPendingSeek();
+    } else if (!currentTrack.isDownloaded) {
+      setCurrentTime(streamOffsetRef.current);
       clearPendingSeek();
     }
   };
@@ -116,7 +156,16 @@ export default function PlayerBar() {
 
   const handleEnded = () => playNext();
 
-  const progressPct = (currentTime / (duration || 1)) * 100;
+  if (!currentTrack) {
+    return (
+      <footer className="player-bar player-bar-empty shrink-0" dir="ltr">
+        <p className="text-spotify-text text-sm hidden md:block">{t('appName')}</p>
+      </footer>
+    );
+  }
+
+  const trackDuration = duration || currentTrack.duration || 0;
+  const progressPct = (currentTime / (trackDuration || 1)) * 100;
   const volumePct = volume * 100;
 
   const transportControls = (
@@ -157,15 +206,7 @@ export default function PlayerBar() {
     </>
   );
 
-  if (!currentTrack) {
-    return (
-      <footer className="player-bar player-bar-empty shrink-0" dir="ltr">
-        <p className="text-spotify-text text-sm hidden md:block">{t('appName')}</p>
-      </footer>
-    );
-  }
-
-  const artistName = getArtistName(currentTrack?.artist);
+  const artistName = getArtistName(currentTrack.artist);
   const imageUrl = getTrackImageUrl(currentTrack);
 
   return (
@@ -275,13 +316,13 @@ export default function PlayerBar() {
             <input
               type="range"
               min={0}
-              max={duration || 0}
+              max={trackDuration}
               value={currentTime}
               onChange={handleSeek}
               className="player-progress flex-1 min-w-0"
               style={{ background: progressGradient(progressPct) }}
             />
-            <span className="text-caption w-10 tabular-nums shrink-0">{formatTime(duration)}</span>
+            <span className="text-caption w-10 tabular-nums shrink-0">{formatTime(trackDuration)}</span>
           </div>
         </div>
 

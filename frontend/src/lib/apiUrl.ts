@@ -49,8 +49,9 @@ function normalizeApiBase(url: string): string {
   return base;
 }
 
-export function streamUrl(trackId: string, token: string | null): string {
+export function streamUrl(trackId: string, token: string | null, startSec = 0): string {
   const origin = getApiOrigin();
-  const path = `/api/tracks/${trackId}/stream?token=${token || ''}`;
+  let path = `/api/tracks/${trackId}/stream?token=${encodeURIComponent(token || '')}`;
+  if (startSec > 0) path += `&t=${Math.floor(startSec)}`;
   return origin ? `${origin}${path}` : path;
 }

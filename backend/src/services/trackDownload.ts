@@ -108,15 +108,21 @@ export function pipeYouTubeAudio(
   sourceUrl: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH',
   req: { on: (event: string, cb: () => void) => void },
-  res: Response
+  res: Response,
+  startSec = 0
 ): ChildProcess {
   const bitrate = qualityBitrates[quality] || '192';
+  const start = Math.max(0, Math.floor(startSec));
+
+  const ppArgs = start > 0
+    ? `ffmpeg:-ss ${start} -b:a ${bitrate}k`
+    : `ffmpeg:-b:a ${bitrate}k`;
 
   const proc = spawn('yt-dlp', [
     ...YTDLP_BASE,
     '-f', 'bestaudio/best',
     '-x', '--audio-format', 'mp3',
-    '--postprocessor-args', `ffmpeg:-b:a ${bitrate}k`,
+    '--postprocessor-args', ppArgs,
     '-o', '-',
     sourceUrl,
   ], { stdio: ['ignore', 'pipe', 'pipe'] });

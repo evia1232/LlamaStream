@@ -147,15 +147,15 @@ export default function NowPlayingSheet() {
           <input
             type="range"
             min={0}
-            max={duration || 0}
+            max={duration || currentTrack?.duration || 0}
             value={currentTime}
             onChange={(e) => seekTo(parseFloat(e.target.value))}
             className="player-progress w-full h-1 mb-2"
-            style={{ background: progressGradient(progressPct) }}
+            style={{ background: progressGradient((currentTime / ((duration || currentTrack?.duration || 1))) * 100) }}
           />
           <div className="flex justify-between text-caption tabular-nums">
             <span>{formatTime(currentTime)}</span>
-            <span>{formatTime(duration)}</span>
+            <span>{formatTime(duration || currentTrack?.duration || 0)}</span>
           </div>
         </div>
 

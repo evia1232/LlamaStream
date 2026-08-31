@@ -337,11 +337,12 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
   }
 
   if (track.sourceUrl) {
+    const startSec = Math.max(0, parseInt(String(req.query.t || '0'), 10) || 0);
     ensureBackgroundDownload(track.id, track.sourceUrl, track.quality, {
       title: track.title,
       artist: (await prisma.artist.findUnique({ where: { id: track.artistId } }))?.name,
     });
-    pipeYouTubeAudio(track.sourceUrl, track.quality, req, res);
+    pipeYouTubeAudio(track.sourceUrl, track.quality, req, res, startSec);
     return;
   }
 
