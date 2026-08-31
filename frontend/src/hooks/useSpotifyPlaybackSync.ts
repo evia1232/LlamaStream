@@ -19,10 +19,7 @@ export function useSpotifyPlaybackSync() {
 
     const onState = (state: unknown) => {
       const s = state as SpotifyPlaybackState | null;
-      if (!s) {
-        setIsPlaying(false);
-        return;
-      }
+      if (!s) return;
       setCurrentTime(s.position / 1000);
       setDuration(s.duration / 1000);
       setIsPlaying(!s.paused);

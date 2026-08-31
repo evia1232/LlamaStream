@@ -4,7 +4,7 @@ import { Play, Heart, ListPlus, Download, ListMusic, Trash2, RefreshCw } from 'l
 import clsx from 'clsx';
 import { useTrackMenuStore } from '../../store/trackMenuStore';
 import { usePlayerStore } from '../../store';
-import { getArtistName, normalizeTrack } from '../../lib/trackUtils';
+import { getArtistName, normalizeTrack, isTrackLiked } from '../../lib/trackUtils';
 import api from '../../api/client';
 import TrackContextMenu, { TrackMenuAction } from './TrackContextMenu';
 import AddToPlaylistModal from './AddToPlaylistModal';
@@ -21,7 +21,7 @@ export default function TrackMenuHost() {
   } = useTrackMenuStore();
 
   const {
-    currentTrack, likedTrackIds, playTrack, toggleLike, addToQueue, setCurrentTrack,
+    currentTrack, likedTrackIds, likedPendingTracks, playTrack, toggleLike, addToQueue, setCurrentTrack,
   } = usePlayerStore();
 
   const [downloading, setDownloading] = useState(false);
@@ -30,7 +30,7 @@ export default function TrackMenuHost() {
   if (!track) return null;
 
   const artistName = getArtistName(track.artist);
-  const isLiked = likedTrackIds.has(track.id);
+  const isLiked = isTrackLiked(track, likedTrackIds, likedPendingTracks);
   const hasLibraryId = isLibraryTrack(track.id);
   const canStream = track.isDownloaded;
   const canRemoveFromLibrary = canStream && hasLibraryId;

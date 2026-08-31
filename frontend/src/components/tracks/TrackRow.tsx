@@ -3,7 +3,7 @@ import { Play, Heart, ListPlus, MoreHorizontal, Download } from 'lucide-react';
 import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
 import { useTrackMenuStore } from '../../store/trackMenuStore';
-import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
+import { getArtistName, getTrackImageUrl, isTrackLiked } from '../../lib/trackUtils';
 import { useTranslation } from 'react-i18next';
 import api from '../../api/client';
 import { useRef, useState } from 'react';
@@ -77,7 +77,7 @@ export default function TrackRow({
   onDeleted,
 }: TrackRowProps) {
   const { t } = useTranslation();
-  const { currentTrack, isPlaying, playTrack, playTracks, toggleLike, likedTrackIds, addToQueue } = usePlayerStore();
+  const { currentTrack, isPlaying, playTrack, playTracks, toggleLike, likedTrackIds, likedPendingTracks, addToQueue } = usePlayerStore();
   const { openMenuFromElement, openPlaylistForTrack, menuOpen: globalMenuOpen, track: menuTrack } = useTrackMenuStore();
   const menuOpen = globalMenuOpen && menuTrack?.id === track.id;
   const [downloading, setDownloading] = useState(false);
@@ -86,7 +86,7 @@ export default function TrackRow({
   const menuOptions = { playlistId, onDeleted, onRefresh: onDeleted ?? onRemovedFromPlaylist };
 
   const isCurrent = currentTrack?.id === track.id;
-  const isLiked = likedTrackIds.has(track.id);
+  const isLiked = isTrackLiked(track, likedTrackIds, likedPendingTracks);
   const artistName = getArtistName(track.artist);
   const imageUrl = getTrackImageUrl(track);
 

@@ -6,7 +6,7 @@ import {
 import clsx from 'clsx';
 import { useRef, useState, useCallback } from 'react';
 import { usePlayerStore } from '../../store';
-import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
+import { getArtistName, getTrackImageUrl, isTrackLiked } from '../../lib/trackUtils';
 import { ArtistLinks } from '../artists/ArtistLink';
 import { progressGradient } from '../../lib/direction';
 import { DevicePickerButton } from './DevicePicker';
@@ -30,7 +30,7 @@ export default function NowPlayingSheet() {
   const {
     currentTrack, showNowPlaying, setShowNowPlaying,
     isPlaying, currentTime, duration,
-    shuffle, repeat, likedTrackIds,
+    shuffle, repeat, likedTrackIds, likedPendingTracks,
     setIsPlaying, toggleShuffle, cycleRepeat,
     playNext, playPrevious, toggleLike, setShowQueue, setShowLyrics, seekTo,
     addToQueue, isPreparingPlayback, isBuffering, isRemoteActive, activeDeviceName,
@@ -54,7 +54,7 @@ export default function NowPlayingSheet() {
 
   const artistName = getArtistName(currentTrack.artist);
   const imageUrl = getTrackImageUrl(currentTrack);
-  const isLiked = likedTrackIds.has(currentTrack.id);
+  const isLiked = isTrackLiked(currentTrack, likedTrackIds, likedPendingTracks);
   const showPreparing = isPreparingPlayback || isBuffering;
   const preparingHint = isBuffering && !isPreparingPlayback
     ? t('switchingTrack')

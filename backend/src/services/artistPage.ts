@@ -13,7 +13,7 @@ import {
   SpotifyAlbumResult,
 } from './spotifyApi';
 
-const SPOTIFY_TIMEOUT_MS = 15000;
+const SPOTIFY_TIMEOUT_MS = 20000;
 const MAX_SPOTIFY_ALBUMS = 24;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -33,7 +33,7 @@ function formatTrack(track: {
   thumbnailUrl: string | null;
   quality: string;
   isDownloaded: boolean;
-  artist: { id: string; name: string; imageUrl: string | null };
+  artist: { id: string; name: string; imageUrl: string | null; spotifyArtistId?: string | null };
   album?: { id: string; title: string; coverUrl: string | null } | null;
 }) {
   return {
@@ -49,6 +49,7 @@ function formatTrack(track: {
     artist: track.artist,
     album: track.album || null,
     streamUrl: trackStreamUrl(track),
+    spotifyArtistId: track.artist.spotifyArtistId ?? undefined,
   };
 }
 
@@ -76,6 +77,7 @@ export interface ArtistPageLocal {
     name: string;
     imageUrl: string | null;
     bio: string | null;
+    spotifyArtistId: string | null;
   };
   localTracks: ReturnType<typeof formatTrack>[];
   localAlbums: ReturnType<typeof formatAlbum>[];
@@ -87,12 +89,45 @@ export interface ArtistSpotifyData {
   artist: SpotifyArtistResult | null;
   topTracks: SpotifySearchResult[];
   albums: SpotifyAlbumResult[];
+  error?: string;
+}
+
+export interface ArtistPageFull extends ArtistPageLocal {
+  spotify: ArtistSpotifyData;
+}
+
+async function persistArtistSpotifyMeta(
+  artistName: string,
+  spotify: SpotifyArtistResult,
+  artistId?: string | null,
+) {
+  const data = {
+    spotifyArtistId: spotify.id,
+    ...(spotify.imageUrl ? { imageUrl: spotify.imageUrl } : {}),
+  };
+
+  try {
+    if (artistId) {
+      await prisma.artist.update({ where: { id: artistId }, data });
+      return;
+    }
+    const existing = await prisma.artist.findFirst({
+      where: { name: { equals: artistName, mode: 'insensitive' } },
+    });
+    if (existing) {
+      await prisma.artist.update({ where: { id: existing.id }, data });
+    } else {
+      await prisma.artist.create({ data: { name: spotify.name, ...data } });
+    }
+  } catch (err) {
+    console.error('[Artist] Failed to persist Spotify meta:', err);
+  }
 }
 
 async function findLocalTracks(artistName: string, artistId?: string | null) {
   const candidates = await prisma.track.findMany({
     where: {
-      storageTier: 'LIBRARY',
+      isDownloaded: true,
       ...(artistId
         ? {
             OR: [
@@ -178,6 +213,7 @@ export async function buildArtistPageLocal(
       name: resolvedName,
       imageUrl: dbArtist?.imageUrl ?? null,
       bio: dbArtist?.bio ?? null,
+      spotifyArtistId: dbArtist?.spotifyArtistId ?? null,
     },
     localTracks: localTrackRows.map(formatTrack),
     localAlbums: localAlbumRows.map(formatAlbum),
@@ -188,6 +224,7 @@ export async function buildArtistPageLocal(
 export async function fetchArtistSpotifyData(
   artistName: string,
   hints?: { spotifyArtistId?: string | null; spotifyTrackId?: string | null },
+  persistForArtistId?: string | null,
 ): Promise<ArtistSpotifyData> {
   const empty: ArtistSpotifyData = {
     configured: isSpotifyConfigured(),
@@ -196,17 +233,24 @@ export async function fetchArtistSpotifyData(
     albums: [],
   };
 
-  if (!isSpotifyConfigured()) return empty;
+  if (!isSpotifyConfigured()) {
+    return { ...empty, error: 'Spotify API not configured' };
+  }
 
   try {
     let spotifyArtist: SpotifyArtistResult | null = null;
+    let resolveError: string | undefined;
 
-    if (hints?.spotifyArtistId) {
+    const tryById = async (id: string) => {
       spotifyArtist = await withTimeout(
-        fetchSpotifyArtistById(hints.spotifyArtistId),
+        fetchSpotifyArtistById(id),
         SPOTIFY_TIMEOUT_MS,
         null,
       );
+    };
+
+    if (hints?.spotifyArtistId) {
+      await tryById(hints.spotifyArtistId);
     }
 
     if (!spotifyArtist && hints?.spotifyTrackId) {
@@ -215,13 +259,7 @@ export async function fetchArtistSpotifyData(
         SPOTIFY_TIMEOUT_MS,
         null,
       );
-      if (artistId) {
-        spotifyArtist = await withTimeout(
-          fetchSpotifyArtistById(artistId),
-          SPOTIFY_TIMEOUT_MS,
-          null,
-        );
-      }
+      if (artistId) await tryById(artistId);
     }
 
     if (!spotifyArtist) {
@@ -230,14 +268,21 @@ export async function fetchArtistSpotifyData(
         SPOTIFY_TIMEOUT_MS,
         null,
       );
+      if (!spotifyArtist) {
+        resolveError = `Could not find artist "${artistName}" on Spotify`;
+      }
     }
 
-    if (!spotifyArtist) return { ...empty, configured: true };
+    if (!spotifyArtist) {
+      return { ...empty, configured: true, error: resolveError };
+    }
 
     const [topTracks, albums] = await Promise.all([
       withTimeout(fetchSpotifyArtistTopTracks(spotifyArtist.id), SPOTIFY_TIMEOUT_MS, []),
       withTimeout(fetchSpotifyArtistAlbums(spotifyArtist.id), SPOTIFY_TIMEOUT_MS, []),
     ]);
+
+    void persistArtistSpotifyMeta(artistName, spotifyArtist, persistForArtistId);
 
     return {
       configured: true,
@@ -245,23 +290,52 @@ export async function fetchArtistSpotifyData(
       topTracks,
       albums: albums.slice(0, MAX_SPOTIFY_ALBUMS),
     };
-  } catch {
-    return empty;
+  } catch (err) {
+    console.error('[Artist] Spotify fetch failed:', err);
+    return { ...empty, configured: true, error: (err as Error).message };
   }
 }
 
-/** @deprecated Use buildArtistPageLocal + fetchArtistSpotifyData */
+/** Full artist page — local library + Spotify catalog in one response */
+export async function buildArtistPage(
+  userId: string,
+  artistName: string,
+  artistId?: string | null,
+  hints?: { spotifyArtistId?: string | null; spotifyTrackId?: string | null },
+): Promise<ArtistPageFull> {
+  const local = await buildArtistPageLocal(userId, artistName, artistId);
+
+  const mergedHints = {
+    spotifyArtistId: hints?.spotifyArtistId || local.artist.spotifyArtistId,
+    spotifyTrackId: hints?.spotifyTrackId,
+  };
+
+  const spotify = await fetchArtistSpotifyData(
+    local.artist.name,
+    mergedHints,
+    local.artist.id,
+  );
+
+  const imageUrl = local.artist.imageUrl || spotify.artist?.imageUrl || null;
+  const spotifyArtistId = spotify.artist?.id || local.artist.spotifyArtistId;
+
+  return {
+    ...local,
+    artist: {
+      ...local.artist,
+      name: spotify.artist?.name || local.artist.name,
+      imageUrl,
+      spotifyArtistId,
+    },
+    spotify,
+  };
+}
+
+/** @deprecated Use buildArtistPage */
 export async function buildArtistPageData(
   userId: string,
   artistName: string,
   artistId?: string | null,
 ) {
-  const local = await buildArtistPageLocal(userId, artistName, artistId);
-  const spotify = await fetchArtistSpotifyData(local.artist.name);
-  const imageUrl = local.artist.imageUrl || spotify.artist?.imageUrl || null;
-  return {
-    ...local,
-    artist: { ...local.artist, imageUrl },
-    spotify,
-  };
+  return buildArtistPage(userId, artistName, artistId);
 }

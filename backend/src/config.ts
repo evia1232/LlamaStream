@@ -1,15 +1,23 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+const storageRoot = (process.env.STORAGE_PATH || './storage').replace(/\/$/, '');
+
+function resolveStoragePath(subdir: string, override?: string): string {
+  const custom = override?.trim();
+  if (custom) return custom;
+  return `${storageRoot}/${subdir}`;
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   jwtSecret: process.env.JWT_SECRET || 'dev-secret-change-me',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   allowPublicRegistration: process.env.ALLOW_PUBLIC_REGISTRATION === 'true',
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3000',
-  musicStoragePath: process.env.MUSIC_STORAGE_PATH || './storage/music',
-  cachePath: process.env.CACHE_PATH || './storage/cache',
-  avatarPath: process.env.AVATAR_PATH || './storage/avatars',
+  musicStoragePath: resolveStoragePath('music', process.env.MUSIC_STORAGE_PATH),
+  cachePath: resolveStoragePath('cache', process.env.CACHE_PATH),
+  avatarPath: resolveStoragePath('avatars', process.env.AVATAR_PATH),
   defaultAudioQuality: (process.env.DEFAULT_AUDIO_QUALITY || 'high').toUpperCase() as 'LOW' | 'NORMAL' | 'HIGH',
   adminEmail: process.env.ADMIN_EMAIL || 'admin@llamastream.local',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin123456',

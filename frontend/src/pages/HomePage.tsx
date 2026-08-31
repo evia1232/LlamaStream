@@ -14,7 +14,7 @@ interface HomeData {
   likedCount: number;
   yourPlaylists: { id: string; name: string; coverUrl?: string; coverImages?: string[]; trackCount: number }[];
   madeForYou: { id: string; name: string; coverUrl?: string; coverImages?: string[]; trackCount: number }[];
-  topArtists: { id: string; name: string; imageUrl?: string }[];
+  topArtists: { id: string; name: string; imageUrl?: string; spotifyArtistId?: string | null }[];
   history: (Track & { playedAt?: string })[];
 }
 
@@ -118,7 +118,13 @@ export default function HomePage() {
 
       <CardGrid
         title={t('topArtists')}
-        items={data.topArtists.map((a) => ({ id: a.id, name: a.name, imageUrl: a.imageUrl, type: 'artist' as const }))}
+        items={data.topArtists.map((a) => ({
+          id: a.id,
+          name: a.name,
+          imageUrl: a.imageUrl,
+          spotifyArtistId: a.spotifyArtistId ?? undefined,
+          type: 'artist' as const,
+        }))}
         linkPrefix="/artist"
       />
 

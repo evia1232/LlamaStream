@@ -40,9 +40,12 @@ interface PlayerState {
   showNowPlaying: boolean;
   lyrics: Lyrics | null;
   likedTrackIds: Set<string>;
+  likedPendingTracks: Track[];
+  likedListVersion: number;
   pendingSeekTime: number;
   playbackRestored: boolean;
   _seekFn: ((time: number) => void) | null;
+  _pauseFn: (() => void) | null;
   _stopFn: (() => void) | null;
   _playGeneration: number;
   localDeviceId: string;
@@ -88,6 +91,7 @@ interface PlayerState {
   fetchLyrics: (trackId: string) => Promise<void>;
   clearPendingSeek: () => void;
   registerSeek: (fn: ((time: number) => void) | null) => void;
+  registerPause: (fn: (() => void) | null) => void;
   registerStop: (fn: (() => void) | null) => void;
   stopPlaybackImmediate: () => void;
   seekTo: (time: number) => void;
@@ -136,9 +140,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   showNowPlaying: false,
   lyrics: null,
   likedTrackIds: loadLikedIds(),
+  likedPendingTracks: [],
+  likedListVersion: 0,
   pendingSeekTime: 0,
   playbackRestored: false,
   _seekFn: null,
+  _pauseFn: null,
   _stopFn: null,
   _playGeneration: 0,
   localDeviceId: getDeviceId(),
@@ -581,9 +588,28 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const track = trackHint ?? (get().currentTrack?.id === trackId ? get().currentTrack : null);
     const wantLiked = !get().likedTrackIds.has(trackId);
 
-    if (wantLiked) get().addToLiked(trackId);
-    else get().removeFromLiked(trackId);
+    if (wantLiked) {
+      get().addToLiked(trackId);
+      if (track) {
+        set((s) => ({
+          likedPendingTracks: [
+            normalizeTrack(track),
+            ...s.likedPendingTracks.filter((t) => t.id !== track.id),
+          ],
+          likedListVersion: s.likedListVersion + 1,
+        }));
+      } else {
+        set((s) => ({ likedListVersion: s.likedListVersion + 1 }));
+      }
+    } else {
+      get().removeFromLiked(trackId);
+      set((s) => ({
+        likedPendingTracks: s.likedPendingTracks.filter((t) => t.id !== trackId),
+        likedListVersion: s.likedListVersion + 1,
+      }));
+    }
 
+    let resolvedId = trackId;
     const sync = async (attempt = 0): Promise<void> => {
       try {
         let id = trackId;
@@ -591,23 +617,39 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           if (!track) throw new Error('Track metadata required');
           const ready = await registerTrackInLibrary(track);
           id = ready.id;
+          resolvedId = id;
           if (id !== trackId) {
             get().removeFromLiked(trackId);
             if (wantLiked) get().addToLiked(id);
-            saveLikedIds(get().likedTrackIds);
+            const readyNorm = normalizeTrack(ready);
+            set((s) => ({
+              likedPendingTracks: wantLiked
+                ? [readyNorm, ...s.likedPendingTracks.filter((t) => t.id !== trackId && t.id !== id)]
+                : s.likedPendingTracks.filter((t) => t.id !== trackId && t.id !== id),
+              currentTrack: s.currentTrack?.id === trackId ? readyNorm : s.currentTrack,
+              likedListVersion: s.likedListVersion + 1,
+            }));
           }
         } else if (track && !track.isDownloaded) {
           prefetchTrack(track);
         }
         await api.put(`/tracks/${id}/like`, { liked: wantLiked });
+        set((s) => ({ likedListVersion: s.likedListVersion + 1 }));
       } catch {
         if (attempt < 2) {
           await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
           return sync(attempt + 1);
         }
-        if (wantLiked) get().removeFromLiked(trackId);
-        else get().addToLiked(trackId);
-        saveLikedIds(get().likedTrackIds);
+        if (wantLiked) get().removeFromLiked(resolvedId);
+        else get().addToLiked(resolvedId);
+        set((s) => ({
+          likedPendingTracks: wantLiked
+            ? s.likedPendingTracks.filter((t) => t.id !== resolvedId)
+            : track
+              ? [normalizeTrack(track), ...s.likedPendingTracks.filter((t) => t.id !== resolvedId)]
+              : s.likedPendingTracks,
+          likedListVersion: s.likedListVersion + 1,
+        }));
       }
     };
 
@@ -626,6 +668,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   clearPendingSeek: () => set({ pendingSeekTime: 0 }),
 
   registerSeek: (fn) => set({ _seekFn: fn }),
+
+  registerPause: (fn) => set({ _pauseFn: fn }),
 
   registerStop: (fn) => set({ _stopFn: fn }),
 
@@ -749,7 +793,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       case 'pause':
         set({ isPlaying: false });
         if (get().playbackEngine === 'spotify') void useSpotifyPlayerStore.getState().pause();
-        else get()._stopFn?.();
+        else get()._pauseFn?.();
         break;
       case 'play':
         set({ isPlaying: true });

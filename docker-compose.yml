@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-llamastream_secret}
       POSTGRES_DB: ${POSTGRES_DB:-llamastream}
     volumes:
-      - ./storage/postgres/data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_PATH:-${STORAGE_PATH:-./storage}/postgres/data}:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llamastream}"]
       interval: 5s
@@ -50,9 +50,9 @@ services:
       SPOTIFY_REDIRECT_URI: ${SPOTIFY_REDIRECT_URI:-}
       FRONTEND_URL: ${FRONTEND_URL:-}
     volumes:
-      - ./storage/music:/app/storage/music
-      - ./storage/cache:/app/storage/cache
-      - ./storage/avatars:/app/storage/avatars
+      - ${MUSIC_DATA_PATH:-${STORAGE_PATH:-./storage}/music}:/app/storage/music
+      - ${CACHE_DATA_PATH:-${STORAGE_PATH:-./storage}/cache}:/app/storage/cache
+      - ${AVATARS_DATA_PATH:-${STORAGE_PATH:-./storage}/avatars}:/app/storage/avatars
     ports:
       - "${BACKEND_PORT:-3001}:3001"
     networks:

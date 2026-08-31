@@ -8,7 +8,7 @@ import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
 import { streamUrl } from '../../lib/apiUrl';
 import { getAppName } from '../../lib/appName';
-import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
+import { getArtistName, getTrackImageUrl, isTrackLiked } from '../../lib/trackUtils';
 import { ArtistLinks } from '../artists/ArtistLink';
 import { progressGradient } from '../../lib/direction';
 import PlaybackMeta from './PlaybackMeta';
@@ -40,12 +40,13 @@ export default function PlayerBar() {
     setIsPlaying, setCurrentTime, setDuration, setVolume,
     toggleShuffle, cycleRepeat, playNext, playPrevious,
     toggleLike, setShowQueue, setShowLyrics, showLyrics,
-    clearPendingSeek, persistPlayback, registerSeek, registerStop, seekTo, setShowNowPlaying,
+    likedPendingTracks,
+    clearPendingSeek, persistPlayback, registerSeek, registerPause, registerStop, seekTo, setShowNowPlaying,
     autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback, isBuffering, playbackEngine,
     setIsBuffering, isRemoteActive, activeDeviceName, sendRemoteCommand, prefetchUpcoming, resolveNextTrack,
   } = usePlayerStore();
 
-  const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
+  const isLiked = currentTrack ? isTrackLiked(currentTrack, likedTrackIds, likedPendingTracks) : false;
   const lastPersistRef = useRef(0);
   const loadTokenRef = useRef(0);
   const isSpotifyMode = playbackEngine === 'spotify';
@@ -113,6 +114,15 @@ export default function PlayerBar() {
   }, [registerSeek, isSpotifyMode]);
 
   useEffect(() => {
+    registerPause(() => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      audio.pause();
+    });
+    return () => registerPause(null);
+  }, [registerPause]);
+
+  useEffect(() => {
     registerStop(() => {
       const audio = audioRef.current;
       if (!audio) return;
@@ -130,20 +140,29 @@ export default function PlayerBar() {
     return () => window.removeEventListener('beforeunload', onUnload);
   }, [persistPlayback]);
 
-  // Play/pause only after audio is buffered
+  // Play/pause — keep audio src intact on pause so resume continues from same position
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || isPreparingPlayback || isSpotifyMode || !currentTrack?.isDownloaded || isRemoteActive) return;
-    if (!audio.src) return;
 
     if (isPlaying) {
-      if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+      const startPlayback = () => {
         audio.play().catch(() => setIsPlaying(false));
+      };
+
+      if (!audio.src) {
+        const token = localStorage.getItem('token');
+        audio.src = streamUrl(currentTrack.id, token);
+        audio.load();
+        audio.addEventListener('canplay', startPlayback, { once: true });
+        return;
       }
+
+      if (audio.paused) startPlayback();
     } else {
       audio.pause();
     }
-  }, [isPlaying, isPreparingPlayback, isSpotifyMode, isRemoteActive, currentTrack?.isDownloaded, setIsPlaying]);
+  }, [isPlaying, isPreparingPlayback, isSpotifyMode, isRemoteActive, currentTrack?.id, currentTrack?.isDownloaded, setIsPlaying]);
 
   useEffect(() => {
     if (!isSpotifyMode && audioRef.current) {

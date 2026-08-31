@@ -15,6 +15,7 @@ interface CardGridProps {
     imageUrl?: string | null;
     trackCount?: number;
     artist?: string;
+    spotifyArtistId?: string | null;
     type?: 'playlist' | 'artist' | 'track';
   }[];
   onPlay?: (id: string) => void;
@@ -32,7 +33,12 @@ export default function CardGrid({ title, items, onPlay, linkPrefix = '/playlist
           const image = item.type === 'playlist' ? null : (item.coverUrl || item.thumbnailUrl || item.imageUrl);
           const label = item.name || item.title || '';
           const href = item.type === 'artist'
-            ? `/artist/by-name/${encodeURIComponent(label)}`
+            ? (() => {
+                const base = `/artist/by-name/${encodeURIComponent(label)}`;
+                if (item.spotifyArtistId) return `${base}?spotifyArtistId=${encodeURIComponent(item.spotifyArtistId)}`;
+                if (item.id && !item.id.startsWith('spotify-artist-')) return `/artist/${item.id}`;
+                return base;
+              })()
             : `${linkPrefix}/${item.id}`;
 
           return (

@@ -406,18 +406,23 @@ export interface SpotifyAlbumResult {
   albumType: string;
 }
 
-async function spotifyGet<T>(path: string): Promise<T | null> {
-  if (!isSpotifyConfigured()) return null;
-  const { token } = await fetchSpotifyToken();
+async function spotifyGet<T>(path: string, tokenOverride?: string): Promise<T | null> {
+  if (!isSpotifyConfigured() && !tokenOverride) return null;
+  const token = tokenOverride ?? (await fetchSpotifyToken()).token;
   if (!token) return null;
 
   try {
     const res = await fetch(`https://api.spotify.com/v1${path}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error('[Spotify] GET failed:', path, res.status, body.slice(0, 200));
+      return null;
+    }
     return await res.json() as T;
-  } catch {
+  } catch (err) {
+    console.error('[Spotify] GET error:', path, err);
     return null;
   }
 }
@@ -590,16 +595,31 @@ export async function resolveSpotifyArtistIdFromTrack(trackId: string): Promise<
 }
 
 export async function fetchSpotifyArtistTopTracks(artistId: string): Promise<SpotifySearchResult[]> {
-  const market = normalizeMarket(config.spotifyMarket) || 'US';
-  const data = await spotifyGet<{ tracks: SpotifyApiTrack[] }>(
-    `/artists/${artistId}/top-tracks?market=${market}`,
-  );
-  return (data?.tracks || []).map(mapSpotifyApiTrack);
+  const markets = [
+    normalizeMarket(config.spotifyMarket),
+    'US',
+  ].filter((m, i, arr) => m && arr.indexOf(m) === i) as string[];
+
+  for (const market of markets) {
+    const data = await spotifyGet<{ tracks: SpotifyApiTrack[] }>(
+      `/artists/${artistId}/top-tracks?market=${market}`,
+    );
+    const tracks = (data?.tracks || []).map(mapSpotifyApiTrack);
+    if (tracks.length > 0) return tracks;
+  }
+  return [];
 }
 
 export async function fetchSpotifyArtistAlbums(artistId: string): Promise<SpotifyAlbumResult[]> {
   const seen = new Set<string>();
   const albums: SpotifyAlbumResult[] = [];
+  const market = normalizeMarket(config.spotifyMarket);
+
+  const params = new URLSearchParams({
+    include_groups: 'album,single,compilation',
+    limit: '50',
+  });
+  if (market) params.set('market', market);
 
   const data = await spotifyGet<{
     items: Array<{
@@ -611,9 +631,28 @@ export async function fetchSpotifyArtistAlbums(artistId: string): Promise<Spotif
       external_urls: { spotify: string };
       images: { url: string }[];
     }>;
-  }>(`/artists/${artistId}/albums?include_groups=album,single&limit=50`);
+  }>(`/artists/${artistId}/albums?${params}`);
 
-  if (!data?.items?.length) return albums;
+  if (!data?.items?.length) {
+    // Retry without market filter
+    const fallback = await spotifyGet<typeof data>(`/artists/${artistId}/albums?include_groups=album,single,compilation&limit=50`);
+    if (fallback?.items?.length) {
+      for (const a of fallback.items) {
+        if (seen.has(a.id)) continue;
+        seen.add(a.id);
+        albums.push({
+          id: a.id,
+          name: a.name,
+          imageUrl: a.images[0]?.url || '',
+          releaseYear: a.release_date ? parseInt(a.release_date.slice(0, 4), 10) || null : null,
+          totalTracks: a.total_tracks,
+          spotifyUrl: a.external_urls.spotify,
+          albumType: a.album_type,
+        });
+      }
+    }
+    return albums;
+  }
 
   for (const a of data.items) {
     if (seen.has(a.id)) continue;

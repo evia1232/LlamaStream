@@ -241,13 +241,24 @@ export async function saveTrackRecord(
   quality: 'LOW' | 'NORMAL' | 'HIGH',
   preferredTitle?: string,
   preferredArtist?: string,
-  preferredAlbum?: string
+  preferredAlbum?: string,
+  spotifyMeta?: { spotifyArtistId?: string; imageUrl?: string },
 ) {
   const artistName = preferredArtist || download.artist;
   const trackTitle = preferredTitle || download.title;
 
   let artist = await prisma.artist.findUnique({ where: { name: artistName } });
   if (!artist) artist = await prisma.artist.create({ data: { name: artistName } });
+
+  if (spotifyMeta?.spotifyArtistId) {
+    artist = await prisma.artist.update({
+      where: { id: artist.id },
+      data: {
+        spotifyArtistId: spotifyMeta.spotifyArtistId,
+        ...(spotifyMeta.imageUrl ? { imageUrl: spotifyMeta.imageUrl } : {}),
+      },
+    });
+  }
 
   const existing = download.sourceId
     ? await prisma.track.findFirst({ where: { sourceId: download.sourceId } })
@@ -593,6 +604,14 @@ export async function resolveAndDownload(
 ) {
   const trimmed = input.trim();
 
+  let spotifyMeta: { spotifyArtistId?: string; imageUrl?: string } | undefined;
+  if (opts?.spotifyUrl) {
+    const meta = await fetchSpotifyTrackByUrl(opts.spotifyUrl);
+    if (meta?.primaryArtistId) {
+      spotifyMeta = { spotifyArtistId: meta.primaryArtistId, imageUrl: meta.thumbnailUrl || undefined };
+    }
+  }
+
   if (opts?.url || /youtube\.com|youtu\.be|music\.youtube\.com/i.test(trimmed)) {
     const url = opts?.url || trimmed;
     const existing = await prisma.track.findFirst({
@@ -602,7 +621,7 @@ export async function resolveAndDownload(
     if (existing?.filePath && fs.existsSync(existing.filePath)) return existing;
 
     const download = await downloadFromYouTube(url, quality);
-    return saveTrackRecord(download, quality, opts?.title, opts?.artist, opts?.album);
+    return saveTrackRecord(download, quality, opts?.title, opts?.artist, opts?.album, spotifyMeta);
   }
 
   const searchQuery = opts?.artist && opts?.title
@@ -736,7 +755,8 @@ export async function resolveAndDownload(
         quality,
         opts?.title || result.title,
         opts?.artist || result.artist,
-        opts?.album
+        opts?.album,
+        spotifyMeta,
       );
     } catch (err) {
       lastError = err as Error;
@@ -747,7 +767,7 @@ export async function resolveAndDownload(
   // Fallback: at least try the top resolved source
   try {
     const download = await downloadFromYouTube(source.url, quality);
-    return saveTrackRecord(download, quality, opts?.title || source.title, opts?.artist || source.artist, opts?.album);
+    return saveTrackRecord(download, quality, opts?.title || source.title, opts?.artist || source.artist, opts?.album, spotifyMeta);
   } catch (err) {
     throw lastError || err;
   }

@@ -55,6 +55,18 @@ export function externalTrack(
   };
 }
 
+/** Whether a track is liked — handles external id → library id swap after like */
+export function isTrackLiked(
+  track: { id: string; spotifyUrl?: string; youtubeUrl?: string },
+  likedIds: Set<string>,
+  pending: { id: string; spotifyUrl?: string; youtubeUrl?: string }[] = [],
+): boolean {
+  if (likedIds.has(track.id)) return true;
+  const key = track.spotifyUrl || track.youtubeUrl;
+  if (!key) return false;
+  return pending.some((p) => likedIds.has(p.id) && (p.spotifyUrl === key || p.youtubeUrl === key));
+}
+
 /** Normalize a track from any API shape into a consistent format. */
 export function normalizeTrack(track: {
   id: string;

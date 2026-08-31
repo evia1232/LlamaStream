@@ -31,18 +31,20 @@ interface SpotifyTrackInfo {
   id: string;
   name: string;
   artist: string;
+  primaryArtistId?: string;
   album?: string;
   duration: number;
   thumbnailUrl: string;
   spotifyUrl: string;
 }
 
-interface ArtistLocalData {
+interface ArtistPageData {
   artist: {
     id: string | null;
     name: string;
     imageUrl: string | null;
     bio: string | null;
+    spotifyArtistId: string | null;
   };
   localTracks: Track[];
   localAlbums: {
@@ -54,13 +56,13 @@ interface ArtistLocalData {
     artist: { id: string; name: string };
   }[];
   listenedTracks: Track[];
-}
-
-interface SpotifySection {
-  configured: boolean;
-  artist: SpotifyArtistInfo | null;
-  topTracks: SpotifyTrackInfo[];
-  albums: SpotifyAlbumInfo[];
+  spotify: {
+    configured: boolean;
+    artist: SpotifyArtistInfo | null;
+    topTracks: SpotifyTrackInfo[];
+    albums: SpotifyAlbumInfo[];
+    error?: string;
+  };
 }
 
 function formatFollowers(n: number): string {
@@ -69,25 +71,29 @@ function formatFollowers(n: number): string {
   return String(n);
 }
 
-function spotifyUrlForName(name: string, hints?: { spotifyArtistId?: string; spotifyTrackId?: string }): string {
-  const base = `/home/artists/by-name/${encodeURIComponent(name)}/spotify`;
+function artistApiPath(
+  searchName: string | null,
+  id: string | undefined,
+  hints: { spotifyArtistId?: string; spotifyTrackId?: string },
+): string | null {
   const params = new URLSearchParams();
-  if (hints?.spotifyArtistId) params.set('spotifyArtistId', hints.spotifyArtistId);
-  if (hints?.spotifyTrackId) params.set('spotifyTrackId', hints.spotifyTrackId);
-  const qs = params.toString();
-  return qs ? `${base}?${qs}` : base;
+  if (hints.spotifyArtistId) params.set('spotifyArtistId', hints.spotifyArtistId);
+  if (hints.spotifyTrackId) params.set('spotifyTrackId', hints.spotifyTrackId);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+
+  if (searchName) return `/home/artists/by-name/${encodeURIComponent(searchName)}${qs}`;
+  if (id) return `/home/artists/${id}${qs}`;
+  return null;
 }
 
 export default function ArtistPage() {
   const { id, name: nameParam } = useParams<{ id?: string; name?: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const spotifyArtistId = searchParams.get('spotifyArtistId') ?? undefined;
   const spotifyTrackId = searchParams.get('spotifyTrackId') ?? undefined;
   const { t } = useTranslation();
-  const [local, setLocal] = useState<ArtistLocalData | null>(null);
-  const [spotify, setSpotify] = useState<SpotifySection | null>(null);
-  const [loadingLocal, setLoadingLocal] = useState(true);
-  const [spotifyLoading, setSpotifyLoading] = useState(true);
+  const [data, setData] = useState<ArtistPageData | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const playTracks = usePlayerStore((s) => s.playTracks);
 
@@ -96,77 +102,63 @@ export default function ArtistPage() {
     return null;
   }, [nameParam]);
 
-  const localPath = searchName
-    ? `/home/artists/by-name/${encodeURIComponent(searchName)}`
-    : id
-      ? `/home/artists/${id}`
-      : null;
-
-  const fetchSpotify = useCallback(async (name: string, hints?: { spotifyArtistId?: string; spotifyTrackId?: string }) => {
-    setSpotifyLoading(true);
-    try {
-      const { data } = await api.get(spotifyUrlForName(name, hints));
-      setSpotify(data.spotify);
-    } catch {
-      setSpotify({ configured: true, artist: null, topTracks: [], albums: [] });
-    } finally {
-      setSpotifyLoading(false);
-    }
-  }, []);
-
   const load = useCallback(async () => {
-    if (!localPath) return;
-    setLoadingLocal(true);
-    setError('');
-    setLocal(null);
-    setSpotify(null);
+    const path = artistApiPath(searchName, id, { spotifyArtistId, spotifyTrackId });
+    if (!path) return;
 
-    const spotifyName = searchName;
-    const spotifyHints = { spotifyArtistId, spotifyTrackId };
+    setLoading(true);
+    setError('');
+    setData(null);
 
     try {
-      const requests: [Promise<{ data: ArtistLocalData }>, Promise<void> | null] = [
-        api.get(localPath),
-        spotifyName ? fetchSpotify(spotifyName, spotifyHints) : null,
-      ];
+      const { data: page } = await api.get<ArtistPageData>(path);
+      setData(page);
 
-      const [localRes] = await Promise.all([
-        requests[0],
-        requests[1] ?? Promise.resolve(),
-      ]);
-      setLocal(localRes.data);
-
-      if (!spotifyName && localRes.data.artist.name) {
-        void fetchSpotify(localRes.data.artist.name, spotifyHints);
-      } else if (!spotifyName) {
-        setSpotifyLoading(false);
+      // Persist resolved Spotify artist id in URL for reliable reloads / sharing
+      const resolvedId = page.artist.spotifyArtistId || page.spotify.artist?.id;
+      if (resolvedId && resolvedId !== spotifyArtistId && searchName) {
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('spotifyArtistId', resolvedId);
+          return next;
+        }, { replace: true });
       }
     } catch {
       setError(t('artistLoadError'));
-      setSpotifyLoading(false);
     } finally {
-      setLoadingLocal(false);
+      setLoading(false);
     }
-  }, [localPath, searchName, spotifyArtistId, spotifyTrackId, fetchSpotify, t]);
+  }, [searchName, id, spotifyArtistId, spotifyTrackId, setSearchParams, t]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const spotify = data?.spotify ?? null;
+  const local = data;
 
   const displayName = spotify?.artist?.name || local?.artist.name || searchName || '';
   const imageUrl = spotify?.artist?.imageUrl || local?.artist.imageUrl || null;
 
   const normalizedLocal = (local?.localTracks ?? []).map((t) => normalizeTrack(t));
   const normalizedListened = (local?.listenedTracks ?? []).map((t) => normalizeTrack(t));
+
+  const listenedIds = new Set(normalizedListened.map((t) => t.id));
+  const localOnly = normalizedLocal.filter((t) => !listenedIds.has(t.id));
+
   const spotifyAsTracks = (spotify?.topTracks ?? []).map((t) =>
-    externalTrack(t.id, t.name, t.artist, t.duration, t.thumbnailUrl, t.album, { spotifyUrl: t.spotifyUrl }),
+    externalTrack(t.id, t.name, t.artist, t.duration, t.thumbnailUrl, t.album, {
+      spotifyUrl: t.spotifyUrl,
+      spotifyArtistId: t.primaryArtistId || spotify?.artist?.id,
+    }),
   );
 
-  const hasContent = normalizedLocal.length > 0
-    || spotifyAsTracks.length > 0
+  const hasContent = spotifyAsTracks.length > 0
     || normalizedListened.length > 0
+    || localOnly.length > 0
     || (local?.localAlbums.length ?? 0) > 0
-    || (spotify?.albums.length ?? 0) > 0;
+    || (spotify?.albums.length ?? 0) > 0
+    || !!spotify?.artist;
 
-  if (loadingLocal && !local) {
+  if (loading && !data) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3">
         <div className="w-8 h-8 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
@@ -175,7 +167,7 @@ export default function ArtistPage() {
     );
   }
 
-  if (error && !local) {
+  if (error && !data) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center">
         <p className="text-spotify-text">{error}</p>
@@ -200,7 +192,7 @@ export default function ArtistPage() {
         <div className="w-36 h-36 md:w-48 md:h-48 rounded-full shadow-card bg-spotify-lightgray shrink-0 overflow-hidden">
           {imageUrl ? (
             <img src={imageUrl} alt="" className="w-full h-full object-cover" />
-          ) : spotifyLoading ? (
+          ) : loading ? (
             <div className="w-full h-full flex items-center justify-center">
               <div className="w-10 h-10 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
             </div>
@@ -211,13 +203,13 @@ export default function ArtistPage() {
         <div className="min-w-0 pb-2 flex-1">
           <p className="text-label mb-2">{t('artists')}</p>
           <h1 className="text-hero mb-2">{displayName || '—'}</h1>
-          {spotifyLoading && !spotify?.artist && (
+          {loading && !spotify?.artist && (
             <p className="text-caption text-spotify-text">{t('loadingSpotifyArtist')}</p>
           )}
-          {!spotifyLoading && spotify?.configured === false && (
+          {!loading && spotify?.configured === false && (
             <p className="text-caption text-spotify-text">{t('spotifyNotConfigured')}</p>
           )}
-          {!spotifyLoading && spotify?.configured && !spotify.artist && (
+          {!loading && spotify?.configured && !spotify.artist && (
             <p className="text-caption text-spotify-text">{t('artistSpotifyNotFound')}</p>
           )}
           {spotify?.artist && (
@@ -260,41 +252,13 @@ export default function ArtistPage() {
           </section>
         )}
 
-        {spotifyLoading && spotifyAsTracks.length === 0 && (
+        {loading && spotifyAsTracks.length === 0 && (
           <section className="px-4">
             <h2 className="text-heading-sm mb-3">{t('topTracks')}</h2>
             <div className="flex items-center gap-2 text-caption text-spotify-text">
               <div className="w-4 h-4 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
               {t('loadingSpotifyArtist')}
             </div>
-          </section>
-        )}
-
-        {normalizedListened.length > 0 && (
-          <section>
-            <h2 className="text-heading-sm mb-3 px-4">{t('listenedTracks')}</h2>
-            {normalizedListened.map((track, i) => (
-              <TrackRow key={track.id} track={track} index={i} contextTracks={normalizedListened} />
-            ))}
-          </section>
-        )}
-
-        {normalizedLocal.length > 0 && (
-          <section>
-            <div className="flex items-center gap-4 mb-3 px-2">
-              <h2 className="text-heading-sm">{t('localLibrary')}</h2>
-              <button
-                type="button"
-                onClick={() => handlePlayAll(normalizedLocal)}
-                className="w-10 h-10 bg-spotify-green rounded-full flex items-center justify-center hover:scale-105 transition-transform"
-                aria-label={t('playAll')}
-              >
-                <Play className="w-5 h-5 fill-black text-black play-icon-nudge" />
-              </button>
-            </div>
-            {normalizedLocal.map((track, i) => (
-              <TrackRow key={track.id} track={track} index={i} onDeleted={load} contextTracks={normalizedLocal} />
-            ))}
           </section>
         )}
 
@@ -328,6 +292,34 @@ export default function ArtistPage() {
           </section>
         )}
 
+        {normalizedListened.length > 0 && (
+          <section>
+            <h2 className="text-heading-sm mb-3 px-4">{t('listenedTracks')}</h2>
+            {normalizedListened.map((track, i) => (
+              <TrackRow key={track.id} track={track} index={i} contextTracks={normalizedListened} />
+            ))}
+          </section>
+        )}
+
+        {localOnly.length > 0 && (
+          <section>
+            <div className="flex items-center gap-4 mb-3 px-2">
+              <h2 className="text-heading-sm">{t('localLibrary')}</h2>
+              <button
+                type="button"
+                onClick={() => handlePlayAll(localOnly)}
+                className="w-10 h-10 bg-spotify-green rounded-full flex items-center justify-center hover:scale-105 transition-transform"
+                aria-label={t('playAll')}
+              >
+                <Play className="w-5 h-5 fill-black text-black play-icon-nudge" />
+              </button>
+            </div>
+            {localOnly.map((track, i) => (
+              <TrackRow key={track.id} track={track} index={i} onDeleted={load} contextTracks={localOnly} />
+            ))}
+          </section>
+        )}
+
         {local && local.localAlbums.length > 0 && (
           <section className="px-4">
             <h2 className="text-heading-sm mb-4">{t('localAlbums')}</h2>
@@ -352,7 +344,7 @@ export default function ArtistPage() {
           </section>
         )}
 
-        {!hasContent && !spotifyLoading && (
+        {!hasContent && !loading && (
           <p className="text-spotify-text text-center py-12">{t('artistNoContent')}</p>
         )}
       </div>

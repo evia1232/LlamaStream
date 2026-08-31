@@ -70,17 +70,19 @@ model RefreshToken {
 }
 
 model Artist {
-  id        String   @id @default(uuid())
-  name      String
-  imageUrl  String?
-  bio       String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String   @id @default(uuid())
+  name            String
+  imageUrl        String?
+  bio             String?
+  spotifyArtistId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   albums    Album[]
   tracks    Track[]
 
   @@unique([name])
+  @@index([spotifyArtistId])
 }
 
 model Album {

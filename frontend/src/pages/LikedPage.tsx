@@ -1,31 +1,60 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Play } from 'lucide-react';
 import api from '../api/client';
 import TrackRow from '../components/tracks/TrackRow';
 import { Track } from '../types';
-import { saveLikedIds } from '../lib/likedStorage';
 import { normalizeTrack } from '../lib/trackUtils';
 import { usePlayerStore } from '../store';
 
+function mergeLikedTracks(apiTracks: Track[], pending: Track[], likedIds: Set<string>): Track[] {
+  const seen = new Set<string>();
+  const merged: Track[] = [];
+
+  for (const t of pending) {
+    if (!likedIds.has(t.id) || seen.has(t.id)) continue;
+    seen.add(t.id);
+    merged.push(t);
+  }
+  for (const t of apiTracks) {
+    if (!likedIds.has(t.id) || seen.has(t.id)) continue;
+    seen.add(t.id);
+    merged.push(t);
+  }
+  return merged;
+}
+
 export default function LikedPage() {
   const { t } = useTranslation();
+  const location = useLocation();
   const [tracks, setTracks] = useState<Track[]>([]);
   const playTracks = usePlayerStore((s) => s.playTracks);
+  const likedListVersion = usePlayerStore((s) => s.likedListVersion);
+  const likedPendingTracks = usePlayerStore((s) => s.likedPendingTracks);
+  const likedTrackIds = usePlayerStore((s) => s.likedTrackIds);
 
-  useEffect(() => {
+  const loadLiked = useCallback(() => {
+    const pending = usePlayerStore.getState().likedPendingTracks;
+    const ids = usePlayerStore.getState().likedTrackIds;
+
     api.get('/tracks/liked').then(({ data }) => {
-      setTracks(data.tracks.map((t: Track) => normalizeTrack(t)));
-      data.tracks.forEach((t: Track) => usePlayerStore.getState().addToLiked(t.id));
-      saveLikedIds(usePlayerStore.getState().likedTrackIds);
-    }).catch(console.error);
+      const apiTracks = (data.tracks as Track[]).map((tr) => normalizeTrack(tr));
+      setTracks(mergeLikedTracks(apiTracks, pending, ids));
+      apiTracks.forEach((tr) => usePlayerStore.getState().addToLiked(tr.id));
+    }).catch(() => {
+      setTracks(mergeLikedTracks([], pending, ids));
+    });
   }, []);
 
-  const refresh = () => {
-    api.get('/tracks/liked').then(({ data }) => {
-      setTracks(data.tracks.map((t: Track) => normalizeTrack(t)));
-    }).catch(console.error);
-  };
+  useEffect(() => {
+    loadLiked();
+  }, [loadLiked, likedListVersion, location.pathname]);
+
+  // Instant UI while API catches up
+  useEffect(() => {
+    setTracks((prev) => mergeLikedTracks(prev, likedPendingTracks, likedTrackIds));
+  }, [likedPendingTracks, likedTrackIds]);
 
   return (
     <div>
@@ -51,7 +80,7 @@ export default function LikedPage() {
 
       <div className="px-2">
         {tracks.map((track, i) => (
-          <TrackRow key={track.id} track={track} index={i} contextTracks={tracks} onDeleted={refresh} />
+          <TrackRow key={track.id} track={track} index={i} contextTracks={tracks} onDeleted={loadLiked} />
         ))}
       </div>
     </div>

@@ -78,7 +78,7 @@ export function ArtistLinks({
       {parts.map((part, i) => (
         <Fragment key={`${part}-${i}`}>
           {i > 0 && <span className="text-inherit">, </span>}
-          <ArtistLink name={part} className={linkClassName} />
+          <ArtistLink name={part} {...(i === 0 ? hints : {})} className={linkClassName} />
         </Fragment>
       ))}
     </span>
