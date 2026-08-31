@@ -217,3 +217,51 @@ export async function searchSpotifyTracks(query: string, limit = SPOTIFY_SEARCH_
     return { tracks: [], configured: true, error: (err as Error).message };
   }
 }
+
+function normalizeForSpotifyMatch(s: string): string {
+  return s.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/** Look up canonical Spotify track metadata (title, artist, duration) for YouTube matching */
+export async function lookupSpotifyTrack(
+  artist: string,
+  title: string
+): Promise<SpotifySearchResult | null> {
+  const primaryArtist = artist.split(/[,;&]| feat\.?| ft\.?| featuring /i)[0].trim();
+  const queries = [
+    `track:"${title.replace(/"/g, '')}" artist:"${primaryArtist.replace(/"/g, '')}"`,
+    `${primaryArtist} ${title}`,
+    title,
+  ];
+
+  const normTitle = normalizeForSpotifyMatch(title);
+  let best: SpotifySearchResult | null = null;
+  let bestScore = 0;
+
+  for (const q of queries) {
+    const { tracks } = await searchSpotifyTracks(q, 5);
+    for (const t of tracks) {
+      const tNorm = normalizeForSpotifyMatch(t.name);
+      let score = 0;
+      if (tNorm === normTitle) score += 50;
+      else if (tNorm.includes(normTitle) || normTitle.includes(tNorm)) score += 35;
+      else {
+        const titleWords = normTitle.split(' ').filter((w) => w.length > 1);
+        const matchWords = titleWords.filter((w) => tNorm.includes(w));
+        score += Math.round((matchWords.length / Math.max(titleWords.length, 1)) * 25);
+      }
+      const artistNorm = normalizeForSpotifyMatch(primaryArtist);
+      if (normalizeForSpotifyMatch(t.artist).includes(artistNorm) || artistNorm.includes(normalizeForSpotifyMatch(t.artist))) {
+        score += 20;
+      }
+      if (t.duration > 0) score += 5;
+      if (score > bestScore) {
+        bestScore = score;
+        best = t;
+      }
+    }
+    if (bestScore >= 45) break;
+  }
+
+  return bestScore >= 25 ? best : null;
+}

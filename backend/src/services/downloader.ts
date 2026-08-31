@@ -5,7 +5,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { config, qualityBitrates } from '../config';
 import prisma from '../lib/prisma';
 import { runYtDlp, findFileByPrefix, lastLines } from './ytdlp';
-import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText } from '../lib/trackMatch';
+import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults } from '../lib/trackMatch';
+import { lookupSpotifyTrack, isSpotifyConfigured } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
 import { ensureBackgroundDownload } from './trackDownload';
 
@@ -62,27 +63,98 @@ function extractTrackTitle(title: string): string {
   return title;
 }
 
-export async function searchYouTube(query: string, limit = 15): Promise<SearchResult[]> {
-  const result = await runYtDlp([
+async function fetchYouTubeDuration(url: string): Promise<number> {
+  const metaResult = await runYtDlp(['--dump-single-json', '--skip-download', url], 45000);
+  if (metaResult.code !== 0) return 0;
+  try {
+    const meta = JSON.parse(metaResult.stdout) as { duration?: number };
+    return Math.round(Number(meta.duration || 0));
+  } catch {
+    return 0;
+  }
+}
+
+async function enrichTargetFromSpotify(
+  artist: string,
+  title: string,
+  duration?: number,
+  album?: string
+): Promise<{ artist: string; title: string; duration?: number; album?: string }> {
+  if (!isSpotifyConfigured() || !artist || !title) {
+    return { artist, title, duration, album };
+  }
+  try {
+    const spotify = await lookupSpotifyTrack(artist, title);
+    if (spotify) {
+      return {
+        artist: spotify.artist,
+        title: spotify.name,
+        duration: spotify.duration > 0 ? spotify.duration : duration,
+        album: spotify.album || album,
+      };
+    }
+  } catch (err) {
+    console.error('[Match] Spotify lookup failed:', (err as Error).message);
+  }
+  return { artist, title, duration, album };
+}
+
+async function pickVerifiedCandidate(
+  candidates: SearchResult[],
+  target: { title: string; artist: string; duration?: number },
+  relaxed: boolean
+): Promise<SearchResult | null> {
+  for (const candidate of candidates.slice(0, 6)) {
+    if (isYouTubeShortOrReel(candidate)) continue;
+
+    let duration = candidate.duration;
+    if (target.duration && target.duration > 0) {
+      if (duration <= 0) {
+        duration = await fetchYouTubeDuration(candidate.url);
+      }
+      if (duration > 0 && !isDurationCompatible(target.duration, duration, relaxed)) {
+        console.log(`[Match] Skipped duration mismatch: "${candidate.title}" (${duration}s vs ${target.duration}s)`);
+        continue;
+      }
+      if (duration > 0 && target.duration >= 90 && duration <= 60) continue;
+    }
+
+    return { ...candidate, duration: duration || candidate.duration };
+  }
+  return null;
+}
+
+export async function searchYouTube(query: string, limit = 15, minDuration?: number): Promise<SearchResult[]> {
+  const args = [
     '--flat-playlist',
     '--dump-json',
     '--skip-download',
-    `ytsearch${limit}:${query}`,
-  ], 60000);
+  ];
+
+  if (minDuration && minDuration >= 60) {
+    const floor = Math.max(45, Math.floor(minDuration * 0.45));
+    args.push('--match-filter', `duration >= ${floor}`);
+  }
+
+  args.push(`ytsearch${limit}:${query}`);
+
+  const result = await runYtDlp(args, 60000);
 
   if (result.code !== 0) {
     throw new Error(lastLines(result.stderr) || 'YouTube search failed');
   }
 
-  return parseJsonLines<Record<string, unknown>>(result.stdout).map((data) => ({
-    id: String(data.id),
-    title: String(data.title || 'Unknown'),
-    artist: String(data.uploader || data.channel || extractArtistFromTitle(String(data.title || ''))),
-    duration: Number(data.duration || 0),
-    thumbnailUrl: String(data.thumbnail || (data.thumbnails as { url: string }[])?.[0]?.url || ''),
-    url: String(data.url || data.webpage_url || `https://www.youtube.com/watch?v=${data.id}`),
-    source: 'youtube' as const,
-  }));
+  return parseJsonLines<Record<string, unknown>>(result.stdout)
+    .map((data) => ({
+      id: String(data.id),
+      title: String(data.title || 'Unknown'),
+      artist: String(data.uploader || data.channel || extractArtistFromTitle(String(data.title || ''))),
+      duration: Number(data.duration || 0),
+      thumbnailUrl: String(data.thumbnail || (data.thumbnails as { url: string }[])?.[0]?.url || ''),
+      url: String(data.url || data.webpage_url || `https://www.youtube.com/watch?v=${data.id}`),
+      source: 'youtube' as const,
+    }))
+    .filter((r) => !isYouTubeShortOrReel(r));
 }
 
 export async function downloadFromYouTube(
@@ -270,42 +342,65 @@ export async function resolveYouTubeSource(
 
   if (opts?.url || /youtube\.com|youtu\.be|music\.youtube\.com/i.test(trimmed)) {
     const url = opts?.url || trimmed;
+    if (/\/shorts\//i.test(url)) {
+      throw new Error('YouTube Shorts/Reels are not supported');
+    }
     const metaResult = await runYtDlp(['--dump-single-json', '--skip-download', url], 60000);
     if (metaResult.code !== 0) {
       throw new Error(lastLines(metaResult.stderr) || 'Failed to fetch video metadata');
     }
     const meta = JSON.parse(metaResult.stdout) as Record<string, unknown>;
     const rawTitle = String(meta.title || opts?.title || 'Unknown');
+    const metaDuration = Math.round(Number(meta.duration || 0));
+    const reelCheck = { url, title: rawTitle, duration: metaDuration };
+    if (isYouTubeShortOrReel(reelCheck)) {
+      throw new Error('YouTube Shorts/Reels are not supported');
+    }
+    if (opts?.duration && opts.duration > 0 && metaDuration > 0
+      && !isDurationCompatible(opts.duration, metaDuration, !!opts.relaxed)) {
+      throw new Error(`Video duration (${metaDuration}s) does not match expected track length (${opts.duration}s)`);
+    }
     return {
       url,
       sourceId: String(meta.id || ''),
       title: opts?.title || extractTrackTitle(rawTitle),
       artist: opts?.artist || String(meta.uploader || meta.channel || extractArtistFromTitle(rawTitle)),
-      duration: opts?.duration || Math.round(Number(meta.duration || 0)),
+      duration: opts?.duration || metaDuration,
       thumbnailUrl: String(meta.thumbnail || ''),
     };
   }
 
-  const artist = opts?.artist ? sanitizeSearchText(opts.artist) : '';
-  const title = opts?.title ? sanitizeSearchText(opts.title) : '';
+  let artist = opts?.artist ? sanitizeSearchText(opts.artist) : '';
+  let title = opts?.title ? sanitizeSearchText(opts.title) : '';
+  let album = opts?.album;
+  let targetDuration = opts?.duration;
+
+  const enriched = await enrichTargetFromSpotify(artist, title, targetDuration, album);
+  artist = enriched.artist;
+  title = enriched.title;
+  targetDuration = enriched.duration;
+  album = enriched.album;
+
   const searchQuery = artist && title ? `${artist} - ${title}` : trimmed;
   const target = {
     title: title || searchQuery,
     artist,
-    duration: opts?.duration,
-    album: opts?.album,
+    duration: targetDuration,
+    album,
   };
 
   const filterVariants = shouldFilterVariants(trimmed, opts);
   const baseMinScore = opts?.relaxed ? 22 : (filterVariants ? 40 : 20);
   const rankOpts = { filterVariants, rawQuery: trimmed, minScore: baseMinScore };
+  const minSearchDuration = targetDuration && targetDuration > 0 ? targetDuration : undefined;
 
   let candidates: SearchResult[] = [];
   const allRaw: SearchResult[] = [];
   const seenIds = new Set<string>();
 
   const collectResults = (batch: SearchResult[]) => {
-    for (const r of batch) {
+    const filtered = filterYouTubeResults(batch, target, !!opts?.relaxed);
+    for (const r of filtered) {
       if (!seenIds.has(r.id)) {
         seenIds.add(r.id);
         allRaw.push(r);
@@ -314,12 +409,12 @@ export async function resolveYouTubeSource(
   };
 
   if (title && artist) {
-    const queries = buildSearchQueries(artist, title, opts?.album);
+    const queries = buildSearchQueries(artist, title, album);
     for (const q of queries) {
       try {
-        const batch = await searchYouTube(q, 10);
+        const batch = await searchYouTube(q, 10, minSearchDuration);
         collectResults(batch);
-        candidates.push(...batch.filter((r) => !candidates.some((c) => c.id === r.id)));
+        candidates.push(...batch.filter((r) => !candidates.some((c) => c.id === r.id) && !isRejectedYouTubeResult(r, target, !!opts?.relaxed)));
       } catch (err) {
         console.error(`YouTube search failed for "${q}":`, err);
       }
@@ -329,11 +424,12 @@ export async function resolveYouTubeSource(
 
   if (candidates.length === 0) {
     try {
-      const fallback = await searchYouTube(searchQuery, 15);
+      const fallback = await searchYouTube(searchQuery, 15, minSearchDuration);
       collectResults(fallback);
+      const pool = filterYouTubeResults(fallback, target, !!opts?.relaxed);
       candidates = title && artist
-        ? rankYouTubeResults(fallback, target, rankOpts)
-        : rankYouTubeResults(fallback, target, { ...rankOpts, filterVariants: false });
+        ? rankYouTubeResults(pool, target, rankOpts)
+        : rankYouTubeResults(pool, target, { ...rankOpts, filterVariants: false });
     } catch (err) {
       console.error(`YouTube search failed for "${searchQuery}":`, err);
     }
@@ -341,25 +437,23 @@ export async function resolveYouTubeSource(
 
   if (candidates.length === 0 && title) {
     try {
-      const titleOnly = await searchYouTube(title, 15);
+      const titleOnly = await searchYouTube(`${title} official audio`, 15, minSearchDuration);
       collectResults(titleOnly);
-      candidates = rankYouTubeResults(titleOnly, target, { ...rankOpts, minScore: opts?.relaxed ? 18 : 25 });
+      const pool = filterYouTubeResults(titleOnly, target, !!opts?.relaxed);
+      candidates = rankYouTubeResults(pool, target, { ...rankOpts, minScore: opts?.relaxed ? 18 : 25 });
     } catch (err) {
       console.error(`YouTube title search failed for "${title}":`, err);
     }
   }
 
   if (candidates.length === 0 && filterVariants) {
-    try {
-      const fallback = allRaw.length > 0 ? allRaw : await searchYouTube(searchQuery, 15);
-      collectResults(Array.isArray(fallback) ? fallback : []);
-      candidates = rankYouTubeResults(allRaw.length > 0 ? allRaw : fallback, target, {
+    const pool = allRaw.length > 0 ? allRaw : [];
+    if (pool.length > 0) {
+      candidates = rankYouTubeResults(pool, target, {
         ...rankOpts,
         filterVariants: true,
         minScore: opts?.relaxed ? 15 : 20,
       });
-    } catch (err) {
-      console.error(`YouTube relaxed search failed for "${searchQuery}":`, err);
     }
   }
 
@@ -378,13 +472,18 @@ export async function resolveYouTubeSource(
     throw new Error(`No YouTube results for: ${searchQuery}`);
   }
 
-  const best = candidates[0];
+  const verified = await pickVerifiedCandidate(candidates, target, !!opts?.relaxed);
+  if (!verified) {
+    throw new Error(`No YouTube match with compatible duration for: ${searchQuery}${targetDuration ? ` (${targetDuration}s)` : ''}`);
+  }
+
+  const best = verified;
   return {
     url: best.url,
     sourceId: best.id,
     title: title || extractTrackTitle(best.title),
     artist: artist || best.artist,
-    duration: opts?.duration || best.duration,
+    duration: targetDuration || best.duration,
     thumbnailUrl: best.thumbnailUrl,
   };
 }

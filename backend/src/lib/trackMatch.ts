@@ -27,6 +27,8 @@ const BAD_KEYWORDS = [
   'behind the scenes', 'making of', 'teaser', 'trailer', 'fan made', 'fanmade',
   '8d audio', 'nightcore', 'chipmunk', 'sped up', 'slowed reverb', 'bass boosted',
   'phonk', 'tiktok version', 'tik tok version',
+  '#shorts', 'youtube shorts', ' yt shorts', '/shorts/',
+  'reels', 'reel', 'instagram reel',
 ];
 
 /** Variant keywords — penalized/rejected unless user searched for them */
@@ -158,6 +160,74 @@ export function extractTrackTitleFromYouTube(title: string): string {
     .trim();
 }
 
+export function isYouTubeShortOrReel(result: Pick<SearchResult, 'url' | 'title' | 'duration'>): boolean {
+  const url = (result.url || '').toLowerCase();
+  if (url.includes('/shorts/')) return true;
+
+  const title = result.title || '';
+  const lower = title.toLowerCase();
+  if (/#shorts\b/i.test(title)) return true;
+  if (/\byoutube\s+shorts?\b/i.test(lower)) return true;
+  if (/\breels?\b/i.test(lower)) return true;
+  if (/\bshorts\b/i.test(lower) && result.duration > 0 && result.duration <= 90) return true;
+  if (/\btiktok\b/i.test(lower)) return true;
+
+  if (result.duration > 0 && result.duration <= 45) return true;
+
+  return false;
+}
+
+export function durationDiffSeconds(targetDuration?: number, resultDuration?: number): number | null {
+  if (!targetDuration || targetDuration <= 0 || !resultDuration || resultDuration <= 0) return null;
+  return Math.abs(resultDuration - targetDuration);
+}
+
+/** Spotify duration vs YouTube result — reject reels/clips and bad length matches */
+export function isDurationCompatible(
+  targetDuration?: number,
+  resultDuration?: number,
+  relaxed = false
+): boolean {
+  if (!targetDuration || targetDuration <= 0) return true;
+  if (!resultDuration || resultDuration <= 0) return false;
+
+  const diff = Math.abs(resultDuration - targetDuration);
+  const maxDiff = relaxed ? 75 : 50;
+
+  if (targetDuration >= 90 && resultDuration <= 60) return false;
+  if (targetDuration >= 150 && resultDuration <= 90) return false;
+  if (diff > maxDiff) return false;
+  if (resultDuration < targetDuration * (relaxed ? 0.42 : 0.55)) return false;
+  if (resultDuration > targetDuration * (relaxed ? 2 : 1.8)) return false;
+
+  return true;
+}
+
+export function isRejectedYouTubeResult(
+  result: SearchResult,
+  target: MatchTarget,
+  relaxed = false
+): boolean {
+  if (isYouTubeShortOrReel(result)) return true;
+  if (isLikelyBadMatch(result.title)) return true;
+
+  if (target.duration && target.duration > 0 && result.duration > 0) {
+    if (!isDurationCompatible(target.duration, result.duration, relaxed)) return true;
+  } else if (target.duration && target.duration >= 90 && result.duration > 0 && result.duration <= 60) {
+    return true;
+  }
+
+  return false;
+}
+
+export function filterYouTubeResults(
+  results: SearchResult[],
+  target: MatchTarget,
+  relaxed = false
+): SearchResult[] {
+  return results.filter((r) => !isRejectedYouTubeResult(r, target, relaxed));
+}
+
 export function isLikelyBadMatch(title: string): boolean {
   const lower = title.toLowerCase();
   if (BAD_KEYWORDS.some((kw) => lower.includes(kw))) return true;
@@ -196,16 +266,22 @@ export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, opt
     score += Math.round(wordOverlap(target.artist, result.artist) * 20);
   }
 
-  // Duration match (Spotify gives seconds)
+  // Duration match (Spotify gives seconds) — heavily weighted
   if (target.duration && target.duration > 0 && result.duration > 0) {
     const diff = Math.abs(result.duration - target.duration);
-    if (diff <= 10) score += 30;
-    else if (diff <= 20) score += 22;
+    if (diff <= 8) score += 45;
+    else if (diff <= 15) score += 35;
+    else if (diff <= 25) score += 25;
     else if (diff <= 45) score += 10;
-    else if (diff > 90) score -= 30;
-    if (result.duration > target.duration * 1.6) score -= 40;
-    if (result.duration < target.duration * 0.45) score -= 30;
+    else score -= 50;
+    if (result.duration > target.duration * 1.6) score -= 50;
+    if (result.duration < target.duration * 0.5) score -= 60;
+    if (target.duration >= 90 && result.duration <= 60) score -= 100;
+  } else if (target.duration && target.duration >= 90 && result.duration > 0 && result.duration <= 60) {
+    score -= 100;
   }
+
+  if (isYouTubeShortOrReel(result)) score -= 150;
 
   // Keyword bonuses
   for (const kw of GOOD_KEYWORDS) {
@@ -242,10 +318,16 @@ export function rankYouTubeResults(
   const filterVariants = options?.filterVariants ?? false;
 
   return [...results]
+    .filter((r) => !isRejectedYouTubeResult(r, target, false))
     .map((r) => ({ result: r, score: scoreYouTubeMatch(r, target, options) }))
     .filter(({ result, score }) => {
       if (score < minScore) return false;
       if (isLikelyBadMatch(result.title)) return false;
+      if (isYouTubeShortOrReel(result)) return false;
+      if (target.duration && target.duration > 0 && result.duration > 0
+        && !isDurationCompatible(target.duration, result.duration, false)) {
+        return false;
+      }
       if (filterVariants && hasUnwantedVariant(result.title, target.title, options?.rawQuery)) {
         console.log(`[Match] Skipped variant: "${result.title}"`);
         return false;
@@ -267,7 +349,8 @@ export function pickBestAvailableResult(
   if (ranked.length > 0) return ranked[0];
 
   const normTitle = normalizeForMatch(target.title);
-  const safe = results.filter((r) => !isLikelyBadMatch(r.title));
+  const safe = results.filter((r) => !isLikelyBadMatch(r.title) && !isYouTubeShortOrReel(r)
+    && !isRejectedYouTubeResult(r, target, !!options?.minScore && options.minScore <= 18));
 
   for (const r of safe) {
     const ytNorm = normalizeForMatch(r.title);
@@ -300,6 +383,7 @@ export function buildSearchQueries(artist: string, title: string, album?: string
 
   queries.push(
     `${a} ${t} official audio`,
+    `${a} - ${t} official audio`,
     `${a} - ${t} official`,
     `"${a}" "${t}" official audio`,
     `${a} - ${t}`,
