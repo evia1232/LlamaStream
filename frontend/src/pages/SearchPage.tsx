@@ -56,6 +56,7 @@ export default function SearchPage() {
   const playTrack = usePlayerStore((s) => s.playTrack);
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPreparingPlayback = usePlayerStore((s) => s.isPreparingPlayback);
+  const isBuffering = usePlayerStore((s) => s.isBuffering);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   const search = useCallback(async (q: string) => {
@@ -132,7 +133,7 @@ export default function SearchPage() {
   ) => {
     const externalId = `external-${id}`;
     const isCurrent = currentTrack?.id === externalId;
-    const isPreparing = isCurrent && (isPreparingPlayback || !currentTrack?.isDownloaded);
+    const isPreparing = isCurrent && (isPreparingPlayback || isBuffering);
     const track = externalTrack(id, title, artist, duration, thumbnailUrl, opts?.album, {
       youtubeUrl: opts?.youtubeUrl,
       spotifyUrl: opts?.spotifyUrl,

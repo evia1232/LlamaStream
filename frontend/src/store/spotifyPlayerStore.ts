@@ -48,7 +48,12 @@ export const useSpotifyPlayerStore = create<SpotifyPlayerState>((set, get) => ({
       });
 
       await new Promise<void>((resolve, reject) => {
+        const timeout = window.setTimeout(() => {
+          reject(new Error('Spotify init timeout'));
+        }, 12000);
+
         const onReady = ({ device_id }: { device_id: string }) => {
+          window.clearTimeout(timeout);
           set({
             ready: true,
             deviceId: device_id,
@@ -59,6 +64,7 @@ export const useSpotifyPlayerStore = create<SpotifyPlayerState>((set, get) => ({
         };
 
         const onError = ({ message }: { message: string }) => {
+          window.clearTimeout(timeout);
           set({ initError: message });
           reject(new Error(message));
         };
@@ -69,7 +75,10 @@ export const useSpotifyPlayerStore = create<SpotifyPlayerState>((set, get) => ({
         player.addListener('account_error', onError as (...args: unknown[]) => void);
         player.addListener('playback_error', onError as (...args: unknown[]) => void);
 
-        player.connect().catch(reject);
+        player.connect().catch((err) => {
+          window.clearTimeout(timeout);
+          reject(err);
+        });
       });
 
       return true;

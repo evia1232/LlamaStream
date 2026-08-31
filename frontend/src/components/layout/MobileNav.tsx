@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Home, Search, Library } from 'lucide-react';
+import { Home, Search, Library, Settings } from 'lucide-react';
 import clsx from 'clsx';
 
 export default function MobileNav() {
@@ -10,6 +10,7 @@ export default function MobileNav() {
     { to: '/', icon: Home, label: t('home') },
     { to: '/search', icon: Search, label: t('search') },
     { to: '/library', icon: Library, label: t('library') },
+    { to: '/settings', icon: Settings, label: t('settings') },
   ];
 
   return (

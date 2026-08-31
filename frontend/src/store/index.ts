@@ -39,6 +39,7 @@ interface PlayerState {
 
   setCurrentTrack: (track: Track | null) => void;
   setIsPlaying: (playing: boolean) => void;
+  setIsBuffering: (buffering: boolean) => void;
   setCurrentTime: (time: number) => void;
   setDuration: (duration: number) => void;
   setVolume: (volume: number) => void;
@@ -60,6 +61,7 @@ interface PlayerState {
   autoplay: boolean;
   _discoverLoading: boolean;
   isPreparingPlayback: boolean;
+  isBuffering: boolean;
   playbackEngine: PlaybackEngine;
   fetchQueue: () => Promise<void>;
   addToQueue: (trackId: string, playNext?: boolean) => Promise<void>;
@@ -105,9 +107,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   autoplay: loadAutoplayEnabled(),
   _discoverLoading: false,
   isPreparingPlayback: false,
+  isBuffering: false,
   playbackEngine: 'local' as PlaybackEngine,
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
+  setIsBuffering: (buffering) => set({ isBuffering: buffering }),
   setIsPlaying: (playing) => {
     const { playbackEngine } = get();
     if (playbackEngine === 'spotify') {
@@ -193,10 +197,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         savedAt: Date.now(),
       });
       try {
-        await api.post(`/tracks/${track.id}/play`);
+        void api.post(`/tracks/${track.id}/play`);
         if (stale()) return;
-        get().fetchLyrics(track.id);
-        await get().persistPlayback();
+        void get().fetchLyrics(track.id);
+        void get().persistPlayback();
         get().prefetchUpcoming();
       } catch { /* ignore */ }
       return;
@@ -254,7 +258,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   stopPlaybackImmediate: () => {
-    set((s) => ({ _playGeneration: s._playGeneration + 1, isPlaying: false }));
+    set((s) => ({ _playGeneration: s._playGeneration + 1, isPlaying: false, isBuffering: false }));
     get()._stopFn?.();
     void useSpotifyPlayerStore.getState().pause();
   },

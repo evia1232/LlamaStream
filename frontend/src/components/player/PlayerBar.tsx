@@ -34,7 +34,8 @@ export default function PlayerBar() {
     toggleShuffle, cycleRepeat, playNext, playPrevious,
     toggleLike, setShowQueue, setShowLyrics, showLyrics,
     clearPendingSeek, persistPlayback, registerSeek, registerStop, seekTo, setShowNowPlaying,
-    autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback, playbackEngine,
+    autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback, isBuffering, playbackEngine,
+    setIsBuffering,
   } = usePlayerStore();
 
   const isLiked = currentTrack ? likedTrackIds.has(currentTrack.id) : false;
@@ -57,6 +58,7 @@ export default function PlayerBar() {
     audio.pause();
     audio.removeAttribute('src');
     audio.load();
+    setIsBuffering(true);
 
     const applyPendingSeek = () => {
       const { pendingSeekTime: seek } = usePlayerStore.getState();
@@ -70,20 +72,28 @@ export default function PlayerBar() {
 
     const onCanPlay = () => {
       if (loadToken !== loadTokenRef.current) return;
+      setIsBuffering(false);
       applyPendingSeek();
       if (usePlayerStore.getState().isPlaying) {
         audio.play().catch(() => setIsPlaying(false));
       }
     };
 
+    const onError = () => {
+      if (loadToken !== loadTokenRef.current) return;
+      setIsBuffering(false);
+    };
+
     audio.addEventListener('canplay', onCanPlay, { once: true });
+    audio.addEventListener('error', onError, { once: true });
     audio.src = src;
     audio.load();
 
     return () => {
       audio.removeEventListener('canplay', onCanPlay);
+      audio.removeEventListener('error', onError);
     };
-  }, [currentTrack?.id, currentTrack?.isDownloaded, isPreparingPlayback, isSpotifyMode, setIsPlaying, setCurrentTime, clearPendingSeek]);
+  }, [currentTrack?.id, currentTrack?.isDownloaded, isPreparingPlayback, isSpotifyMode, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering]);
 
   useEffect(() => {
     if (isSpotifyMode) return;
@@ -189,7 +199,10 @@ export default function PlayerBar() {
   const trackDuration = duration || currentTrack.duration || 0;
   const progressPct = (currentTime / (trackDuration || 1)) * 100;
   const volumePct = volume * 100;
-  const showPreparing = isPreparingPlayback || (!isSpotifyMode && !currentTrack.isDownloaded);
+  const showPreparing = isPreparingPlayback || isBuffering;
+  const preparingLabel = isPreparingPlayback && !isSpotifyMode && !currentTrack.isDownloaded
+    ? t('downloading')
+    : t('preparingPlayback');
 
   const transportControls = (
     <>
@@ -269,7 +282,7 @@ export default function PlayerBar() {
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
             {isSpotifyMode && !showPreparing && <p className="text-2xs text-spotify-green truncate">{t('spotifyStreaming')}</p>}
-            {showPreparing && <p className="text-2xs text-spotify-green truncate">{t('preparingPlayback')}</p>}
+            {showPreparing && <p className="text-2xs text-spotify-green truncate">{preparingLabel}</p>}
           </div>
         </button>
         <div className="flex items-center gap-1 shrink-0">
@@ -322,7 +335,7 @@ export default function PlayerBar() {
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
             {isSpotifyMode && !showPreparing && <p className="text-2xs text-spotify-green truncate">{t('spotifyStreaming')}</p>}
-            {showPreparing && <p className="text-2xs text-spotify-green truncate">{t('preparingPlayback')}</p>}
+            {showPreparing && <p className="text-2xs text-spotify-green truncate">{preparingLabel}</p>}
             {_discoverLoading && <p className="text-2xs text-spotify-green truncate">{t('findingNext')}</p>}
           </div>
           <button

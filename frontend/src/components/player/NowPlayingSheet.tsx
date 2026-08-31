@@ -30,7 +30,7 @@ export default function NowPlayingSheet() {
     shuffle, repeat, likedTrackIds,
     setIsPlaying, setVolume, toggleShuffle, cycleRepeat,
     playNext, playPrevious, toggleLike, setShowQueue, setShowLyrics, seekTo,
-    addToQueue,
+    addToQueue, isPreparingPlayback, isBuffering, playbackEngine,
   } = usePlayerStore();
 
   const [showPlaylistModal, setShowPlaylistModal] = useState(false);
@@ -52,6 +52,11 @@ export default function NowPlayingSheet() {
   const artistName = getArtistName(currentTrack.artist);
   const imageUrl = getTrackImageUrl(currentTrack);
   const isLiked = likedTrackIds.has(currentTrack.id);
+  const isSpotifyMode = playbackEngine === 'spotify';
+  const showPreparing = isPreparingPlayback || isBuffering;
+  const preparingLabel = isPreparingPlayback && !isSpotifyMode && !currentTrack.isDownloaded
+    ? t('downloading')
+    : t('preparingPlayback');
   const progressPct = (currentTime / (duration || 1)) * 100;
   const volumePct = volume * 100;
 
@@ -65,10 +70,14 @@ export default function NowPlayingSheet() {
       </button>
       <button
         type="button"
-        onClick={() => setIsPlaying(!isPlaying)}
-        className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-play-btn active:scale-95 transition-transform"
+        onClick={() => !showPreparing && setIsPlaying(!isPlaying)}
+        disabled={showPreparing}
+        className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-play-btn active:scale-95 transition-transform disabled:opacity-60"
+        aria-label={isPlaying ? t('pause') : t('play')}
       >
-        {isPlaying ? (
+        {showPreparing ? (
+          <div className="w-7 h-7 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+        ) : isPlaying ? (
           <Pause className="w-7 h-7 text-black fill-black" />
         ) : (
           <PlayIcon className="w-7 h-7 text-black fill-black" />
@@ -140,6 +149,12 @@ export default function NowPlayingSheet() {
         <div className="text-start mb-6 px-1">
           <h2 className="text-2xl font-bold truncate mb-1">{currentTrack.title}</h2>
           <p className="text-body text-base truncate">{artistName}</p>
+          {isSpotifyMode && !showPreparing && (
+            <p className="text-sm text-spotify-green truncate mt-1">{t('spotifyStreaming')}</p>
+          )}
+          {showPreparing && (
+            <p className="text-sm text-spotify-green truncate mt-1">{preparingLabel}</p>
+          )}
         </div>
 
         {/* Progress + transport — LTR controls (Spotify-style) */}
@@ -150,7 +165,8 @@ export default function NowPlayingSheet() {
             max={duration || currentTrack?.duration || 0}
             value={currentTime}
             onChange={(e) => seekTo(parseFloat(e.target.value))}
-            className="player-progress w-full h-1 mb-2"
+            disabled={showPreparing}
+            className="player-progress w-full h-1 mb-2 disabled:opacity-50"
             style={{ background: progressGradient((currentTime / ((duration || currentTrack?.duration || 1))) * 100) }}
           />
           <div className="flex justify-between text-caption tabular-nums">
