@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { X, GripVertical, Trash2 } from 'lucide-react';
 import { usePlayerStore } from '../../store';
 import { getArtistName } from '../../lib/trackUtils';
+import TrackSurface from '../tracks/TrackSurface';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -71,31 +72,31 @@ export default function QueueDrawer() {
           <p className="text-spotify-text text-sm text-center py-8">{t('queue')} —</p>
         ) : (
           queue.map((item) => (
-            <div
+            <TrackSurface
               key={item.id}
+              track={item.track}
+              onClick={() => playTrack(item.track)}
               className="flex items-center gap-2 p-2 rounded-md card-hover group"
             >
               <GripVertical className="w-4 h-4 text-spotify-text opacity-0 group-hover:opacity-100 cursor-grab" />
-              <div
-                className="w-10 h-10 rounded bg-spotify-lightgray overflow-hidden shrink-0 cursor-pointer"
-                onClick={() => playTrack(item.track)}
-              >
+              <div className="w-10 h-10 rounded bg-spotify-lightgray overflow-hidden shrink-0">
                 {item.track.thumbnailUrl && (
                   <img src={item.track.thumbnailUrl} alt="" className="w-full h-full object-cover" />
                 )}
               </div>
-              <div className="flex-1 min-w-0 cursor-pointer text-start" onClick={() => playTrack(item.track)}>
+              <div className="flex-1 min-w-0 text-start">
                 <p className="text-sm truncate">{item.track.title}</p>
                 <p className="text-xs text-spotify-text truncate">{getArtistName(item.track.artist)}</p>
               </div>
               <span className="text-xs text-spotify-text">{formatTime(item.track.duration)}</span>
               <button
-                onClick={() => removeFromQueue(item.id)}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); removeFromQueue(item.id); }}
                 className="icon-btn opacity-0 group-hover:opacity-100 p-1"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
-            </div>
+            </TrackSurface>
           ))
         )}
         </div>

@@ -9,6 +9,7 @@ import { usePlayerStore } from '../../store';
 import { streamUrl } from '../../lib/apiUrl';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import { progressGradient } from '../../lib/direction';
+import { openTrackContextMenu } from '../../store/trackMenuStore';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -160,6 +161,7 @@ export default function PlayerBar() {
         <button
           type="button"
           onClick={() => setShowNowPlaying(true)}
+          onContextMenu={(e) => openTrackContextMenu(e, currentTrack)}
           className="flex items-center gap-3 flex-1 min-w-0 text-start active:opacity-80"
         >
           <div className="w-11 h-11 rounded bg-spotify-gray shrink-0 overflow-hidden shadow-sm">
@@ -205,9 +207,13 @@ export default function PlayerBar() {
         </div>
       </div>
 
-      {/* Desktop layout — always LTR (Spotify-style) */}
-      <div className="hidden md:flex items-center gap-4 px-4 h-full w-full">
-        <div className="flex flex-1 items-center gap-3 min-w-0">
+      {/* Desktop — Spotify-style: sides + absolutely centered transport */}
+      <div className="player-bar-desktop hidden md:block relative h-full w-full overflow-visible">
+        {/* Left: now playing */}
+        <div
+          className="absolute inset-y-0 start-0 flex items-center gap-3 min-w-0 max-w-[30%] ps-4 pe-2 z-10 cursor-default"
+          onContextMenu={(e) => openTrackContextMenu(e, currentTrack)}
+        >
           <div className="w-14 h-14 rounded bg-spotify-gray shrink-0 overflow-hidden">
             {currentTrack.thumbnailUrl ? (
               <img src={currentTrack.thumbnailUrl} alt="" className="w-full h-full object-cover" />
@@ -215,7 +221,7 @@ export default function PlayerBar() {
               <div className="w-full h-full flex items-center justify-center text-spotify-text">♪</div>
             )}
           </div>
-          <div className="min-w-0 text-start">
+          <div className="min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
           </div>
@@ -228,42 +234,44 @@ export default function PlayerBar() {
           </button>
         </div>
 
-        <div className="flex flex-col items-center gap-2 shrink-0">
-          <div className="flex items-center gap-4">
+        {/* Center: transport + timeline (always screen-centered) */}
+        <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 flex flex-col items-center justify-center gap-2 w-full max-w-[40rem] px-4 pointer-events-none z-20">
+          <div className="pointer-events-auto flex items-center gap-4">
             {transportControls}
           </div>
-          <div className="player-slider-row flex items-center gap-2 w-full max-w-md">
-            <span className="text-caption w-10 text-end tabular-nums">{formatTime(currentTime)}</span>
+          <div className="player-slider-row pointer-events-auto flex items-center gap-2 w-full">
+            <span className="text-caption w-10 text-end tabular-nums shrink-0">{formatTime(currentTime)}</span>
             <input
               type="range"
               min={0}
               max={duration || 0}
               value={currentTime}
               onChange={handleSeek}
-              className="player-progress flex-1"
+              className="player-progress flex-1 min-w-0"
               style={{ background: progressGradient(progressPct) }}
             />
-            <span className="text-caption w-10 tabular-nums">{formatTime(duration)}</span>
+            <span className="text-caption w-10 tabular-nums shrink-0">{formatTime(duration)}</span>
           </div>
         </div>
 
-        <div className="flex flex-1 items-center justify-end gap-2">
+        {/* Right: lyrics, queue, volume */}
+        <div className="absolute inset-y-0 end-0 flex items-center justify-end gap-2 pe-4 ps-2 z-10">
           <button
             type="button"
             onClick={() => setShowLyrics(!showLyrics)}
-            className={clsx('icon-btn', showLyrics && 'text-spotify-green')}
+            className={clsx('icon-btn shrink-0', showLyrics && 'text-spotify-green')}
             aria-label={t('lyrics')}
           >
             <Mic2 className="w-4 h-4" />
           </button>
-          <button type="button" onClick={() => setShowQueue(true)} className="icon-btn" aria-label={t('queue')}>
+          <button type="button" onClick={() => setShowQueue(true)} className="icon-btn shrink-0" aria-label={t('queue')}>
             <ListMusic className="w-4 h-4" />
           </button>
-          <div className="player-slider-row flex items-center gap-2 w-28">
+          <div className="player-slider-row flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setVolume(volume === 0 ? 0.7 : 0)}
-              className="icon-btn"
+              className="icon-btn shrink-0"
               aria-label={t('volume')}
             >
               {volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -275,7 +283,7 @@ export default function PlayerBar() {
               step={0.01}
               value={volume}
               onChange={(e) => setVolume(parseFloat(e.target.value))}
-              className="player-progress flex-1"
+              className="player-progress w-[6.5rem] shrink-0"
               style={{ background: progressGradient(volumePct) }}
             />
           </div>

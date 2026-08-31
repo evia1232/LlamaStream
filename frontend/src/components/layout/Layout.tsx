@@ -7,6 +7,7 @@ import NowPlayingSheet from '../player/NowPlayingSheet';
 import QueueDrawer from '../queue/QueueDrawer';
 import LyricsPanel from '../lyrics/LyricsPanel';
 import InstallPrompt from '../pwa/InstallPrompt';
+import TrackMenuHost from '../tracks/TrackMenuHost';
 import { usePlayerStore } from '../../store';
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -31,6 +32,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <QueueDrawer />
       <LyricsPanel />
       <InstallPrompt />
+      <TrackMenuHost />
     </div>
   );
 }

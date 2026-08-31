@@ -15,6 +15,26 @@ export function getTrackImageUrl(track: {
   return track.thumbnailUrl || track.album?.coverUrl || null;
 }
 
+/** Build a pseudo-track for search/external results (right-click menu + download). */
+export function externalTrack(
+  id: string,
+  title: string,
+  artist: string,
+  duration: number,
+  thumbnailUrl?: string | null,
+  album?: string
+): Track {
+  return {
+    id: `external-${id}`,
+    title,
+    duration,
+    thumbnailUrl: thumbnailUrl || null,
+    isDownloaded: false,
+    artist: { name: artist },
+    album: album ? { id: '', title: album } : null,
+  };
+}
+
 /** Normalize a track from any API shape into a consistent format. */
 export function normalizeTrack(track: {
   id: string;

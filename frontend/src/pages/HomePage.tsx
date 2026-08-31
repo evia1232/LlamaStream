@@ -5,6 +5,7 @@ import CardGrid from '../components/common/CardGrid';
 import { Track } from '../types';
 import { normalizeTrack } from '../lib/trackUtils';
 import TrackRow from '../components/tracks/TrackRow';
+import TrackSurface from '../components/tracks/TrackSurface';
 import { usePlayerStore } from '../store';
 
 interface HomeData {
@@ -45,22 +46,26 @@ export default function HomePage() {
         <h1 className="text-display mb-6 md:mb-8">{t(data.greeting)}</h1>
         {data.recentlyPlayed.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
-            {data.recentlyPlayed.slice(0, 6).map((track) => (
-              <button
-                key={track.id}
-                onClick={() => playTrack(normalizeTrack(track))}
-                className="flex items-center gap-0 bg-white/10 hover:bg-white/20 rounded-spotify overflow-hidden transition-all duration-200 group text-start"
-              >
-                <div className="w-16 h-16 md:w-[4.5rem] md:h-[4.5rem] shrink-0 shadow-card">
-                  {track.thumbnailUrl ? (
-                    <img src={track.thumbnailUrl} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full bg-spotify-lightgray flex items-center justify-center">♪</div>
-                  )}
-                </div>
-                <span className="text-sm font-bold truncate px-4 group-hover:text-white">{track.title}</span>
-              </button>
-            ))}
+            {data.recentlyPlayed.slice(0, 6).map((track) => {
+              const normalized = normalizeTrack(track);
+              return (
+                <TrackSurface
+                  key={track.id}
+                  track={normalized}
+                  onClick={() => playTrack(normalized)}
+                  className="flex items-center gap-0 bg-white/10 hover:bg-white/20 rounded-spotify overflow-hidden transition-all duration-200 group text-start cursor-pointer"
+                >
+                  <div className="w-16 h-16 md:w-[4.5rem] md:h-[4.5rem] shrink-0 shadow-card">
+                    {track.thumbnailUrl ? (
+                      <img src={track.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full bg-spotify-lightgray flex items-center justify-center">♪</div>
+                    )}
+                  </div>
+                  <span className="text-sm font-bold truncate px-4 group-hover:text-white">{track.title}</span>
+                </TrackSurface>
+              );
+            })}
           </div>
         )}
       </div>

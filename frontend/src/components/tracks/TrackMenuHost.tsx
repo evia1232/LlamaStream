@@ -1,0 +1,172 @@
+import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Play, Heart, ListPlus, Download, ListMusic, Trash2 } from 'lucide-react';
+import { useTrackMenuStore } from '../../store/trackMenuStore';
+import { usePlayerStore } from '../../store';
+import { getArtistName } from '../../lib/trackUtils';
+import api from '../../api/client';
+import TrackContextMenu, { TrackMenuAction } from './TrackContextMenu';
+import AddToPlaylistModal from './AddToPlaylistModal';
+
+function isLibraryTrack(trackId: string): boolean {
+  return !trackId.startsWith('external-');
+}
+
+export default function TrackMenuHost() {
+  const { t } = useTranslation();
+  const {
+    track, options, menuOpen, menuPos, playlistModalOpen,
+    closeMenu, openPlaylistModal, closePlaylistModal,
+  } = useTrackMenuStore();
+
+  const {
+    currentTrack, likedTrackIds, playTrack, toggleLike, addToQueue, setCurrentTrack,
+  } = usePlayerStore();
+
+  const [downloading, setDownloading] = useState(false);
+
+  if (!track) return null;
+
+  const artistName = getArtistName(track.artist);
+  const isLiked = likedTrackIds.has(track.id);
+  const hasLibraryId = isLibraryTrack(track.id);
+  const canStream = track.isDownloaded || !!track.streamUrl;
+  const canRemoveFromLibrary = canStream && hasLibraryId;
+
+  const handleDownload = async () => {
+    if (canStream) return;
+    setDownloading(true);
+    try {
+      const { data } = await api.post('/tracks/download', {
+        query: `${artistName} - ${track.title}`,
+        url: options.external?.url,
+        title: track.title,
+        artist: artistName,
+        duration: track.duration,
+        album: options.external?.album || track.album?.title,
+      });
+      playTrack(data.track);
+      options.onRefresh?.();
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handlePlay = async () => {
+    if (canStream) {
+      playTrack(track);
+    } else {
+      await handleDownload();
+    }
+  };
+
+  const handleAddToQueue = async (playNext = false) => {
+    if (!hasLibraryId) {
+      await handleDownload();
+      return;
+    }
+    try {
+      await addToQueue(track.id, playNext);
+    } catch {
+      alert(t('error'));
+    }
+  };
+
+  const handleRemoveFromPlaylist = async () => {
+    if (!options.playlistId) return;
+    if (!confirm(t('confirmDelete'))) return;
+    try {
+      await api.delete(`/playlists/${options.playlistId}/tracks/${track.id}`);
+      options.onDeleted?.();
+      options.onRefresh?.();
+    } catch {
+      alert(t('error'));
+    }
+  };
+
+  const handleRemoveFromLibrary = async () => {
+    if (!confirm(t('confirmRemoveFromLibrary'))) return;
+    try {
+      await api.delete(`/tracks/${track.id}`);
+      if (currentTrack?.id === track.id) setCurrentTrack(null);
+      options.onDeleted?.();
+      options.onRefresh?.();
+    } catch {
+      alert(t('error'));
+    }
+  };
+
+  const menuActions: TrackMenuAction[] = [
+    {
+      id: 'play',
+      label: t('play'),
+      icon: <Play className="w-4 h-4" />,
+      onClick: () => { void handlePlay(); },
+    },
+    ...(hasLibraryId ? [{
+      id: 'addToPlaylist',
+      label: t('addToPlaylist'),
+      icon: <ListPlus className="w-4 h-4" />,
+      onClick: () => openPlaylistModal(),
+    }] : []),
+    ...(hasLibraryId ? [{
+      id: 'addToQueue',
+      label: t('addToQueue'),
+      icon: <ListMusic className="w-4 h-4" />,
+      onClick: () => { void handleAddToQueue(false); },
+    }] : []),
+    ...(hasLibraryId ? [{
+      id: 'playNext',
+      label: t('playNext'),
+      icon: <ListMusic className="w-4 h-4" />,
+      onClick: () => { void handleAddToQueue(true); },
+    }] : []),
+    ...(hasLibraryId ? [{
+      id: 'like',
+      label: isLiked ? t('unlike') : t('like'),
+      icon: <Heart className="w-4 h-4" fill={isLiked ? 'currentColor' : 'none'} />,
+      onClick: () => { void toggleLike(track.id); },
+    }] : []),
+    ...(!canStream ? [{
+      id: 'download',
+      label: downloading ? t('downloading') : t('download'),
+      icon: <Download className="w-4 h-4" />,
+      onClick: () => { void handleDownload(); },
+      disabled: downloading,
+    }] : []),
+    ...(options.playlistId && hasLibraryId ? [{
+      id: 'removePlaylist',
+      label: t('removeFromPlaylist'),
+      icon: <Trash2 className="w-4 h-4" />,
+      onClick: () => { void handleRemoveFromPlaylist(); },
+      danger: true,
+    }] : []),
+    ...(canRemoveFromLibrary ? [{
+      id: 'removeLibrary',
+      label: t('removeFromLibrary'),
+      icon: <Trash2 className="w-4 h-4" />,
+      onClick: () => { void handleRemoveFromLibrary(); },
+      danger: true,
+    }] : []),
+  ];
+
+  return (
+    <>
+      <TrackContextMenu
+        open={menuOpen}
+        position={menuPos}
+        actions={menuActions}
+        onClose={closeMenu}
+      />
+      {hasLibraryId && (
+        <AddToPlaylistModal
+          track={track}
+          open={playlistModalOpen}
+          onClose={closePlaylistModal}
+        />
+      )}
+    </>
+  );
+}

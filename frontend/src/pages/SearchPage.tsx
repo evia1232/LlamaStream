@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { Search as SearchIcon, Download, Play, AlertCircle, HardDrive } from 'lucide-react';
 import api from '../api/client';
 import TrackRow from '../components/tracks/TrackRow';
+import TrackSurface from '../components/tracks/TrackSurface';
+import { externalTrack } from '../lib/trackUtils';
 import { Track } from '../types';
 import { usePlayerStore } from '../store';
 
@@ -99,35 +101,44 @@ export default function SearchPage() {
   const renderExternalRow = (
     id: string, title: string, artist: string, thumbnailUrl: string,
     duration: number, url?: string, badge?: string, album?: string
-  ) => (
-    <div key={id} className="flex items-center gap-3 md:gap-4 p-2 md:p-3 rounded-md card-hover group">
-      <div className="w-11 h-11 md:w-12 md:h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
-        {thumbnailUrl ? (
-          <img src={thumbnailUrl} alt="" className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-spotify-text">♪</div>
-        )}
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-base font-normal truncate">{title}</p>
-        <p className="text-body truncate">{artist}</p>
-        {badge && <span className="text-caption">{badge}</span>}
-      </div>
-      <span className="text-caption hidden sm:inline tabular-nums">{formatTime(duration)}</span>
-      <button
-        onClick={() => handlePlay({ id, title, artist, url, duration, album })}
-        disabled={downloadingId === id}
-        className="green-btn py-2 px-3 md:px-4 text-xs md:text-sm flex items-center gap-1.5 shrink-0"
+  ) => {
+    const track = externalTrack(id, title, artist, duration, thumbnailUrl, album);
+    return (
+      <TrackSurface
+        key={id}
+        track={track}
+        options={{ external: { url, album }, onRefresh: () => search(query) }}
+        className="flex items-center gap-3 md:gap-4 p-2 md:p-3 rounded-md card-hover group"
       >
-        {downloadingId === id ? (
-          <span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-        ) : (
-          <Play className="w-4 h-4 fill-black" />
-        )}
-        <span className="hidden sm:inline">{downloadingId === id ? t('downloading') : t('play')}</span>
-      </button>
-    </div>
-  );
+        <div className="w-11 h-11 md:w-12 md:h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
+          {thumbnailUrl ? (
+            <img src={thumbnailUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-spotify-text">♪</div>
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-base font-normal truncate">{title}</p>
+          <p className="text-body truncate">{artist}</p>
+          {badge && <span className="text-caption">{badge}</span>}
+        </div>
+        <span className="text-caption hidden sm:inline tabular-nums">{formatTime(duration)}</span>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); void handlePlay({ id, title, artist, url, duration, album }); }}
+          disabled={downloadingId === id}
+          className="green-btn py-2 px-3 md:px-4 text-xs md:text-sm flex items-center gap-1.5 shrink-0"
+        >
+          {downloadingId === id ? (
+            <span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Play className="w-4 h-4 fill-black" />
+          )}
+          <span className="hidden sm:inline">{downloadingId === id ? t('downloading') : t('play')}</span>
+        </button>
+      </TrackSurface>
+    );
+  };
 
   const hasLocal = localTracks.length > 0 ||
     (results?.artists.length ?? 0) > 0 ||

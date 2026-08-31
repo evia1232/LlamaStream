@@ -159,8 +159,11 @@
   }
 
   .player-bar {
-    @apply bg-spotify-lightgray border-t border-black/40 relative;
+    @apply bg-spotify-lightgray border-t border-black/40 relative overflow-visible;
     height: var(--player-h-mobile);
+    direction: ltr;
+    padding-inline-end: max(0.5rem, env(safe-area-inset-right));
+    padding-inline-start: max(0.5rem, env(safe-area-inset-left));
   }
 
   @media (min-width: 768px) {
@@ -242,6 +245,10 @@
 }
 
 .player-bar {
+  direction: ltr;
+}
+
+.player-bar-desktop {
   direction: ltr;
 }
 
