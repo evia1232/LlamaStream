@@ -252,7 +252,7 @@ async function start() {
   const evicted = await evictStaleCache().catch(() => 0);
   if (evicted > 0) console.log(`[Storage] Evicted ${evicted} stale cache tracks`);
   server.listen(config.port, () => {
-    console.log(`LlamaStream backend running on port ${config.port}`);
+    console.log(`${config.appName} backend running on port ${config.port}`);
   });
 }
 

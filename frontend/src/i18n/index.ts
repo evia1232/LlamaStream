@@ -5,7 +5,6 @@ import { applyDocumentDirection } from '../lib/direction';
 const resources = {
   he: {
     translation: {
-      appName: 'LlamaStream',
       goodMorning: 'בוקר טוב',
       goodAfternoon: 'צהריים טובים',
       goodEvening: 'ערב טוב',
@@ -29,7 +28,7 @@ const resources = {
       password: 'סיסמה',
       username: 'שם משתמש',
       displayName: 'שם תצוגה',
-      loginTitle: 'התחבר ל-LlamaStream',
+      loginTitle: 'התחבר ל-{{appName}}',
       loginSubtitle: 'הזן את פרטי ההתחברות שלך',
       adminPanel: 'ניהול משתמשים',
       createUser: 'יצירת משתמש',
@@ -180,7 +179,7 @@ const resources = {
       loading: 'טוען...',
       error: 'שגיאה',
       success: 'הצלחה',
-      installApp: 'התקן את LlamaStream',
+      installApp: 'התקן את {{appName}}',
       installAppHint: 'התקן כאפליקציה לניגון ברקע ושליטה ממסך הנעילה',
       installAndroidHint: 'Chrome: תפריט (⋮) → "התקן אפליקציה" / "Install app". אם מופיע רק "קיצור דרך", ודא שאתה ב-Chrome (לא Samsung Internet) ושהאתר נטען ב-HTTPS.',
       installIosHint: 'Safari: כפתור שיתוף → "הוסף למסך הבית". לאחר ההתקנה, פתח מהאייקון — לא מהדפדפן.',
@@ -200,7 +199,6 @@ const resources = {
   },
   en: {
     translation: {
-      appName: 'LlamaStream',
       goodMorning: 'Good morning',
       goodAfternoon: 'Good afternoon',
       goodEvening: 'Good evening',
@@ -224,7 +222,7 @@ const resources = {
       password: 'Password',
       username: 'Username',
       displayName: 'Display name',
-      loginTitle: 'Log in to LlamaStream',
+      loginTitle: 'Log in to {{appName}}',
       loginSubtitle: 'Enter your credentials',
       adminPanel: 'User Management',
       createUser: 'Create User',
@@ -375,7 +373,7 @@ const resources = {
       loading: 'Loading...',
       error: 'Error',
       success: 'Success',
-      installApp: 'Install LlamaStream',
+      installApp: 'Install {{appName}}',
       installAppHint: 'Install as an app for background playback and lock screen controls',
       installAndroidHint: 'Chrome: menu (⋮) → "Install app". If you only see "Add shortcut", use Chrome (not Samsung Internet) over HTTPS.',
       installIosHint: 'Safari: Share → "Add to Home Screen". Open from the home screen icon — not the browser tab.',

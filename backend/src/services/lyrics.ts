@@ -1,10 +1,14 @@
 import prisma from '../lib/prisma';
+import { config } from '../config';
 
 const LRCLIB_BASE = 'https://lrclib.net/api';
-const LRCLIB_HEADERS = {
-  'User-Agent': 'LlamaStream/1.0 (https://github.com/evia1232/LlamaStream)',
-  Accept: 'application/json',
-};
+
+function lrcLibHeaders(): Record<string, string> {
+  return {
+    'User-Agent': `${config.appName}/1.0 (https://github.com/evia1232/LlamaStream)`,
+    Accept: 'application/json',
+  };
+}
 
 interface LrcRecord {
   id?: number;
@@ -80,7 +84,7 @@ function scoreRecord(record: LrcRecord, target: { title: string; artist: string;
 
 async function lrcFetch(path: string): Promise<Response> {
   await sleep(250);
-  return fetch(`${LRCLIB_BASE}${path}`, { headers: LRCLIB_HEADERS });
+  return fetch(`${LRCLIB_BASE}${path}`, { headers: lrcLibHeaders() });
 }
 
 async function tryGetLyrics(params: Record<string, string>): Promise<LrcRecord | null> {

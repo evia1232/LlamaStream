@@ -19,6 +19,7 @@ export const config = {
   spotifyMarket: (process.env.SPOTIFY_MARKET || 'IL').trim().toUpperCase(),
   spotifyRedirectUri: (process.env.SPOTIFY_REDIRECT_URI || '').trim(),
   frontendUrl: (process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:3000').replace(/\/$/, ''),
+  appName: (process.env.APP_NAME || 'LlamaStream').trim(),
 };
 
 export const qualityBitrates: Record<string, string> = {

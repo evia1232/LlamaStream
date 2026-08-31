@@ -6,8 +6,10 @@ import App from './App';
 import './i18n';
 import './index.css';
 import { applyDocumentDirection } from './lib/direction';
+import { applyAppBranding } from './lib/appName';
 
 applyDocumentDirection();
+applyAppBranding();
 
 // PWA: activate new service worker immediately and reload to pick up fresh CSS/JS
 const updateSW = registerSW({

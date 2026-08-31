@@ -7,6 +7,7 @@ import {
 import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
 import { streamUrl } from '../../lib/apiUrl';
+import { getAppName } from '../../lib/appName';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import { ArtistLinks } from '../artists/ArtistLink';
 import { progressGradient } from '../../lib/direction';
@@ -301,7 +302,7 @@ export default function PlayerBar() {
   if (!currentTrack) {
     return (
       <footer className="player-bar player-bar-empty shrink-0" dir="ltr">
-        <p className="text-spotify-text text-sm hidden md:block">{t('appName')}</p>
+        <p className="text-spotify-text text-sm hidden md:block">{getAppName()}</p>
       </footer>
     );
   }

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { usePlayerStore } from '../store';
 import { getArtistName, getTrackImageUrl } from '../lib/trackUtils';
+import { getAppName } from '../lib/appName';
 
 function setHandler(action: MediaSessionAction, handler: MediaSessionActionHandler | null) {
   try {
@@ -60,7 +61,7 @@ export function useMediaSession() {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: currentTrack.title,
       artist,
-      album: currentTrack.album?.title || 'LlamaStream',
+      album: currentTrack.album?.title || getAppName(),
       artwork,
     });
   }, [currentTrack?.id, currentTrack?.title, currentTrack?.thumbnailUrl]);

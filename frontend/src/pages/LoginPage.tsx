@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Music2 } from 'lucide-react';
 import { useAuthStore } from '../store';
+import { getAppName } from '../lib/appName';
 
 export default function LoginPage() {
   const { t } = useTranslation();
@@ -27,16 +28,18 @@ export default function LoginPage() {
     }
   };
 
+  const appName = getAppName();
+
   return (
     <div className="min-h-screen bg-spotify-black flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="flex items-center justify-center gap-3 mb-10">
           <Music2 className="w-12 h-12 text-spotify-green" strokeWidth={2.5} />
-          <h1 className="text-4xl font-black tracking-tight">{t('appName')}</h1>
+          <h1 className="text-4xl font-black tracking-tight">{appName}</h1>
         </div>
 
         <div className="surface-elevated p-8 md:p-10">
-          <h2 className="text-heading-sm mb-2">{t('loginTitle')}</h2>
+          <h2 className="text-heading-sm mb-2">{t('loginTitle', { appName })}</h2>
           <p className="text-body mb-8">{t('loginSubtitle')}</p>
 
           <form onSubmit={handleSubmit} className="space-y-5">

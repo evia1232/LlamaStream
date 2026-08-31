@@ -3,6 +3,8 @@ declare global {
     __LLAMASTREAM_CONFIG__?: {
       /** Full API base including /api, e.g. '/api' or 'https://api.example.com/api' */
       apiBase?: string;
+      /** Display name shown in UI, PWA title, etc. */
+      appName?: string;
     };
   }
 }

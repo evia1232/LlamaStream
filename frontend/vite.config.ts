@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
+const appName = process.env.VITE_APP_NAME?.trim() || 'LlamaStream';
+
 export default defineConfig({
   plugins: [
     react(),
@@ -12,8 +14,8 @@ export default defineConfig({
       includeAssets: ['favicon.svg', 'icon-192.svg', 'icon-512.svg', 'icon-maskable.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'],
       manifest: {
         id: '/',
-        name: 'LlamaStream',
-        short_name: 'LlamaStream',
+        name: appName,
+        short_name: appName,
         description: 'Self-hosted music streaming — Spotify-like experience',
         theme_color: '#121212',
         background_color: '#000000',

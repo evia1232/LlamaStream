@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../../store';
 import api from '../../api/client';
+import { getAppName } from '../../lib/appName';
 import { Playlist } from '../../types';
 import PlaylistCover from '../playlists/PlaylistCover';
 import clsx from 'clsx';
@@ -38,7 +39,7 @@ export default function Sidebar() {
       <div className="px-4 py-5">
         <div className="flex items-center gap-2">
           <Music2 className="w-8 h-8 text-spotify-green" strokeWidth={2.5} />
-          <span className="text-xl font-black tracking-tight">{t('appName')}</span>
+          <span className="text-xl font-black tracking-tight">{getAppName()}</span>
         </div>
       </div>
 

@@ -42,6 +42,7 @@ services:
       CACHE_PATH: /app/storage/cache
       AVATAR_PATH: /app/storage/avatars
       DEFAULT_AUDIO_QUALITY: ${DEFAULT_AUDIO_QUALITY:-high}
+      APP_NAME: ${APP_NAME:-LlamaStream}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
       SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
@@ -64,6 +65,7 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-}
         VITE_WS_URL: ${VITE_WS_URL:-}
+        VITE_APP_NAME: ${VITE_APP_NAME:-${APP_NAME:-LlamaStream}}
     container_name: llamastream-frontend
     restart: unless-stopped
     depends_on:

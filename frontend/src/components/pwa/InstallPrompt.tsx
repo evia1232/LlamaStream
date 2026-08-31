@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Download, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { getAppName } from '../../lib/appName';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -76,6 +77,8 @@ export default function InstallPrompt() {
     setShowManual(false);
   };
 
+  const appName = getAppName();
+
   const hint = deferredPrompt
     ? t('installAppHint')
     : isIos()
@@ -88,7 +91,7 @@ export default function InstallPrompt() {
         🦙
       </div>
       <div className="flex-1 min-w-0">
-        <p className="font-bold text-sm">{t('installApp')}</p>
+        <p className="font-bold text-sm">{t('installApp', { appName })}</p>
         <p className="text-xs text-spotify-text mt-0.5">{hint}</p>
         {deferredPrompt && (
           <button

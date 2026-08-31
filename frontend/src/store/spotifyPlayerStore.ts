@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import api from '../api/client';
 import { loadSpotifySdk, SpotifyPlayer } from '../lib/spotifySdk';
+import { getAppName } from '../lib/appName';
 
 type SpotifyEngine = {
   player: SpotifyPlayer;
@@ -40,7 +41,7 @@ export const useSpotifyPlayerStore = create<SpotifyPlayerState>((set, get) => ({
       if (!window.Spotify) throw new Error('Spotify SDK unavailable');
 
       const player = new window.Spotify.Player({
-        name: 'LlamaStream',
+        name: getAppName(),
         volume,
         getOAuthToken: (cb) => {
           fetchSpotifyToken().then(cb).catch(() => cb(''));
