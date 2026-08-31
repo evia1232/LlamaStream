@@ -7,6 +7,7 @@ import TrackRow from '../components/tracks/TrackRow';
 import TrackSurface from '../components/tracks/TrackSurface';
 import PlaybackMeta from '../components/player/PlaybackMeta';
 import { externalTrack } from '../lib/trackUtils';
+import { ArtistLinks } from '../components/artists/ArtistLink';
 import {
   addRecentQuery,
   addRecentSearchTrack,
@@ -204,7 +205,7 @@ export default function SearchPage() {
         </div>
         <div className="flex-1 min-w-0">
           <p className={clsx('text-base font-normal truncate', isCurrent && 'text-spotify-green')}>{title}</p>
-          <p className="text-body truncate">{artist}</p>
+          <ArtistLinks artist={artist} className="text-body truncate block" linkClassName="text-body" />
           {isCurrent && <PlaybackMeta track={track} className="mt-0.5" />}
           {opts?.badge && !isCurrent && <span className="text-caption">{opts.badge}</span>}
         </div>
@@ -317,7 +318,7 @@ export default function SearchPage() {
                     </div>
                     <div className="flex-1 min-w-0 text-start">
                       <p className={clsx('truncate', isCurrent && 'text-spotify-green')}>{item.title}</p>
-                      <p className="text-body truncate">{item.artist}</p>
+                      <ArtistLinks artist={item.artist} className="text-body truncate block" linkClassName="text-body" />
                       {isCurrent && <PlaybackMeta track={track} className="mt-0.5" />}
                     </div>
                     <span className="text-caption tabular-nums">{formatTime(item.duration)}</span>

@@ -55,6 +55,7 @@ export default function App() {
                 <Route path="/playlist/:id" element={<PlaylistPage />} />
                 <Route path="/liked" element={<LikedPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/artist/by-name/:name" element={<ArtistPage />} />
                 <Route path="/artist/:id" element={<ArtistPage />} />
               </Routes>
             </Layout>

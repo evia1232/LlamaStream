@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
 import { useTrackMenuStore } from '../../store/trackMenuStore';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
+import { ArtistLinks } from '../artists/ArtistLink';
 import { useTranslation } from 'react-i18next';
 import api from '../../api/client';
 import { useRef, useState } from 'react';
@@ -180,7 +181,7 @@ export default function TrackRow({
             <p className={clsx('text-base truncate', isCurrent ? 'text-spotify-green' : 'text-white font-normal')}>
               {track.title}
             </p>
-            <p className="text-body truncate">{artistName}</p>
+            <ArtistLinks artist={track.artist} className="text-body truncate block" linkClassName="text-body" />
             {isCurrent && <PlaybackMeta track={track} className="mt-0.5" />}
           </div>
         </div>

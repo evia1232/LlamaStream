@@ -8,6 +8,7 @@ import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
 import { streamUrl } from '../../lib/apiUrl';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
+import { ArtistLinks } from '../artists/ArtistLink';
 import { progressGradient } from '../../lib/direction';
 import PlaybackMeta from './PlaybackMeta';
 import { DevicePickerButton } from './DevicePicker';
@@ -286,7 +287,7 @@ export default function PlayerBar() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
-            <p className="text-caption truncate">{artistName}</p>
+            <ArtistLinks artist={currentTrack.artist} className="text-caption truncate block" linkClassName="text-caption" />
             {isRemoteActive && activeDeviceName && (
               <p className="text-2xs text-spotify-green truncate">{t('playingOnDevice', { device: activeDeviceName })}</p>
             )}
@@ -342,7 +343,7 @@ export default function PlayerBar() {
           </div>
           <div className="min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
-            <p className="text-caption truncate">{artistName}</p>
+            <ArtistLinks artist={currentTrack.artist} className="text-caption truncate block" linkClassName="text-caption" />
             {isRemoteActive && activeDeviceName && (
               <p className="text-2xs text-spotify-green truncate">{t('playingOnDevice', { device: activeDeviceName })}</p>
             )}

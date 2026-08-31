@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import { useRef, useState, useCallback } from 'react';
 import { usePlayerStore } from '../../store';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
+import { ArtistLinks } from '../artists/ArtistLink';
 import { progressGradient } from '../../lib/direction';
 import { DevicePickerButton } from './DevicePicker';
 import PlaybackMeta from './PlaybackMeta';
@@ -149,7 +150,7 @@ export default function NowPlayingSheet() {
 
         <div className="text-start mb-6 px-1">
           <h2 className="text-2xl font-bold truncate mb-1">{currentTrack.title}</h2>
-          <p className="text-body text-base truncate">{artistName}</p>
+          <ArtistLinks artist={currentTrack.artist} className="text-body text-base truncate block" linkClassName="text-body" />
           {isRemoteActive && activeDeviceName && (
             <p className="text-sm text-spotify-green truncate mt-1">{t('playingOnDevice', { device: activeDeviceName })}</p>
           )}

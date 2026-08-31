@@ -7,6 +7,14 @@ export function getArtistName(artist: { name?: string } | string | null | undefi
   return artist.name || '';
 }
 
+/** Split comma / feat. style artist strings into individual names. */
+export function splitArtistNames(name: string): string[] {
+  return name
+    .split(/,\s*|;\s*|&\s*|\s+feat\.?\s+|\s+ft\.?\s+|\s+featuring\s+/i)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
 /** Best available cover art for a track row. */
 export function getTrackImageUrl(track: {
   thumbnailUrl?: string | null;
