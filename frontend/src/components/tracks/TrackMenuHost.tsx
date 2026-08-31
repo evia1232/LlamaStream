@@ -70,16 +70,8 @@ export default function TrackMenuHost() {
     await playTrack(track);
   };
 
-  const handleAddToQueue = async (playNext = false) => {
-    if (!hasLibraryId) {
-      await handleDownload();
-      return;
-    }
-    try {
-      await addToQueue(track.id, playNext);
-    } catch {
-      alert(t('error'));
-    }
+  const handleAddToQueue = (playNext = false) => {
+    addToQueue(track.id, playNext, track);
   };
 
   const handleRemoveFromPlaylist = async () => {
@@ -142,13 +134,13 @@ export default function TrackMenuHost() {
       id: 'addToQueue',
       label: t('addToQueue'),
       icon: <ListMusic className="w-4 h-4" />,
-      onClick: () => { void handleAddToQueue(false); },
+      onClick: () => { handleAddToQueue(false); },
     }] : []),
     ...(hasLibraryId ? [{
       id: 'playNext',
       label: t('playNext'),
       icon: <ListMusic className="w-4 h-4" />,
-      onClick: () => { void handleAddToQueue(true); },
+      onClick: () => { handleAddToQueue(true); },
     }] : []),
     ...(hasLibraryId ? [{
       id: 'like',

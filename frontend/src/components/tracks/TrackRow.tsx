@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import api from '../../api/client';
 import { useRef, useState } from 'react';
 import TrackSurface from './TrackSurface';
+import PlaybackMeta from '../player/PlaybackMeta';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -76,7 +77,7 @@ export default function TrackRow({
   onDeleted,
 }: TrackRowProps) {
   const { t } = useTranslation();
-  const { currentTrack, isPlaying, playTrack, playTracks, toggleLike, likedTrackIds } = usePlayerStore();
+  const { currentTrack, isPlaying, playTrack, playTracks, toggleLike, likedTrackIds, addToQueue } = usePlayerStore();
   const { openMenuFromElement, openPlaylistForTrack, menuOpen: globalMenuOpen, track: menuTrack } = useTrackMenuStore();
   const menuOpen = globalMenuOpen && menuTrack?.id === track.id;
   const [downloading, setDownloading] = useState(false);
@@ -140,6 +141,7 @@ export default function TrackRow({
     <TrackSurface
       track={track}
       options={menuOptions}
+      onSwipeRight={() => addToQueue(track.id, false, track)}
       className={clsx(
         'flex md:grid md:grid-cols-[16px_4fr_3fr_1fr_80px] gap-2 md:gap-4 items-center px-2 md:px-4 py-2 rounded-md group card-hover',
         isCurrent && 'bg-white/10'
@@ -179,6 +181,7 @@ export default function TrackRow({
               {track.title}
             </p>
             <p className="text-body truncate">{artistName}</p>
+            {isCurrent && <PlaybackMeta track={track} className="mt-0.5" />}
           </div>
         </div>
 

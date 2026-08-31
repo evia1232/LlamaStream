@@ -1,11 +1,20 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Search as SearchIcon, Play, AlertCircle, HardDrive, Import } from 'lucide-react';
+import { Search as SearchIcon, Play, AlertCircle, HardDrive, Import, Clock } from 'lucide-react';
 import api from '../api/client';
 import TrackRow from '../components/tracks/TrackRow';
 import TrackSurface from '../components/tracks/TrackSurface';
+import PlaybackMeta from '../components/player/PlaybackMeta';
 import { externalTrack } from '../lib/trackUtils';
+import {
+  addRecentQuery,
+  addRecentSearchTrack,
+  loadRecentQueries,
+  loadRecentSearchTracks,
+  recentTrackToTrack,
+  RecentSearchTrack,
+} from '../lib/searchHistory';
 import { Track } from '../types';
 import { usePlayerStore } from '../store';
 import PlaylistCover from '../components/playlists/PlaylistCover';
@@ -54,10 +63,20 @@ export default function SearchPage() {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
   const playTrack = usePlayerStore((s) => s.playTrack);
+  const addToQueue = usePlayerStore((s) => s.addToQueue);
   const currentTrack = usePlayerStore((s) => s.currentTrack);
-  const isPreparingPlayback = usePlayerStore((s) => s.isPreparingPlayback);
-  const isBuffering = usePlayerStore((s) => s.isBuffering);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const [recentQueries, setRecentQueries] = useState<string[]>([]);
+  const [recentTracks, setRecentTracks] = useState<RecentSearchTrack[]>([]);
+
+  const refreshRecent = useCallback(() => {
+    setRecentQueries(loadRecentQueries());
+    setRecentTracks(loadRecentSearchTracks());
+  }, []);
+
+  useEffect(() => {
+    refreshRecent();
+  }, [refreshRecent]);
 
   const search = useCallback(async (q: string) => {
     if (!q.trim()) { setResults(null); setError(''); return; }
@@ -66,16 +85,24 @@ export default function SearchPage() {
     try {
       const { data } = await api.get('/tracks/search', { params: { q } });
       setResults(data);
+      addRecentQuery(q);
+      refreshRecent();
     } catch (err: unknown) {
       setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, refreshRecent]);
 
   const handleQueryChange = (value: string) => {
     setQuery(value);
     clearTimeout(debounceRef.current);
+    if (!value.trim()) {
+      setResults(null);
+      setError('');
+      refreshRecent();
+      return;
+    }
     debounceRef.current = setTimeout(() => search(value), 350);
   };
 
@@ -101,7 +128,9 @@ export default function SearchPage() {
     );
     try {
       await playTrack(track);
-      search(query);
+      addRecentSearchTrack(track);
+      refreshRecent();
+      if (query.trim()) search(query);
     } catch (err: unknown) {
       setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
     }
@@ -133,7 +162,6 @@ export default function SearchPage() {
   ) => {
     const externalId = `external-${id}`;
     const isCurrent = currentTrack?.id === externalId;
-    const isPreparing = isCurrent && (isPreparingPlayback || isBuffering);
     const track = externalTrack(id, title, artist, duration, thumbnailUrl, opts?.album, {
       youtubeUrl: opts?.youtubeUrl,
       spotifyUrl: opts?.spotifyUrl,
@@ -157,6 +185,7 @@ export default function SearchPage() {
         key={id}
         track={track}
         onClick={play}
+        onSwipeRight={() => addToQueue(track.id, false, track)}
         options={{
           external: { url: opts?.youtubeUrl, spotifyUrl: opts?.spotifyUrl, album: opts?.album },
           onRefresh: () => search(query),
@@ -169,22 +198,15 @@ export default function SearchPage() {
           ) : (
             <div className="w-full h-full flex items-center justify-center text-spotify-text">♪</div>
           )}
-          <div className={clsx(
-            'absolute inset-0 flex items-center justify-center bg-black/50 transition-opacity',
-            isPreparing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-          )}>
-            {isPreparing ? (
-              <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-            ) : (
-              <Play className="w-4 h-4 fill-white text-white play-icon-nudge" />
-            )}
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+            <Play className="w-4 h-4 fill-white text-white play-icon-nudge" />
           </div>
         </div>
         <div className="flex-1 min-w-0">
           <p className={clsx('text-base font-normal truncate', isCurrent && 'text-spotify-green')}>{title}</p>
           <p className="text-body truncate">{artist}</p>
-          {opts?.badge && <span className="text-caption">{opts.badge}</span>}
-          {isPreparing && <p className="text-2xs text-spotify-green">{t('preparingPlayback')}</p>}
+          {isCurrent && <PlaybackMeta track={track} className="mt-0.5" />}
+          {opts?.badge && !isCurrent && <span className="text-caption">{opts.badge}</span>}
         </div>
         <span className="text-caption hidden sm:inline tabular-nums">{formatTime(duration)}</span>
       </TrackSurface>
@@ -246,13 +268,68 @@ export default function SearchPage() {
         </div>
       )}
 
-      {loading && (
+      {loading && query.trim() && (
         <div className="flex justify-center py-12">
           <div className="w-8 h-8 border-2 border-spotify-green border-t-transparent rounded-full animate-spin" />
         </div>
       )}
 
-      {!loading && results && (
+      {!loading && !query.trim() && (recentQueries.length > 0 || recentTracks.length > 0) && (
+        <section className="mb-10">
+          <h2 className="text-heading-sm mb-4 flex items-center gap-2">
+            <Clock className="w-5 h-5 text-spotify-green" />
+            {t('recentSearches')}
+          </h2>
+          {recentQueries.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-6">
+              {recentQueries.map((q) => (
+                <button
+                  key={q}
+                  type="button"
+                  onClick={() => handleQueryChange(q)}
+                  className="px-3 py-1.5 rounded-full bg-spotify-lightgray text-sm hover:bg-white/10 transition-colors"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
+          {recentTracks.length > 0 && (
+            <div>
+              <h3 className="text-label mb-2">{t('tracks')}</h3>
+              {recentTracks.map((item) => {
+                const track = recentTrackToTrack(item);
+                const isCurrent = currentTrack?.id === track.id;
+                return (
+                  <TrackSurface
+                    key={`${item.id}-${item.searchedAt}`}
+                    track={track}
+                    onClick={() => { void playTrack(track); addRecentSearchTrack(track); refreshRecent(); }}
+                    onSwipeRight={() => addToQueue(track.id, false, track)}
+                    className="flex items-center gap-3 p-2 rounded-md card-hover cursor-pointer"
+                  >
+                    <div className="w-11 h-11 rounded overflow-hidden bg-spotify-lightgray shrink-0">
+                      {item.thumbnailUrl ? (
+                        <img src={item.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-spotify-text">♪</div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0 text-start">
+                      <p className={clsx('truncate', isCurrent && 'text-spotify-green')}>{item.title}</p>
+                      <p className="text-body truncate">{item.artist}</p>
+                      {isCurrent && <PlaybackMeta track={track} className="mt-0.5" />}
+                    </div>
+                    <span className="text-caption tabular-nums">{formatTime(item.duration)}</span>
+                  </TrackSurface>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {!loading && results && query.trim() && (
         <>
           {hasLocal && (
             <section className="mb-10">

@@ -9,6 +9,7 @@ import { usePlayerStore } from '../../store';
 import { streamUrl } from '../../lib/apiUrl';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import { progressGradient } from '../../lib/direction';
+import PlaybackMeta from './PlaybackMeta';
 import { openTrackContextMenu } from '../../store/trackMenuStore';
 import { useMediaSession } from '../../hooks/useMediaSession';
 import { useSpotifyPlaybackSync } from '../../hooks/useSpotifyPlaybackSync';
@@ -281,8 +282,7 @@ export default function PlayerBar() {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
-            {isSpotifyMode && !showPreparing && <p className="text-2xs text-spotify-green truncate">{t('spotifyStreaming')}</p>}
-            {showPreparing && <p className="text-2xs text-spotify-green truncate">{preparingLabel}</p>}
+            <PlaybackMeta track={currentTrack} className="mt-0.5" />
           </div>
         </button>
         <div className="flex items-center gap-1 shrink-0">
@@ -334,8 +334,7 @@ export default function PlayerBar() {
           <div className="min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
-            {isSpotifyMode && !showPreparing && <p className="text-2xs text-spotify-green truncate">{t('spotifyStreaming')}</p>}
-            {showPreparing && <p className="text-2xs text-spotify-green truncate">{preparingLabel}</p>}
+            {currentTrack && <PlaybackMeta track={currentTrack} className="mt-0.5" />}
             {_discoverLoading && <p className="text-2xs text-spotify-green truncate">{t('findingNext')}</p>}
           </div>
           <button

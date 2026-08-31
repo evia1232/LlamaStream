@@ -8,6 +8,7 @@ import { useRef, useState, useCallback } from 'react';
 import { usePlayerStore } from '../../store';
 import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import { progressGradient } from '../../lib/direction';
+import PlaybackMeta from '../player/PlaybackMeta';
 import AddToPlaylistModal from '../tracks/AddToPlaylistModal';
 import TrackContextMenu, { TrackMenuAction } from '../tracks/TrackContextMenu';
 
@@ -30,7 +31,7 @@ export default function NowPlayingSheet() {
     shuffle, repeat, likedTrackIds,
     setIsPlaying, setVolume, toggleShuffle, cycleRepeat,
     playNext, playPrevious, toggleLike, setShowQueue, setShowLyrics, seekTo,
-    addToQueue, isPreparingPlayback, isBuffering, playbackEngine,
+    addToQueue, isPreparingPlayback, isBuffering,
   } = usePlayerStore();
 
   const [showPlaylistModal, setShowPlaylistModal] = useState(false);
@@ -52,11 +53,7 @@ export default function NowPlayingSheet() {
   const artistName = getArtistName(currentTrack.artist);
   const imageUrl = getTrackImageUrl(currentTrack);
   const isLiked = likedTrackIds.has(currentTrack.id);
-  const isSpotifyMode = playbackEngine === 'spotify';
   const showPreparing = isPreparingPlayback || isBuffering;
-  const preparingLabel = isPreparingPlayback && !isSpotifyMode && !currentTrack.isDownloaded
-    ? t('downloading')
-    : t('preparingPlayback');
   const progressPct = (currentTime / (duration || 1)) * 100;
   const volumePct = volume * 100;
 
@@ -149,12 +146,7 @@ export default function NowPlayingSheet() {
         <div className="text-start mb-6 px-1">
           <h2 className="text-2xl font-bold truncate mb-1">{currentTrack.title}</h2>
           <p className="text-body text-base truncate">{artistName}</p>
-          {isSpotifyMode && !showPreparing && (
-            <p className="text-sm text-spotify-green truncate mt-1">{t('spotifyStreaming')}</p>
-          )}
-          {showPreparing && (
-            <p className="text-sm text-spotify-green truncate mt-1">{preparingLabel}</p>
-          )}
+          <PlaybackMeta track={currentTrack} className="mt-1" />
         </div>
 
         {/* Progress + transport — LTR controls (Spotify-style) */}

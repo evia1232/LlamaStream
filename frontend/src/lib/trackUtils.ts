@@ -51,6 +51,7 @@ export function normalizeTrack(track: {
   source?: 'library' | 'youtube' | 'spotify';
   youtubeUrl?: string;
   spotifyUrl?: string;
+  quality?: 'LOW' | 'NORMAL' | 'HIGH';
   artist: { id?: string; name?: string } | string;
   album?: { id: string; title: string; coverUrl?: string | null } | null;
 }): Track {
@@ -74,5 +75,6 @@ export function normalizeTrack(track: {
     source: track.source,
     youtubeUrl: track.youtubeUrl,
     spotifyUrl: track.spotifyUrl,
+    quality: track.quality as Track['quality'],
   };
 }

@@ -65,7 +65,7 @@ interface PlayerState {
   isBuffering: boolean;
   playbackEngine: PlaybackEngine;
   fetchQueue: () => Promise<void>;
-  addToQueue: (trackId: string, playNext?: boolean) => Promise<void>;
+  addToQueue: (trackId: string, playNext?: boolean, trackHint?: Track) => void;
   removeFromQueue: (itemId: string) => Promise<void>;
   clearQueue: () => Promise<void>;
   toggleLike: (trackId: string, trackHint?: Track) => void;
@@ -448,9 +448,28 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     } catch { /* ignore */ }
   },
 
-  addToQueue: async (trackId, playNext = false) => {
-    await api.post('/queue', { trackId, playNext });
-    get().fetchQueue();
+  addToQueue: (trackId, playNext = false, trackHint) => {
+    const track = trackHint ?? (get().currentTrack?.id === trackId ? get().currentTrack : null);
+
+    const sync = async (attempt = 0): Promise<void> => {
+      try {
+        let id = trackId;
+        if (!isLibraryId(trackId)) {
+          if (!track) throw new Error('Track metadata required');
+          const ready = await registerTrackInLibrary(track);
+          id = ready.id;
+        }
+        await api.post('/queue', { trackId: id, playNext });
+        get().fetchQueue();
+      } catch {
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+          return sync(attempt + 1);
+        }
+      }
+    };
+
+    void sync();
   },
 
   removeFromQueue: async (itemId) => {
@@ -474,8 +493,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       try {
         let id = trackId;
         if (!isLibraryId(trackId)) {
-          if (track && !track.isDownloaded) prefetchTrack(track);
-        } else {
           if (!track) throw new Error('Track metadata required');
           const ready = await registerTrackInLibrary(track);
           id = ready.id;
@@ -484,6 +501,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
             if (wantLiked) get().addToLiked(id);
             saveLikedIds(get().likedTrackIds);
           }
+        } else if (track && !track.isDownloaded) {
+          prefetchTrack(track);
         }
         await api.put(`/tracks/${id}/like`, { liked: wantLiked });
       } catch {
