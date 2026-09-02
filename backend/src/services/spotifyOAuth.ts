@@ -35,6 +35,7 @@ export function buildSpotifyAuthUrl(userId: string): string {
     scope: SPOTIFY_SCOPES,
     state,
     show_dialog: 'true',
+    access_type: 'offline',
   });
   return `https://accounts.spotify.com/authorize?${params}`;
 }
@@ -104,31 +105,92 @@ async function refreshAccessToken(refreshToken: string): Promise<{
   }>;
 }
 
+export type SpotifyConnectErrorCode =
+  | 'PROFILE_FAILED'
+  | 'NOT_ALLOWLISTED'
+  | 'ALREADY_LINKED'
+  | 'TOKEN_EXCHANGE_FAILED';
+
+export class SpotifyConnectError extends Error {
+  code: SpotifyConnectErrorCode;
+
+  constructor(code: SpotifyConnectErrorCode, message: string) {
+    super(message);
+    this.name = 'SpotifyConnectError';
+    this.code = code;
+  }
+}
+
 async function fetchSpotifyProfile(accessToken: string): Promise<{ id: string; product: string }> {
   const res = await fetch('https://api.spotify.com/v1/me', {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
   });
-  if (!res.ok) throw new Error('Failed to fetch Spotify profile');
-  const data = await res.json() as { id: string; product?: string };
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    console.error('[Spotify OAuth] GET /me failed:', res.status, body.slice(0, 300));
+    if (res.status === 403) {
+      throw new SpotifyConnectError(
+        'NOT_ALLOWLISTED',
+        'Spotify account is not allowlisted for this app (Development Mode)',
+      );
+    }
+    throw new SpotifyConnectError(
+      'PROFILE_FAILED',
+      `Failed to fetch Spotify profile (${res.status})`,
+    );
+  }
+  const data = await res.json() as { id?: string; product?: string };
+  if (!data.id) {
+    throw new SpotifyConnectError('PROFILE_FAILED', 'Spotify profile response missing user id');
+  }
   return { id: data.id, product: data.product || 'free' };
 }
 
 export async function connectSpotifyUser(userId: string, code: string) {
-  const tokens = await exchangeCode(code);
+  let tokens: Awaited<ReturnType<typeof exchangeCode>>;
+  try {
+    tokens = await exchangeCode(code);
+  } catch (err) {
+    throw new SpotifyConnectError(
+      'TOKEN_EXCHANGE_FAILED',
+      err instanceof Error ? err.message : 'Spotify token exchange failed',
+    );
+  }
+
   const profile = await fetchSpotifyProfile(tokens.access_token);
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
+
+  const linkedElsewhere = await prisma.user.findUnique({
+    where: { spotifyUserId: profile.id },
+    select: { id: true, username: true },
+  });
+  if (linkedElsewhere && linkedElsewhere.id !== userId) {
+    throw new SpotifyConnectError(
+      'ALREADY_LINKED',
+      `Spotify account already linked to user ${linkedElsewhere.username}`,
+    );
+  }
+
+  const existing = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { spotifyRefreshToken: true },
+  });
 
   await prisma.user.update({
     where: { id: userId },
     data: {
       spotifyUserId: profile.id,
       spotifyAccessToken: tokens.access_token,
-      spotifyRefreshToken: tokens.refresh_token,
       spotifyTokenExpiresAt: expiresAt,
       spotifyProduct: profile.product,
       spotifyConnectedAt: new Date(),
+      ...(tokens.refresh_token ? { spotifyRefreshToken: tokens.refresh_token } : {}),
     },
   });
+
+  if (!tokens.refresh_token && !existing?.spotifyRefreshToken) {
+    console.warn(`[Spotify OAuth] User ${userId} connected without refresh token`);
+  }
 
   return { product: profile.product };
 }

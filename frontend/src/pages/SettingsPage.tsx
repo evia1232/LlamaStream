@@ -49,6 +49,12 @@ export default function SettingsPage() {
     } else if (status === 'no_premium') {
       setSpotifyMsg(t('spotifyNoPremium'));
       void useAuthStore.getState().fetchUser();
+    } else if (status === 'already_linked') {
+      setSpotifyMsg(t('spotifyAlreadyLinked'));
+    } else if (status === 'not_allowlisted') {
+      setSpotifyMsg(t('spotifyNotAllowlisted'));
+    } else if (status === 'profile_failed' || status === 'token_exchange_failed') {
+      setSpotifyMsg(t('spotifyConnectError'));
     } else if (status === 'error') {
       setSpotifyMsg(t('spotifyConnectError'));
     }

@@ -644,7 +644,7 @@ export async function fetchSpotifyArtistById(artistId: string): Promise<SpotifyA
     id: data.id,
     name: data.name,
     imageUrl: data.images[0]?.url || '',
-    followers: data.followers.total,
+    followers: data.followers?.total ?? 0,
     genres: data.genres,
     spotifyUrl: data.external_urls.spotify,
   };

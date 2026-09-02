@@ -18,6 +18,7 @@ import {
   getSpotifyStatusForUser,
   getSpotifyRedirectUri,
   isSpotifyOAuthConfigured,
+  SpotifyConnectError,
 } from '../services/spotifyOAuth';
 
 const router = Router();
@@ -269,6 +270,9 @@ router.get('/spotify/callback', async (req, res) => {
     return res.redirect(`${redirectBase}?spotify=${status}`);
   } catch (err) {
     console.error('Spotify OAuth callback error:', err);
+    if (err instanceof SpotifyConnectError) {
+      return res.redirect(`${redirectBase}?spotify=${err.code.toLowerCase()}`);
+    }
     return res.redirect(`${redirectBase}?spotify=error`);
   }
 });
