@@ -482,6 +482,7 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
         'Content-Type': 'audio/mpeg',
+        'Cache-Control': 'private, max-age=86400',
       });
       fs.createReadStream(fresh.filePath, { start, end }).pipe(res);
     } else {
@@ -489,6 +490,7 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
         'Content-Length': fileSize,
         'Content-Type': 'audio/mpeg',
         'Accept-Ranges': 'bytes',
+        'Cache-Control': 'private, max-age=86400',
       });
       fs.createReadStream(fresh.filePath).pipe(res);
     }

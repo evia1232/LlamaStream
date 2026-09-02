@@ -237,7 +237,7 @@ export function pipeYouTubeAudio(
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
   res.setHeader('Content-Type', 'audio/mpeg');
-  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Cache-Control', 'private, max-age=86400');
   res.setHeader('Accept-Ranges', 'none');
 
   proc.stdout.pipe(res);
@@ -280,7 +280,7 @@ export function pipeYouTubeSearch(
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
   res.setHeader('Content-Type', 'audio/mpeg');
-  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Cache-Control', 'private, max-age=86400');
   res.setHeader('Accept-Ranges', 'none');
 
   proc.stdout.pipe(res);

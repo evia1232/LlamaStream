@@ -255,7 +255,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       currentTrack: streamableTrack,
       isPlaying: seamless ? true : !useSpotify,
       isPreparingPlayback: !useSpotify && !canPlayLocal,
-      isBuffering: true,
+      isBuffering: false,
       currentTime: startTime,
       pendingSeekTime: startTime,
       lyrics: null,
@@ -314,7 +314,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     try {
       set({
         isPlaying: true,
-        isBuffering: true,
         isPreparingPlayback: true,
         playbackEngine: 'local',
       });
@@ -325,7 +324,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         currentTrack: ready,
         isPlaying: true,
         isPreparingPlayback: false,
-        isBuffering: true,
+        isBuffering: false,
         playbackEngine: 'local',
         currentTime: startTime,
         pendingSeekTime: startTime,
@@ -477,7 +476,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
       set({
         isPreparingPlayback: !canStreamTrackLocally(resolved.track),
-        isBuffering: true,
+        isBuffering: false,
         isPlaying: true,
         duration: resolved.track.duration || 0,
       });
@@ -492,7 +491,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     if (autoplay && currentTrack) {
-      set({ isPreparingPlayback: true, isBuffering: true, isPlaying: true });
+      set({ isPreparingPlayback: true, isBuffering: false, isPlaying: true });
       void get().playDiscoverNext();
       return;
     }

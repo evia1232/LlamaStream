@@ -79,6 +79,19 @@ export default defineConfig({
         // Don't long-cache API responses in SW — avoids stale data after deploy
         runtimeCaching: [
           {
+            urlPattern: /\/api\/tracks\/[^/]+\/stream(?:\?.*)?$/i,
+            handler: 'NetworkFirst',
+            method: 'GET',
+            options: {
+              cacheName: 'audio-stream-cache',
+              networkTimeoutSeconds: 12,
+              expiration: { maxEntries: 40, maxAgeSeconds: 72 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200, 206] },
+              rangeRequests: true,
+              matchOptions: { ignoreSearch: true },
+            },
+          },
+          {
             urlPattern: /^\/api\/(?!.*\/stream).*/i,
             handler: 'NetworkFirst',
             options: {

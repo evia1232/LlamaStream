@@ -17,6 +17,7 @@ import { openTrackContextMenu } from '../../store/trackMenuStore';
 import { useMediaSession } from '../../hooks/useMediaSession';
 import { useSpotifyPlaybackSync } from '../../hooks/useSpotifyPlaybackSync';
 import { canStreamTrackLocally, prepareTrackForPlayback, isLibraryId } from '../../lib/ensureDownload';
+import { getCachedStreamBlobUrl, revokeBlobUrl } from '../../lib/audioStreamCache';
 import { effectivePlaybackVolume, isMobileViewport } from '../../lib/volume';
 import { safeAudioPlay, resumeAudioIfNeeded } from '../../lib/audioPlay';
 
@@ -52,27 +53,30 @@ export default function PlayerBar() {
   const isLiked = currentTrack ? isTrackLiked(currentTrack, likedTrackIds, likedPendingTracks) : false;
   const lastPersistRef = useRef(0);
   const loadTokenRef = useRef(0);
+  const activeBlobRef = useRef<string | null>(null);
   const endedHandledRef = useRef(false);
   const isSpotifyMode = playbackEngine === 'spotify';
 
   useMediaSession();
   useSpotifyPlaybackSync();
 
-  // Load local MP3 source and wait for buffer before playing
+  // Load audio — play immediately; buffer in browser + Cache API in background
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || isSpotifyMode || !currentTrack || !isLibraryId(currentTrack.id) || isRemoteActive) return;
     if (!canPlayLocal) return;
 
     const token = localStorage.getItem('token');
-    const src = streamUrl(currentTrack.id, token);
     const loadToken = ++loadTokenRef.current;
+    let cancelled = false;
+
+    revokeBlobUrl(activeBlobRef.current);
+    activeBlobRef.current = null;
 
     audio.pause();
     audio.removeAttribute('src');
     audio.load();
     endedHandledRef.current = false;
-    setIsBuffering(true);
 
     const applyPendingSeek = () => {
       const { pendingSeekTime: seek } = usePlayerStore.getState();
@@ -84,8 +88,8 @@ export default function PlayerBar() {
       }
     };
 
-    const onCanPlay = () => {
-      if (loadToken !== loadTokenRef.current) return;
+    const tryStartPlayback = () => {
+      if (loadToken !== loadTokenRef.current || cancelled) return;
       setIsBuffering(false);
       applyPendingSeek();
       if (usePlayerStore.getState().isPlaying) {
@@ -93,8 +97,17 @@ export default function PlayerBar() {
       }
     };
 
+    const onLoadedData = () => tryStartPlayback();
+    const onCanPlay = () => tryStartPlayback();
+    const onWaiting = () => {
+      if (loadToken === loadTokenRef.current) setIsBuffering(true);
+    };
+    const onPlaying = () => {
+      if (loadToken === loadTokenRef.current) setIsBuffering(false);
+    };
+
     const onError = async () => {
-      if (loadToken !== loadTokenRef.current) return;
+      if (loadToken !== loadTokenRef.current || cancelled) return;
       const track = usePlayerStore.getState().currentTrack;
       if (track && isLibraryId(track.id)) {
         try {
@@ -106,13 +119,40 @@ export default function PlayerBar() {
       setIsBuffering(false);
     };
 
-    audio.addEventListener('canplay', onCanPlay, { once: true });
-    audio.addEventListener('error', onError, { once: true });
-    audio.src = src;
-    audio.load();
+    audio.addEventListener('loadeddata', onLoadedData);
+    audio.addEventListener('canplay', onCanPlay);
+    audio.addEventListener('waiting', onWaiting);
+    audio.addEventListener('playing', onPlaying);
+    audio.addEventListener('error', onError);
+
+    void (async () => {
+      const cachedBlob = await getCachedStreamBlobUrl(currentTrack.id);
+      if (cancelled || loadToken !== loadTokenRef.current) {
+        revokeBlobUrl(cachedBlob);
+        return;
+      }
+
+      const networkSrc = streamUrl(currentTrack.id, token);
+      if (cachedBlob) {
+        activeBlobRef.current = cachedBlob;
+        audio.src = cachedBlob;
+      } else {
+        audio.src = networkSrc;
+      }
+
+      audio.load();
+      // Attempt immediate play — browser buffers progressively while playing
+      if (usePlayerStore.getState().isPlaying) {
+        safeAudioPlay(audio, () => setIsPlaying(false));
+      }
+    })();
 
     return () => {
+      cancelled = true;
+      audio.removeEventListener('loadeddata', onLoadedData);
       audio.removeEventListener('canplay', onCanPlay);
+      audio.removeEventListener('waiting', onWaiting);
+      audio.removeEventListener('playing', onPlaying);
       audio.removeEventListener('error', onError);
     };
   }, [currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, canPlayLocal, isSpotifyMode, isRemoteActive, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering]);
@@ -143,6 +183,8 @@ export default function PlayerBar() {
       audio.pause();
       audio.removeAttribute('src');
       audio.load();
+      revokeBlobUrl(activeBlobRef.current);
+      activeBlobRef.current = null;
       loadTokenRef.current += 1;
     });
     return () => registerStop(null);
