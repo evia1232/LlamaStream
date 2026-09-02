@@ -4,7 +4,7 @@ import {
   Heart, Mic2, ListMusic, ListPlus, MoreHorizontal,
 } from 'lucide-react';
 import clsx from 'clsx';
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { usePlayerStore } from '../../store';
 import { getArtistName, getTrackImageUrl, isTrackLiked } from '../../lib/trackUtils';
 import { ArtistLinks } from '../artists/ArtistLink';
@@ -40,6 +40,69 @@ export default function NowPlayingSheet() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const menuAnchorRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [dragY, setDragY] = useState(0);
+
+  useEffect(() => {
+    const el = sheetRef.current;
+    if (!el || !showNowPlaying) return;
+
+    let startY = 0;
+    let startScrollTop = 0;
+    let fromHeader = false;
+    let active = false;
+    let currentDrag = 0;
+
+    const canStart = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+      if (target.closest('input[type="range"]')) return false;
+      return true;
+    };
+
+    const onStart = (e: TouchEvent) => {
+      if (!canStart(e.target)) return;
+      fromHeader = !!(e.target as Element).closest('[data-np-header]');
+      startScrollTop = scrollRef.current?.scrollTop ?? 0;
+      startY = e.touches[0].clientY;
+      active = true;
+      currentDrag = 0;
+    };
+
+    const onMove = (e: TouchEvent) => {
+      if (!active) return;
+      const delta = e.touches[0].clientY - startY;
+      if (!fromHeader && startScrollTop > 0) return;
+      if (!fromHeader && scrollRef.current && scrollRef.current.scrollTop > 0) return;
+      if (delta <= 0) return;
+
+      currentDrag = delta;
+      setDragY(delta);
+      e.preventDefault();
+    };
+
+    const onEnd = () => {
+      if (!active) return;
+      active = false;
+      if (currentDrag > 100) {
+        setShowNowPlaying(false);
+      }
+      currentDrag = 0;
+      setDragY(0);
+    };
+
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
+
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+    };
+  }, [showNowPlaying, setShowNowPlaying]);
 
   const openMenu = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -117,9 +180,24 @@ export default function NowPlayingSheet() {
   ];
 
   return (
-    <div className="md:hidden fixed inset-0 z-[60] flex flex-col bg-gradient-to-b from-[#333] via-spotify-dark to-spotify-black animate-slide-up">
+    <div
+      ref={sheetRef}
+      className={clsx(
+        'md:hidden fixed inset-0 z-[60] flex flex-col bg-gradient-to-b from-[#333] via-spotify-dark to-spotify-black',
+        dragY === 0 && 'animate-slide-up',
+      )}
+      style={{
+        transform: dragY > 0 ? `translateY(${dragY}px)` : undefined,
+        transition: dragY > 0 ? 'none' : 'transform 0.25s ease-out',
+        opacity: dragY > 0 ? Math.max(0.5, 1 - dragY / 500) : 1,
+      }}
+    >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2 shrink-0">
+      <div data-np-header className="flex flex-col shrink-0">
+        <div className="flex justify-center pt-2 pb-1">
+          <div className="w-10 h-1 rounded-full bg-white/30" aria-hidden />
+        </div>
+        <div className="flex items-center justify-between px-4 pt-1 pb-2">
         <button
           onClick={() => setShowNowPlaying(false)}
           className="icon-btn p-2"
@@ -140,10 +218,11 @@ export default function NowPlayingSheet() {
             <MoreHorizontal className="w-6 h-6" />
           </button>
         </div>
+        </div>
       </div>
 
       {/* Artwork */}
-      <div className="flex-1 flex flex-col justify-center px-6 min-h-0 overflow-y-auto pb-4">
+      <div ref={scrollRef} className="flex-1 flex flex-col justify-center px-6 min-h-0 overflow-y-auto pb-4">
         <div className="w-full max-w-sm mx-auto aspect-square rounded-lg shadow-card overflow-hidden bg-spotify-lightgray mb-8">
           {imageUrl ? (
             <img src={imageUrl} alt="" className="w-full h-full object-cover" />
