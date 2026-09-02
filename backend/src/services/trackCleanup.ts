@@ -3,7 +3,7 @@ import path from 'path';
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { config } from '../config';
-import { evictTrackIfUnpinned, isTrackPinned } from './trackStorage';
+import { evictTrackIfUnpinned, isTrackPinned, getCacheMaxAgeHours } from './trackStorage';
 
 function unlinkSafe(filePath: string | null | undefined) {
   if (!filePath) return;
@@ -66,6 +66,7 @@ export async function getLibraryStats() {
     totalBytes,
     libraryBytes,
     cacheBytes,
+    cacheMaxAgeHours: getCacheMaxAgeHours(),
   };
 }
 

@@ -442,7 +442,7 @@ async function fetchSpotifyPlaylistTracks(
   headers: Record<string, string>,
   marketParam: string,
   options?: { requireComplete?: boolean },
-): Promise<{ tracks: SpotifySearchResult[]; total: number; complete: boolean }> {
+): Promise<{ tracks: SpotifySearchResult[]; total: number; complete: boolean; skipped: number }> {
   const metaRes = await fetchSpotifyApiWithRetry(
     `https://api.spotify.com/v1/playlists/${playlistId}?fields=name,items.total,tracks.total,public`,
     headers,
@@ -464,16 +464,22 @@ async function fetchSpotifyPlaylistTracks(
 
   const out: SpotifySearchResult[] = [];
   const seen = new Set<string>();
+  let skippedEntries = 0;
+  let paginationComplete = false;
+  let abortedByError = false;
   const maxPages = Math.ceil((total > 0 ? total : 10_000) / pageSize) + 1;
 
   for (let page = 0; page < maxPages; page++) {
     const offset = page * pageSize;
-    if (total > 0 && offset >= total) break;
+    if (total > 0 && offset >= total) {
+      paginationComplete = true;
+      break;
+    }
 
     const url =
       `https://api.spotify.com/v1/playlists/${playlistId}/${endpoint}` +
       `?limit=${pageSize}&offset=${offset}${marketParam}&additional_types=track`;
-    const res = await fetchSpotifyApiWithRetry(url, headers);
+    let res = await fetchSpotifyApiWithRetry(url, headers);
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       console.error(
@@ -487,7 +493,13 @@ async function fetchSpotifyPlaylistTracks(
             : `Failed to load playlist tracks (${res.status})`,
         );
       }
-      break;
+      // Retry this page once before giving up
+      await sleep(1500);
+      res = await fetchSpotifyApiWithRetry(url, headers, 6);
+      if (!res.ok) {
+        abortedByError = true;
+        break;
+      }
     }
 
     const data = await res.json() as {
@@ -495,39 +507,58 @@ async function fetchSpotifyPlaylistTracks(
       total?: number;
     };
     if (!total && typeof data.total === 'number') total = data.total;
-    if (!data.items?.length) break;
+    if (!data.items?.length) {
+      paginationComplete = true;
+      break;
+    }
 
     for (const entry of data.items) {
       const t = extractTrackFromPlaylistEntry(entry);
-      if (t?.id && !seen.has(t.id)) {
-        seen.add(t.id);
-        out.push(mapSpotifyApiTrack(t));
+      if (!t?.id) {
+        skippedEntries++;
+        continue;
       }
+      if (seen.has(t.id)) {
+        skippedEntries++;
+        continue;
+      }
+      seen.add(t.id);
+      out.push(mapSpotifyApiTrack(t));
     }
 
-    if (data.items.length < pageSize) break;
-    if (total > 0 && out.length >= total) break;
+    const consumed = offset + data.items.length;
+    if (data.items.length < pageSize) {
+      paginationComplete = true;
+      break;
+    }
+    if (total > 0 && consumed >= total) {
+      paginationComplete = true;
+      break;
+    }
     await sleep(100);
   }
 
-  const complete = total === 0 ? out.length > 0 : out.length >= total;
+  const complete = paginationComplete && !abortedByError;
+
   if (complete) {
+    const suffix = total ? `/${total}` : '';
+    const skipNote = skippedEntries > 0 ? ` (${skippedEntries} skipped: unavailable, duplicate, or non-track)` : '';
     console.log(
-      `[Spotify] Playlist ${playlistId}: fetched ${out.length} tracks${total ? `/${total}` : ''} via /${endpoint}`,
+      `[Spotify] Playlist ${playlistId}: fetched ${out.length} tracks${suffix} via /${endpoint}${skipNote}`,
     );
   } else {
     console.warn(
-      `[Spotify] Playlist ${playlistId}: fetched ${out.length}/${total} tracks (incomplete)`,
+      `[Spotify] Playlist ${playlistId}: fetched ${out.length}/${total || '?'} tracks (pagination incomplete)`,
     );
   }
 
   if (options?.requireComplete && !complete) {
     throw new Error(
-      `Loaded only ${out.length} of ${total} tracks. Disconnect and reconnect Spotify in Settings, then try again.`,
+      `Could not load full playlist (${out.length}${total ? ` of ${total}` : ''} tracks). Check Spotify connection and try again.`,
     );
   }
 
-  return { tracks: out, total: total || out.length, complete };
+  return { tracks: out, total: total || out.length, complete, skipped: skippedEntries };
 }
 
 export interface SpotifyUserPlaylistSummary {

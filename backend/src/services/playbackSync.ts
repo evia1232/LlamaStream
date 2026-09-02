@@ -128,6 +128,9 @@ export async function updateSharedPlayback(userId: string, data: {
 
   if (!data.trackId) return;
 
+  const trackExists = await prisma.track.count({ where: { id: data.trackId } });
+  if (!trackExists) return;
+
   await prisma.userPlayback.upsert({
     where: { userId },
     create: {

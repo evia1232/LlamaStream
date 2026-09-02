@@ -40,6 +40,8 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       MUSIC_STORAGE_PATH: /app/storage/music
       CACHE_PATH: /app/storage/cache
+      CACHE_MAX_AGE_HOURS: ${CACHE_MAX_AGE_HOURS:-12}
+      CACHE_EVICTION_INTERVAL_MINUTES: ${CACHE_EVICTION_INTERVAL_MINUTES:-30}
       AVATAR_PATH: /app/storage/avatars
       DEFAULT_AUDIO_QUALITY: ${DEFAULT_AUDIO_QUALITY:-high}
       APP_NAME: ${APP_NAME:-LlamaStream}

@@ -69,7 +69,16 @@ export default function SettingsPage() {
   const [themeSaving, setThemeSaving] = useState(false);
   const [themeMsg, setThemeMsg] = useState('');
 
-  const [libraryStats, setLibraryStats] = useState<{ downloadedCount: number; totalCount: number; totalBytes: number } | null>(null);
+  const [libraryStats, setLibraryStats] = useState<{
+    downloadedCount: number;
+    totalCount: number;
+    totalBytes: number;
+    libraryCount?: number;
+    cacheCount?: number;
+    libraryBytes?: number;
+    cacheBytes?: number;
+    cacheMaxAgeHours?: number;
+  } | null>(null);
   const [cleanupDays, setCleanupDays] = useState(7);
   const [cleaning, setCleaning] = useState(false);
   const [cleanupMsg, setCleanupMsg] = useState('');
@@ -464,6 +473,23 @@ export default function SettingsPage() {
             <div className="bg-spotify-lightgray rounded-xl p-4 space-y-1 text-sm">
               <p>{t('downloadedTracks')}: <span className="text-white font-medium">{libraryStats.downloadedCount}</span></p>
               <p>{t('storageUsed')}: <span className="text-white font-medium">{formatBytes(libraryStats.totalBytes)}</span></p>
+              {(libraryStats.libraryCount != null || libraryStats.cacheCount != null) && (
+                <>
+                  <p>{t('storagePermanent')}: <span className="text-white font-medium">{libraryStats.libraryCount ?? 0}</span>
+                    {libraryStats.libraryBytes != null && (
+                      <span className="text-spotify-text"> · {formatBytes(libraryStats.libraryBytes)}</span>
+                    )}
+                  </p>
+                  <p>{t('storageTemporary')}: <span className="text-white font-medium">{libraryStats.cacheCount ?? 0}</span>
+                    {libraryStats.cacheBytes != null && (
+                      <span className="text-spotify-text"> · {formatBytes(libraryStats.cacheBytes)}</span>
+                    )}
+                  </p>
+                </>
+              )}
+              {libraryStats.cacheMaxAgeHours != null && (
+                <p className="text-spotify-text pt-1">{t('storageCacheHint', { hours: libraryStats.cacheMaxAgeHours })}</p>
+              )}
             </div>
           )}
 

@@ -17,6 +17,10 @@ export const config = {
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   musicStoragePath: resolveStoragePath('music', process.env.MUSIC_STORAGE_PATH),
   cachePath: resolveStoragePath('cache', process.env.CACHE_PATH),
+  /** Hours to keep unpinned prefetch/autoplay downloads before deleting the file */
+  cacheMaxAgeHours: Math.max(1, parseInt(process.env.CACHE_MAX_AGE_HOURS || '12', 10)),
+  /** How often to scan and evict stale cache files (minutes) */
+  cacheEvictionIntervalMinutes: Math.max(5, parseInt(process.env.CACHE_EVICTION_INTERVAL_MINUTES || '30', 10)),
   avatarPath: resolveStoragePath('avatars', process.env.AVATAR_PATH),
   defaultAudioQuality: (process.env.DEFAULT_AUDIO_QUALITY || 'high').toUpperCase() as 'LOW' | 'NORMAL' | 'HIGH',
   adminEmail: process.env.ADMIN_EMAIL || 'admin@llamastream.local',

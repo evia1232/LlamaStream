@@ -14,7 +14,7 @@ import { ytDlpVersion } from '../services/ytdlp';
 import { getSpotifyStatus } from '../services/spotifyApi';
 import { getValidatedActiveDevice } from '../services/playbackSync';
 import { cleanupLibrary, deleteTrackById, getLibraryStats } from '../services/trackCleanup';
-import { promoteTrackToLibrary, evictTrackIfUnpinned, touchTrackAccess } from '../services/trackStorage';
+import { promoteTrackToLibrary, demoteTrackToCache, touchTrackAccess } from '../services/trackStorage';
 import { effectiveDownloadedFlag, reconcileTrackRecord, reconcileAllStaleTracks } from '../services/trackIntegrity';
 import {
   getSearchHistory,
@@ -535,7 +535,7 @@ router.post('/:id/like', authenticate, async (req: AuthRequest, res) => {
 
   if (existing) {
     await prisma.likedTrack.delete({ where: { id: existing.id } });
-    void evictTrackIfUnpinned(req.params.id).catch(console.error);
+    void demoteTrackToCache(req.params.id).catch(console.error);
     return res.json({ liked: false });
   }
 
@@ -565,7 +565,7 @@ router.put('/:id/like', authenticate, async (req: AuthRequest, res) => {
     void prefetchLibraryTrack(req.params.id, user?.audioQuality || 'HIGH').catch(console.error);
   } else if (!wantLiked && existing) {
     await prisma.likedTrack.delete({ where: { id: existing.id } });
-    void evictTrackIfUnpinned(req.params.id).catch(console.error);
+    void demoteTrackToCache(req.params.id).catch(console.error);
   }
 
   res.json({ liked: wantLiked });

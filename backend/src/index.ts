@@ -28,7 +28,7 @@ import discoverRoutes from './routes/discover';
 import mediaRoutes from './routes/media';
 import settingsRoutes from './routes/settings';
 import { resumePendingImports } from './services/playlistImport';
-import { evictStaleCache } from './services/trackStorage';
+import { evictStaleCache, startCacheEvictionScheduler } from './services/trackStorage';
 import { reconcileAllStaleTracks } from './services/trackIntegrity';
 
 const app = express();
@@ -254,6 +254,7 @@ async function start() {
   await resumePendingImports();
   const evicted = await evictStaleCache().catch(() => 0);
   if (evicted > 0) console.log(`[Storage] Evicted ${evicted} stale cache tracks`);
+  startCacheEvictionScheduler();
   await reconcileAllStaleTracks().catch(console.error);
   server.listen(config.port, () => {
     console.log(`${config.appName} backend running on port ${config.port}`);
