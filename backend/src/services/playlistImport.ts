@@ -238,7 +238,7 @@ export async function processPlaylistImport(jobId: string) {
       completed++;
     } catch (err) {
       failed++;
-      errors.push(`${cleanTitle}: ${(err as Error).message}`);
+      errors.push(`${cleanArtist} - ${cleanTitle}: ${(err as Error).message}`);
       position++;
     }
 

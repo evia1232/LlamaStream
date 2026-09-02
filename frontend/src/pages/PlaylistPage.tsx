@@ -33,7 +33,10 @@ export default function PlaylistPage() {
     if (!importJob || !['parsing', 'pending', 'running'].includes(importJob.status)) return;
     const timer = window.setInterval(loadPlaylist, 3000);
     return () => window.clearInterval(timer);
-  }, [importJob, loadPlaylist]);
+  }, [importJob?.status, loadPlaylist]);
+
+  const importActive = importJob && ['parsing', 'pending', 'running'].includes(importJob.status);
+  const importFinished = importJob && ['completed', 'failed'].includes(importJob.status);
 
   const normalizedTracks = (playlist?.tracks ?? []).map((t) => normalizeTrack(t as Track));
 
@@ -97,7 +100,7 @@ export default function PlaylistPage() {
         </div>
       </div>
 
-      {importJob && ['parsing', 'pending', 'running'].includes(importJob.status) && (
+      {importJob && (importActive || importFinished) && (
         <div className="px-6 pb-2">
           <ImportStatusList jobs={[{ ...importJob, playlist: { id: playlist.id, name: playlist.name } }]} />
         </div>
