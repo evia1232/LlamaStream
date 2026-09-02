@@ -37,7 +37,7 @@ function formatDiscoverTrack(track: {
     duration: track.duration,
     thumbnailUrl: track.thumbnailUrl,
     isDownloaded,
-    streamUrl: trackStreamUrl({ id: track.id, isDownloaded, sourceUrl: track.sourceUrl }),
+    streamUrl: trackStreamUrl({ id: track.id, isDownloaded, sourceUrl: track.sourceUrl, title: track.title, artist: track.artist }),
     artist: track.artist,
     album: track.album ?? null,
     source: 'library',

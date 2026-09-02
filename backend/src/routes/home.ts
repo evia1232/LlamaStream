@@ -100,7 +100,7 @@ function formatHomeTrack(track: {
     duration: track.duration,
     thumbnailUrl: track.thumbnailUrl,
     isDownloaded,
-    streamUrl: trackStreamUrl({ id: track.id, isDownloaded, sourceUrl: track.sourceUrl }),
+    streamUrl: trackStreamUrl({ id: track.id, isDownloaded, sourceUrl: track.sourceUrl, title: track.title, artist: track.artist }),
     artist: { id: track.artist.id, name: track.artist.name },
     album: track.album ? { id: track.album.id, title: track.album.title, coverUrl: track.album.coverUrl } : null,
   };

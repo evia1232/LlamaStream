@@ -59,7 +59,8 @@ export default function PlayerBar() {
   // Load local MP3 source and wait for buffer before playing
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || isSpotifyMode || !currentTrack || !canPlayLocal || isPreparingPlayback || isRemoteActive) return;
+    if (!audio || isSpotifyMode || !currentTrack || !isLibraryId(currentTrack.id) || isRemoteActive) return;
+    if (!canPlayLocal) return;
 
     const token = localStorage.getItem('token');
     const src = streamUrl(currentTrack.id, token);
@@ -111,7 +112,7 @@ export default function PlayerBar() {
       audio.removeEventListener('canplay', onCanPlay);
       audio.removeEventListener('error', onError);
     };
-  }, [currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, canPlayLocal, isPreparingPlayback, isSpotifyMode, isRemoteActive, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering]);
+  }, [currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, canPlayLocal, isSpotifyMode, isRemoteActive, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering]);
 
   useEffect(() => {
     if (isSpotifyMode) return;
@@ -153,7 +154,7 @@ export default function PlayerBar() {
   // Play/pause — keep audio src intact on pause so resume continues from same position
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || isPreparingPlayback || isSpotifyMode || !currentTrack || !canPlayLocal || isRemoteActive) return;
+    if (!audio || isSpotifyMode || !currentTrack || !canPlayLocal || isRemoteActive) return;
 
     if (isPlaying) {
       const startPlayback = () => {
@@ -172,7 +173,7 @@ export default function PlayerBar() {
     } else {
       audio.pause();
     }
-  }, [isPlaying, isPreparingPlayback, isSpotifyMode, isRemoteActive, canPlayLocal, currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, setIsPlaying]);
+  }, [isPlaying, isSpotifyMode, isRemoteActive, canPlayLocal, currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, setIsPlaying]);
 
   useEffect(() => {
     if (!isSpotifyMode && audioRef.current) {

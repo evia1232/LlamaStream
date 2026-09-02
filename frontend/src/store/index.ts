@@ -238,10 +238,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const canPlayLocal = canStreamTrackLocally(track);
     const stale = () => generation !== get()._playGeneration;
 
+    const streamableTrack = canPlayLocal
+      ? { ...track, streamUrl: track.streamUrl || `/api/tracks/${track.id}/stream` }
+      : track;
+
     set({
-      currentTrack: track,
-      isPlaying: false,
-      isPreparingPlayback: !canPlayLocal && !useSpotify,
+      currentTrack: streamableTrack,
+      isPlaying: !useSpotify,
+      isPreparingPlayback: !useSpotify && !canPlayLocal,
+      isBuffering: !useSpotify,
       currentTime: startTime,
       pendingSeekTime: startTime,
       lyrics: null,
@@ -252,12 +257,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (canPlayLocal && !useSpotify) {
       if (stale()) return;
       set({
-        isPlaying: true,
-        isPreparingPlayback: false,
-        isBuffering: true,
-        playbackEngine: 'local',
-        currentTime: startTime,
-        pendingSeekTime: startTime,
         duration: track.duration || get().duration,
       });
       saveLocalPlayback({
@@ -303,15 +302,24 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     try {
+      set({
+        isPlaying: true,
+        isBuffering: true,
+        isPreparingPlayback: true,
+        playbackEngine: 'local',
+      });
+
       const ready = await prepareTrackForPlayback(track);
       if (stale()) return;
       set({
         currentTrack: ready,
         isPlaying: true,
         isPreparingPlayback: false,
+        isBuffering: true,
         playbackEngine: 'local',
         currentTime: startTime,
         pendingSeekTime: startTime,
+        duration: ready.duration || track.duration || get().duration,
       });
       saveLocalPlayback({
         trackId: ready.id,
@@ -320,14 +328,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         volume: get().volume,
         savedAt: Date.now(),
       });
-      await api.post(`/tracks/${ready.id}/play`);
+      void api.post(`/tracks/${ready.id}/play`);
       if (stale()) return;
-      get().fetchLyrics(ready.id);
-      await get().persistPlayback();
+      void get().fetchLyrics(ready.id);
+      void get().persistPlayback();
       get().prefetchUpcoming();
       get().broadcastPlaybackSync();
     } catch {
-      if (!stale()) set({ isPreparingPlayback: false, isPlaying: false });
+      if (!stale()) set({ isPreparingPlayback: false, isPlaying: false, isBuffering: false });
     }
   },
 

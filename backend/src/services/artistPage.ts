@@ -53,6 +53,8 @@ function formatTrack(track: {
       id: track.id,
       isDownloaded: effectiveDownloadedFlag(track),
       sourceUrl: track.sourceUrl,
+      title: track.title,
+      artist: track.artist,
     }),
     spotifyArtistId: track.artist.spotifyArtistId ?? undefined,
   };

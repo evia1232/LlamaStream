@@ -32,6 +32,7 @@ export async function registerTrackInLibrary(track: Track): Promise<Track> {
       };
 
   const { data } = await api.post('/tracks/prefetch', payload);
+  if (data.track) return normalizeTrack(data.track);
   const { data: trackData } = await api.get(`/tracks/${data.trackId}`);
   return normalizeTrack(trackData.track);
 }
@@ -69,13 +70,20 @@ export async function ensureTrackDownloaded(track: Track): Promise<Track> {
 
 /** Resolve source and return a streamable library track without waiting for full download. */
 export async function prepareTrackForPlayback(track: Track): Promise<Track> {
-  if (track.isDownloaded || track.streamUrl) return track;
+  if (canStreamTrackLocally(track)) {
+    return { ...track, streamUrl: track.streamUrl || optimisticStreamUrl(track) };
+  }
 
   if (isLibraryId(track.id)) {
-    await api.post(`/tracks/${track.id}/prefetch`).catch(() => { /* ignore */ });
+    void api.post(`/tracks/${track.id}/prefetch`).catch(() => { /* ignore */ });
+    if (track.title && getArtistName(track.artist)) {
+      return { ...track, streamUrl: optimisticStreamUrl(track) };
+    }
     const { data } = await api.get(`/tracks/${track.id}`);
     const ready = normalizeTrack(data.track);
-    if (ready.streamUrl || ready.isDownloaded) return ready;
+    if (canStreamTrackLocally(ready)) {
+      return { ...ready, streamUrl: ready.streamUrl || optimisticStreamUrl(ready) };
+    }
     throw new Error('Track not ready for playback');
   }
 
@@ -101,9 +109,15 @@ export async function prepareTrackForPlayback(track: Track): Promise<Track> {
   return normalizeTrack(data.track);
 }
 
+/** True when the browser can hit /tracks/:id/stream right now (library track with metadata or cached file). */
 export function canStreamTrackLocally(track: Track | null | undefined): boolean {
-  if (!track) return false;
-  return !!(track.streamUrl || track.isDownloaded);
+  if (!track || !isLibraryId(track.id)) return false;
+  if (track.isDownloaded || track.streamUrl) return true;
+  return !!(track.title && getArtistName(track.artist));
+}
+
+function optimisticStreamUrl(track: Track): string {
+  return `/api/tracks/${track.id}/stream`;
 }
 
 /** Start background download without blocking playback */

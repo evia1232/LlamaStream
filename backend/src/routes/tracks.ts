@@ -5,8 +5,8 @@ import { body, query } from 'express-validator';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { resolveAndDownload, downloadLibraryTrack, prefetchLibraryTrack, researchTrack, resolveYouTubeSource, upsertPendingTrack, prepareTrackForPlayback } from '../services/downloader';
-import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress, pipeYouTubeAudio } from '../services/trackDownload';
+import { resolveAndDownload, downloadLibraryTrack, prefetchLibraryTrack, researchTrack, resolveYouTubeSource, upsertPendingTrack, prepareTrackForPlayback, resolveAndAttachSourceInBackground } from '../services/downloader';
+import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress, pipeYouTubeAudio, pipeYouTubeSearch } from '../services/trackDownload';
 import { fetchLyricsForTrack } from '../services/lyrics';
 import { unifiedSearch } from '../services/search';
 import { isSpotifyUrl, isYouTubeUrl } from '../services/spotify';
@@ -45,7 +45,13 @@ function formatTrack(track: {
   album?: { id: string; title: string; coverUrl: string | null } | null;
 }) {
   const isDownloaded = effectiveDownloadedFlag(track);
-  const forStream = { id: track.id, isDownloaded, sourceUrl: track.sourceUrl };
+  const forStream = {
+    id: track.id,
+    isDownloaded,
+    sourceUrl: track.sourceUrl,
+    title: track.title,
+    artist: track.artist,
+  };
   return {
     id: track.id,
     title: track.title,
@@ -502,6 +508,21 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
     return;
   }
 
+  if (fresh.title && fresh.artist.name) {
+    const quality = parseStoredQuality(fresh.quality);
+    const query = `${fresh.artist.name} - ${fresh.title}`;
+    if (!isDownloadInProgress(fresh.id)) {
+      resolveAndAttachSourceInBackground(fresh.id, query, quality, {
+        title: fresh.title,
+        artist: fresh.artist.name,
+        duration: fresh.duration > 0 ? fresh.duration : undefined,
+        album: fresh.album?.title,
+      });
+    }
+    pipeYouTubeSearch(query, quality, req, res);
+    return;
+  }
+
   return res.status(404).json({ error: 'Track not ready for playback' });
 });
 
@@ -590,30 +611,33 @@ router.post('/prefetch', authenticate, async (req: AuthRequest, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
     const quality = user?.audioQuality || 'HIGH';
-    const { url, spotifyUrl, title, artist, duration } = req.body as {
+    const { url, spotifyUrl, title, artist, duration, album, thumbnailUrl } = req.body as {
       url?: string;
       spotifyUrl?: string;
       title?: string;
       artist?: string;
       duration?: number;
+      album?: string;
+      thumbnailUrl?: string;
     };
 
-    if (spotifyUrl) {
-      const source = await resolveYouTubeSource(
-        title && artist ? `${artist} - ${title}` : spotifyUrl,
-        { spotifyUrl, title, artist, duration, relaxed: true }
-      );
-      const track = await upsertPendingTrack(source, quality, title, artist);
-      ensureBackgroundDownload(track.id, source.url, quality, { title, artist });
-      return res.json({ trackId: track.id, status: 'prefetching' });
+    let input = url || spotifyUrl || '';
+    if (!input && !(title && artist)) {
+      return res.status(400).json({ error: 'url, spotifyUrl, or title+artist required' });
     }
+    if (!input && title && artist) input = `${artist} - ${title}`;
 
-    if (!url) return res.status(400).json({ error: 'url or spotifyUrl required' });
-
-    const source = await resolveYouTubeSource(url, { url, title, artist, duration, relaxed: true });
-    const track = await upsertPendingTrack(source, quality, title, artist);
-    ensureBackgroundDownload(track.id, source.url, quality, { title, artist });
-    res.json({ trackId: track.id, status: 'prefetching' });
+    const track = await prepareTrackForPlayback(input, quality, {
+      url,
+      spotifyUrl,
+      title,
+      artist,
+      duration,
+      album,
+      thumbnailUrl,
+      relaxed: true,
+    });
+    res.json({ trackId: track.id, status: 'prefetching', track: formatTrack(track) });
   } catch (err) {
     console.error('Prefetch error:', err);
     res.status(500).json({ error: (err as Error).message });

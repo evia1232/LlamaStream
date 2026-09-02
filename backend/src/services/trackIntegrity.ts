@@ -5,14 +5,17 @@ export function trackFileExists(track: { filePath: string | null | undefined }):
   return !!(track.filePath && fs.existsSync(track.filePath));
 }
 
-/** True when the track can be streamed (local file or YouTube source). */
+/** True when the track can be streamed (local file, YouTube source, or title for search stream). */
 export function isTrackPlayable(track: {
   isDownloaded: boolean;
   filePath: string | null | undefined;
   sourceUrl: string | null | undefined;
+  title?: string;
+  artist?: { name: string } | null;
 }): boolean {
   if (trackFileExists(track)) return true;
-  return !!track.sourceUrl;
+  if (track.sourceUrl) return true;
+  return !!(track.title && track.artist?.name);
 }
 
 /** Mark DB row stale when isDownloaded but the MP3 is missing. */

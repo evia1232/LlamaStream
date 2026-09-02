@@ -57,8 +57,17 @@ export function cancelBackgroundDownload(trackId: string): void {
   activeDownloads.delete(trackId);
 }
 
-export function trackStreamUrl(track: { id: string; isDownloaded: boolean; sourceUrl?: string | null }): string | null {
+export function trackStreamUrl(track: {
+  id: string;
+  isDownloaded: boolean;
+  sourceUrl?: string | null;
+  title?: string;
+  artist?: { name: string } | null;
+}): string | null {
   if (track.isDownloaded || track.sourceUrl) {
+    return `/api/tracks/${track.id}/stream`;
+  }
+  if (track.title && track.artist?.name) {
     return `/api/tracks/${track.id}/stream`;
   }
   return null;
@@ -172,6 +181,49 @@ export function pipeYouTubeAudio(
   proc.on('close', (code) => {
     if (code !== 0) {
       console.error('[Stream] Pipe closed with error:', lastLines(stderr));
+    }
+    if (!res.writableEnded) res.end();
+  });
+
+  req.on('close', () => {
+    if (!proc.killed) proc.kill('SIGKILL');
+  });
+
+  return proc;
+}
+
+/** Stream audio via yt-dlp search — starts quickly without a resolved source URL. */
+export function pipeYouTubeSearch(
+  searchQuery: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH',
+  req: { on: (event: string, cb: () => void) => void },
+  res: Response,
+): ChildProcess {
+  const proc = spawn('yt-dlp', [
+    ...YTDLP_BASE,
+    ...ytDlpAudioExtractArgs(quality),
+    '-o', '-',
+    `ytsearch1:${searchQuery}`,
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Accept-Ranges', 'none');
+
+  proc.stdout.pipe(res);
+
+  let stderr = '';
+  proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+
+  proc.on('error', (err) => {
+    console.error('[Stream] Search pipe error:', err.message);
+    if (!res.headersSent) res.status(502).end();
+    else if (!res.writableEnded) res.end();
+  });
+
+  proc.on('close', (code) => {
+    if (code !== 0) {
+      console.error('[Stream] Search pipe closed with error:', lastLines(stderr));
     }
     if (!res.writableEnded) res.end();
   });
