@@ -16,6 +16,7 @@ import { DevicePickerButton } from './DevicePicker';
 import { openTrackContextMenu } from '../../store/trackMenuStore';
 import { useMediaSession } from '../../hooks/useMediaSession';
 import { useSpotifyPlaybackSync } from '../../hooks/useSpotifyPlaybackSync';
+import { canStreamTrackLocally } from '../../lib/ensureDownload';
 import { effectivePlaybackVolume, isMobileViewport } from '../../lib/volume';
 
 function formatTime(seconds: number) {
@@ -46,6 +47,7 @@ export default function PlayerBar() {
     setIsBuffering, isRemoteActive, activeDeviceName, sendRemoteCommand, prefetchUpcoming, resolveNextTrack,
   } = usePlayerStore();
 
+  const canPlayLocal = canStreamTrackLocally(currentTrack);
   const isLiked = currentTrack ? isTrackLiked(currentTrack, likedTrackIds, likedPendingTracks) : false;
   const lastPersistRef = useRef(0);
   const loadTokenRef = useRef(0);
@@ -57,7 +59,7 @@ export default function PlayerBar() {
   // Load local MP3 source and wait for buffer before playing
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || isSpotifyMode || !currentTrack?.isDownloaded || isPreparingPlayback || isRemoteActive) return;
+    if (!audio || isSpotifyMode || !currentTrack || !canPlayLocal || isPreparingPlayback || isRemoteActive) return;
 
     const token = localStorage.getItem('token');
     const src = streamUrl(currentTrack.id, token);
@@ -101,7 +103,7 @@ export default function PlayerBar() {
       audio.removeEventListener('canplay', onCanPlay);
       audio.removeEventListener('error', onError);
     };
-  }, [currentTrack?.id, currentTrack?.isDownloaded, isPreparingPlayback, isSpotifyMode, isRemoteActive, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering]);
+  }, [currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, canPlayLocal, isPreparingPlayback, isSpotifyMode, isRemoteActive, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering]);
 
   useEffect(() => {
     if (isSpotifyMode) return;
@@ -143,7 +145,7 @@ export default function PlayerBar() {
   // Play/pause — keep audio src intact on pause so resume continues from same position
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || isPreparingPlayback || isSpotifyMode || !currentTrack?.isDownloaded || isRemoteActive) return;
+    if (!audio || isPreparingPlayback || isSpotifyMode || !currentTrack || !canPlayLocal || isRemoteActive) return;
 
     if (isPlaying) {
       const startPlayback = () => {
@@ -162,7 +164,7 @@ export default function PlayerBar() {
     } else {
       audio.pause();
     }
-  }, [isPlaying, isPreparingPlayback, isSpotifyMode, isRemoteActive, currentTrack?.id, currentTrack?.isDownloaded, setIsPlaying]);
+  }, [isPlaying, isPreparingPlayback, isSpotifyMode, isRemoteActive, canPlayLocal, currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, setIsPlaying]);
 
   useEffect(() => {
     if (!isSpotifyMode && audioRef.current) {
@@ -195,7 +197,7 @@ export default function PlayerBar() {
   useEffect(() => {
     if (isSpotifyMode || isRemoteActive) return;
     const next = resolveNextTrack();
-    if (!next?.track.isDownloaded) return;
+    if (!next?.track || !canStreamTrackLocally(next.track)) return;
 
     const token = localStorage.getItem('token');
     const src = streamUrl(next.track.id, token);
@@ -235,7 +237,7 @@ export default function PlayerBar() {
 
   // Smooth progress updates while local audio plays (timeupdate alone is too coarse)
   useEffect(() => {
-    if (isSpotifyMode || isRemoteActive || !isPlaying || !currentTrack?.isDownloaded) return;
+    if (isSpotifyMode || isRemoteActive || !isPlaying || !canPlayLocal) return;
     let raf = 0;
     let last = -1;
 
@@ -256,7 +258,7 @@ export default function PlayerBar() {
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isPlaying, isSpotifyMode, isRemoteActive, currentTrack?.id, currentTrack?.isDownloaded, setCurrentTime, setDuration]);
+  }, [isPlaying, isSpotifyMode, isRemoteActive, canPlayLocal, currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, setCurrentTime, setDuration]);
 
   // Smooth progress while remote device plays (WS sync is every ~3s)
   useEffect(() => {
@@ -332,8 +334,8 @@ export default function PlayerBar() {
   const showPreparing = isPreparingPlayback || isBuffering;
   const preparingLabel = isBuffering && !isPreparingPlayback
     ? t('switchingTrack')
-    : isPreparingPlayback && !isSpotifyMode && !currentTrack.isDownloaded
-      ? t('downloading')
+    : isPreparingPlayback && !isSpotifyMode && !canPlayLocal
+      ? t('preparingPlayback')
       : t('preparingPlayback');
 
   const transportControls = (

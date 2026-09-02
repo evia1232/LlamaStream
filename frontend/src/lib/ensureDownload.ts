@@ -67,6 +67,45 @@ export async function ensureTrackDownloaded(track: Track): Promise<Track> {
   return normalizeTrack(data.track);
 }
 
+/** Resolve source and return a streamable library track without waiting for full download. */
+export async function prepareTrackForPlayback(track: Track): Promise<Track> {
+  if (track.isDownloaded || track.streamUrl) return track;
+
+  if (isLibraryId(track.id)) {
+    await api.post(`/tracks/${track.id}/prefetch`).catch(() => { /* ignore */ });
+    const { data } = await api.get(`/tracks/${track.id}`);
+    const ready = normalizeTrack(data.track);
+    if (ready.streamUrl || ready.isDownloaded) return ready;
+    throw new Error('Track not ready for playback');
+  }
+
+  const artistName = getArtistName(track.artist);
+  const payload = track.youtubeUrl
+    ? {
+        url: track.youtubeUrl,
+        title: track.title,
+        artist: artistName,
+        duration: track.duration,
+        album: track.album?.title,
+      }
+    : {
+        query: `${artistName} - ${track.title}`,
+        spotifyUrl: track.spotifyUrl,
+        title: track.title,
+        artist: artistName,
+        duration: track.duration,
+        album: track.album?.title,
+      };
+
+  const { data } = await api.post('/tracks/prepare-playback', payload);
+  return normalizeTrack(data.track);
+}
+
+export function canStreamTrackLocally(track: Track | null | undefined): boolean {
+  if (!track) return false;
+  return !!(track.streamUrl || track.isDownloaded);
+}
+
 /** Start background download without blocking playback */
 export function prefetchTrack(track: Track): void {
   if (track.isDownloaded) return;

@@ -13,7 +13,7 @@ import {
   saveAutoplayEnabled,
 } from '../lib/playbackStorage';
 import { normalizeTrack } from '../lib/trackUtils';
-import { ensureTrackDownloaded, prefetchTrack, prefetchDiscoverNext, registerTrackInLibrary, isLibraryId } from '../lib/ensureDownload';
+import { ensureTrackDownloaded, prepareTrackForPlayback, prefetchTrack, prefetchDiscoverNext, registerTrackInLibrary, isLibraryId, canStreamTrackLocally } from '../lib/ensureDownload';
 import { loadLikedIds, saveLikedIds } from '../lib/likedStorage';
 import { canStreamFromSpotify, getSpotifyTrackUri } from '../lib/spotifyTrack';
 import { useSpotifyPlayerStore } from './spotifyPlayerStore';
@@ -235,20 +235,21 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const spotifyStatus = user?.spotify ?? { connected: false, premium: false };
     const spotifyUri = getSpotifyTrackUri(track);
     const useSpotify = !track.isDownloaded && canStreamFromSpotify(track, spotifyStatus) && !!spotifyUri;
+    const canPlayLocal = canStreamTrackLocally(track);
     const stale = () => generation !== get()._playGeneration;
 
     set({
       currentTrack: track,
       isPlaying: false,
-      isPreparingPlayback: !track.isDownloaded && !useSpotify,
+      isPreparingPlayback: !canPlayLocal && !useSpotify,
       currentTime: startTime,
       pendingSeekTime: startTime,
       lyrics: null,
       playbackEngine: useSpotify ? 'spotify' : 'local',
     });
 
-    // Fast path: already downloaded locally
-    if (track.isDownloaded && !useSpotify) {
+    // Fast path: stream from cache or pipe YouTube while downloading in background
+    if (canPlayLocal && !useSpotify) {
       if (stale()) return;
       set({
         isPlaying: true,
@@ -302,7 +303,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     try {
-      const ready = await ensureTrackDownloaded(track);
+      const ready = await prepareTrackForPlayback(track);
       if (stale()) return;
       set({
         currentTrack: ready,
@@ -452,7 +453,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         get().removeFromQueue(resolved.queueItemId);
       }
       set({
-        isPreparingPlayback: !resolved.track.isDownloaded,
+        isPreparingPlayback: !resolved.track.isDownloaded && !resolved.track.streamUrl,
         isBuffering: true,
         isPlaying: false,
         duration: resolved.track.duration || 0,
