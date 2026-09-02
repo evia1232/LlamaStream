@@ -7,8 +7,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { body, validationResult } from 'express-validator';
 import { authenticate, AuthRequest, optionalAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
-import { exportPlaylist } from '../services/spotify';
-import { startPlaylistImport, getImportJobStatus, importSpotifyPlaylist, listActiveImportJobs } from '../services/playlistImport';
+import { exportPlaylist, listUserSpotifyPlaylists } from '../services/spotify';
+import { startPlaylistImport, startSpotifyPlaylistsImport, getImportJobStatus, importSpotifyPlaylist, listActiveImportJobs } from '../services/playlistImport';
 import { trackStreamUrl } from '../services/trackDownload';
 import { addTrackToPlaylist, nextPlaylistPosition } from '../lib/playlistTracks';
 import { prefetchLibraryTrack } from '../services/downloader';
@@ -274,6 +274,39 @@ router.put('/:id/tracks/reorder', authenticate, async (req: AuthRequest, res) =>
     });
   }
   res.json({ success: true });
+});
+
+router.get('/spotify/library', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const playlists = await listUserSpotifyPlaylists(req.user!.userId);
+    res.json({ playlists });
+  } catch (err) {
+    const message = (err as Error).message;
+    const status = message.includes('not connected') ? 401 : 500;
+    res.status(status).json({ error: message });
+  }
+});
+
+router.post('/import/spotify/selected', authenticate, async (req: AuthRequest, res) => {
+  const { playlistIds } = req.body as { playlistIds?: string[] };
+  if (!Array.isArray(playlistIds) || playlistIds.length === 0) {
+    return res.status(400).json({ error: 'playlistIds array required' });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+
+  try {
+    const result = await startSpotifyPlaylistsImport(
+      playlistIds,
+      req.user!.userId,
+      user?.audioQuality || 'HIGH',
+    );
+    res.status(202).json(result);
+  } catch (err) {
+    const message = (err as Error).message;
+    const status = message.includes('Connect Spotify') ? 401 : 500;
+    res.status(status).json({ error: message });
+  }
 });
 
 router.post('/import/spotify', authenticate, async (req: AuthRequest, res) => {

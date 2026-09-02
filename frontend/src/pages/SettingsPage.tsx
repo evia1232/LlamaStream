@@ -1,13 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import clsx from 'clsx';
 import i18n from '../i18n';
 import { applyDocumentDirection } from '../lib/direction';
 import { useAuthStore, usePlayerStore } from '../store';
 import api from '../api/client';
 import { User } from '../types';
-import { Trash2, UserPlus, HardDrive, Infinity, Music2, Palette } from 'lucide-react';
+import { Trash2, UserPlus, HardDrive, Infinity, Music2, Palette, LogOut } from 'lucide-react';
 import { fetchThemeSettings, updateThemePreset, type ThemePreset } from '../lib/theme';
+
+type SettingsTab = 'profile' | 'playback' | 'search' | 'storage' | 'admin';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -16,10 +19,41 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+function ToggleSwitch({
+  checked,
+  onToggle,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={onToggle}
+      className={clsx(
+        'relative w-11 h-6 rounded-full transition-colors shrink-0',
+        checked ? 'bg-spotify-green' : 'bg-spotify-gray',
+      )}
+    >
+      <span
+        className={clsx(
+          'absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full transition-transform',
+          checked && 'translate-x-5 rtl:-translate-x-5',
+        )}
+      />
+    </button>
+  );
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation();
-  const { user, updateProfile } = useAuthStore();
+  const { user, updateProfile, logout } = useAuthStore();
   const { autoplay, toggleAutoplay } = usePlayerStore();
+  const isAdmin = user?.role === 'ADMIN';
+
+  const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [language, setLanguage] = useState(user?.language || 'he');
   const [audioQuality, setAudioQuality] = useState(user?.audioQuality || 'HIGH');
@@ -27,7 +61,6 @@ export default function SettingsPage() {
   const [searchYoutubeEnabled, setSearchYoutubeEnabled] = useState(user?.searchYoutubeEnabled ?? true);
   const [saved, setSaved] = useState(false);
 
-  // Admin user management
   const [users, setUsers] = useState<User[]>([]);
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', username: '', password: '', role: 'USER' });
@@ -45,15 +78,28 @@ export default function SettingsPage() {
   const [spotifyLoading, setSpotifyLoading] = useState(false);
   const [spotifyRedirectUri, setSpotifyRedirectUri] = useState('');
 
+  const tabs = useMemo(() => {
+    const items: { id: SettingsTab; label: string }[] = [
+      { id: 'profile', label: t('profile') },
+      { id: 'playback', label: t('settingsTabPlayback') },
+      { id: 'search', label: t('search') },
+      { id: 'storage', label: t('settingsTabStorage') },
+    ];
+    if (isAdmin) items.push({ id: 'admin', label: t('admin') });
+    return items;
+  }, [isAdmin, t]);
+
   useEffect(() => {
     const status = searchParams.get('spotify');
     if (!status) return;
     if (status === 'connected') {
       setSpotifyMsg(t('spotifyConnected'));
       void useAuthStore.getState().fetchUser();
+      setActiveTab('playback');
     } else if (status === 'no_premium') {
       setSpotifyMsg(t('spotifyNoPremium'));
       void useAuthStore.getState().fetchUser();
+      setActiveTab('playback');
     } else if (status === 'already_linked') {
       setSpotifyMsg(t('spotifyAlreadyLinked'));
     } else if (status === 'not_allowlisted') {
@@ -105,7 +151,7 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (user?.role === 'ADMIN') {
+    if (isAdmin) {
       api.get('/auth/users').then(({ data }) => setUsers(data.users)).catch(console.error);
       fetchThemeSettings()
         .then((data) => {
@@ -114,7 +160,7 @@ export default function SettingsPage() {
         })
         .catch(console.error);
     }
-  }, [user]);
+  }, [isAdmin]);
 
   useEffect(() => {
     if (!user) return;
@@ -197,202 +243,240 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-2xl">
-      <h1 className="text-heading mb-8 md:mb-10">{t('settings')}</h1>
+    <div className="p-4 md:p-8 max-w-2xl mx-auto">
+      {/* Header + mobile logout shortcut */}
+      <div className="flex items-start justify-between gap-3 mb-5 md:mb-6">
+        <h1 className="text-heading">{t('settings')}</h1>
+        <button
+          type="button"
+          onClick={logout}
+          className="md:hidden flex items-center gap-2 shrink-0 px-3 py-2 rounded-full bg-spotify-lightgray text-spotify-text hover:text-white text-sm font-bold"
+          aria-label={t('logout')}
+        >
+          <LogOut className="w-4 h-4" />
+          {t('logout')}
+        </button>
+      </div>
+
+      {/* User card — mobile */}
+      <div className="md:hidden flex items-center gap-3 bg-spotify-lightgray rounded-xl p-4 mb-5">
+        <div className="w-14 h-14 rounded-full bg-spotify-gray overflow-hidden shrink-0">
+          {user?.avatarUrl ? (
+            <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-xl font-bold">
+              {user?.username?.[0]?.toUpperCase()}
+            </div>
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-bold truncate">{user?.displayName || user?.username}</p>
+          <p className="text-sm text-spotify-text truncate">{user?.email}</p>
+        </div>
+      </div>
+
+      {/* Tabs — sticky on mobile */}
+      <div className="sticky top-0 z-10 -mx-4 px-4 py-2 mb-5 bg-spotify-black/95 backdrop-blur-md md:static md:mx-0 md:px-0 md:py-0 md:bg-transparent md:backdrop-blur-none md:mb-8">
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-0.5">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={clsx(
+                'shrink-0 px-4 py-2.5 rounded-full text-sm font-bold transition-colors whitespace-nowrap',
+                activeTab === tab.id
+                  ? 'bg-white text-black'
+                  : 'bg-spotify-lightgray text-spotify-text hover:text-white',
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Profile */}
-      <section className="mb-10">
-        <h2 className="text-heading-sm mb-5">{t('profile')}</h2>
-        <div className="flex items-center gap-4 mb-4">
-          <div className="w-20 h-20 rounded-full bg-spotify-lightgray overflow-hidden">
-            {user?.avatarUrl ? (
-              <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-2xl font-bold">
-                {user?.username?.[0]?.toUpperCase()}
-              </div>
-            )}
+      {activeTab === 'profile' && (
+        <section className="space-y-5">
+          <div className="hidden md:flex items-center gap-4">
+            <div className="w-20 h-20 rounded-full bg-spotify-lightgray overflow-hidden shrink-0">
+              {user?.avatarUrl ? (
+                <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-2xl font-bold">
+                  {user?.username?.[0]?.toUpperCase()}
+                </div>
+              )}
+            </div>
+            <label className="green-btn py-2 px-4 text-sm cursor-pointer">
+              {t('uploadAvatar')}
+              <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+            </label>
           </div>
-          <label className="green-btn py-2 px-4 text-sm cursor-pointer">
+
+          <label className="md:hidden green-btn py-2.5 px-4 text-sm cursor-pointer inline-block">
             {t('uploadAvatar')}
             <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
           </label>
-        </div>
 
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm text-spotify-text mb-1">{t('displayName')}</label>
-            <input
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              className="input-spotify"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-spotify-text mb-1">{t('language')}</label>
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              className="input-spotify"
-            >
-              <option value="he">{t('hebrew')}</option>
-              <option value="en">{t('english')}</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm text-spotify-text mb-1">{t('audioQuality')}</label>
-            <select
-              value={audioQuality}
-              onChange={(e) => setAudioQuality(e.target.value as 'LOW' | 'NORMAL' | 'HIGH')}
-              className="input-spotify"
-            >
-              <option value="LOW">{t('qualityLow')}</option>
-              <option value="NORMAL">{t('qualityNormal')}</option>
-              <option value="HIGH">{t('qualityHigh')}</option>
-            </select>
-          </div>
-
-          <button onClick={handleSave} className="green-btn">
-            {saved ? t('success') : t('save')}
-          </button>
-        </div>
-      </section>
-
-      {/* Search preferences */}
-      <section className="mb-10">
-        <h2 className="text-heading-sm mb-5">{t('searchPreferences')}</h2>
-        <div className="space-y-3">
-          <label className="flex items-center justify-between bg-spotify-lightgray rounded-lg p-4 cursor-pointer">
+          <div className="space-y-4">
             <div>
+              <label className="block text-sm text-spotify-text mb-1.5">{t('displayName')}</label>
+              <input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="input-spotify"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-spotify-text mb-1.5">{t('language')}</label>
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="input-spotify"
+              >
+                <option value="he">{t('hebrew')}</option>
+                <option value="en">{t('english')}</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm text-spotify-text mb-1.5">{t('audioQuality')}</label>
+              <select
+                value={audioQuality}
+                onChange={(e) => setAudioQuality(e.target.value as 'LOW' | 'NORMAL' | 'HIGH')}
+                className="input-spotify"
+              >
+                <option value="LOW">{t('qualityLow')}</option>
+                <option value="NORMAL">{t('qualityNormal')}</option>
+                <option value="HIGH">{t('qualityHigh')}</option>
+              </select>
+            </div>
+
+            <button onClick={handleSave} className="green-btn w-full md:w-auto">
+              {saved ? t('success') : t('save')}
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={logout}
+            className="w-full flex items-center justify-center gap-2 mt-4 py-3.5 rounded-xl border border-red-500/30 bg-red-900/20 text-red-300 hover:bg-red-900/40 font-bold transition-colors"
+          >
+            <LogOut className="w-5 h-5" />
+            {t('logout')}
+          </button>
+        </section>
+      )}
+
+      {/* Playback */}
+      {activeTab === 'playback' && (
+        <section className="space-y-5">
+          <div className="bg-spotify-lightgray rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Infinity className="w-5 h-5 text-spotify-green shrink-0" />
+              <p className="font-bold">{t('autoplay')}</p>
+            </div>
+            <p className="text-sm text-spotify-text mb-4">{t('autoplayHint')}</p>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">{t('autoplay')}</span>
+              <ToggleSwitch checked={autoplay} onToggle={toggleAutoplay} />
+            </div>
+          </div>
+
+          <div className="bg-spotify-lightgray rounded-xl p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Music2 className="w-5 h-5 text-spotify-green shrink-0" />
+              <p className="font-bold">{t('spotifyAccount')}</p>
+            </div>
+            <p className="text-sm text-spotify-text">{t('spotifyAccountHint')}</p>
+            {spotifyRedirectUri && (
+              <div className="text-xs bg-spotify-gray rounded-lg p-3 space-y-1">
+                <p className="text-spotify-text">{t('spotifyRedirectHint')}</p>
+                <p className="font-mono text-white break-all select-all" dir="ltr">{spotifyRedirectUri}</p>
+              </div>
+            )}
+            {user?.spotify?.connected ? (
+              <div className="space-y-3">
+                <p className="text-sm">
+                  {user.spotify.premium ? t('spotifyPremiumActive') : t('spotifyFreeAccount')}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void disconnectSpotify()}
+                  disabled={spotifyLoading}
+                  className="w-full md:w-auto bg-spotify-gray hover:bg-white/10 rounded-full py-2.5 px-5 text-sm font-bold disabled:opacity-50"
+                >
+                  {t('spotifyDisconnect')}
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void connectSpotify()}
+                disabled={spotifyLoading}
+                className="green-btn w-full md:w-auto disabled:opacity-50"
+              >
+                {spotifyLoading ? t('loading') : t('spotifyConnect')}
+              </button>
+            )}
+            {spotifyMsg && <p className="text-sm text-spotify-green">{spotifyMsg}</p>}
+          </div>
+        </section>
+      )}
+
+      {/* Search */}
+      {activeTab === 'search' && (
+        <section className="space-y-3">
+          <p className="text-sm text-spotify-text mb-2">{t('searchPreferences')}</p>
+          <div className="bg-spotify-lightgray rounded-xl p-4 flex items-center justify-between gap-4">
+            <div className="min-w-0">
               <p className="font-medium">{t('searchSpotifyEnabled')}</p>
               <p className="text-sm text-spotify-text mt-1">{t('searchSpotifyHint')}</p>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={searchSpotifyEnabled}
-              onClick={() => setSearchSpotifyEnabled((v) => !v)}
-              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${searchSpotifyEnabled ? 'bg-spotify-green' : 'bg-spotify-gray'}`}
-            >
-              <span
-                className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full transition-transform ${searchSpotifyEnabled ? 'translate-x-5' : ''}`}
-              />
-            </button>
-          </label>
-          <label className="flex items-center justify-between bg-spotify-lightgray rounded-lg p-4 cursor-pointer">
-            <div>
+            <ToggleSwitch
+              checked={searchSpotifyEnabled}
+              onToggle={() => setSearchSpotifyEnabled((v) => !v)}
+            />
+          </div>
+          <div className="bg-spotify-lightgray rounded-xl p-4 flex items-center justify-between gap-4">
+            <div className="min-w-0">
               <p className="font-medium">{t('searchYoutubeEnabled')}</p>
               <p className="text-sm text-spotify-text mt-1">{t('searchYoutubeHint')}</p>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={searchYoutubeEnabled}
-              onClick={() => setSearchYoutubeEnabled((v) => !v)}
-              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${searchYoutubeEnabled ? 'bg-spotify-green' : 'bg-spotify-gray'}`}
-            >
-              <span
-                className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full transition-transform ${searchYoutubeEnabled ? 'translate-x-5' : ''}`}
-              />
-            </button>
-          </label>
-        </div>
-      </section>
-
-      {/* Spotify Premium streaming */}
-      <section className="mb-10">
-        <h2 className="text-heading-sm mb-5 flex items-center gap-2">
-          <Music2 className="w-5 h-5 text-spotify-green" />
-          {t('spotifyAccount')}
-        </h2>
-        <div className="bg-spotify-lightgray rounded-lg p-4 space-y-3">
-          <p className="text-sm text-spotify-text">{t('spotifyAccountHint')}</p>
-          {spotifyRedirectUri && (
-            <div className="text-xs bg-spotify-gray rounded-md p-3 space-y-1">
-              <p className="text-spotify-text">{t('spotifyRedirectHint')}</p>
-              <p className="font-mono text-white break-all select-all" dir="ltr">{spotifyRedirectUri}</p>
-            </div>
-          )}
-          {user?.spotify?.connected ? (
-            <div className="space-y-3">
-              <p className="text-sm">
-                {user.spotify.premium ? t('spotifyPremiumActive') : t('spotifyFreeAccount')}
-              </p>
-              <button
-                type="button"
-                onClick={() => void disconnectSpotify()}
-                disabled={spotifyLoading}
-                className="bg-spotify-gray hover:bg-white/10 rounded-full py-2 px-5 text-sm disabled:opacity-50"
-              >
-                {t('spotifyDisconnect')}
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void connectSpotify()}
-              disabled={spotifyLoading}
-              className="green-btn disabled:opacity-50"
-            >
-              {spotifyLoading ? t('loading') : t('spotifyConnect')}
-            </button>
-          )}
-          {spotifyMsg && <p className="text-sm text-spotify-green">{spotifyMsg}</p>}
-        </div>
-      </section>
-
-      {/* Playback */}
-      <section className="mb-10">
-        <h2 className="text-heading-sm mb-5 flex items-center gap-2">
-          <Infinity className="w-5 h-5 text-spotify-green" />
-          {t('autoplay')}
-        </h2>
-        <label className="flex items-center justify-between bg-spotify-lightgray rounded-lg p-4 cursor-pointer">
-          <div>
-            <p className="font-medium">{t('autoplay')}</p>
-            <p className="text-sm text-spotify-text mt-1">{t('autoplayHint')}</p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoplay}
-            onClick={toggleAutoplay}
-            className={`relative w-11 h-6 rounded-full transition-colors ${autoplay ? 'bg-spotify-green' : 'bg-spotify-gray'}`}
-          >
-            <span
-              className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full transition-transform ${autoplay ? 'translate-x-5' : ''}`}
+            <ToggleSwitch
+              checked={searchYoutubeEnabled}
+              onToggle={() => setSearchYoutubeEnabled((v) => !v)}
             />
-          </button>
-        </label>
-      </section>
-
-      {/* Library management */}
-      <section className="mb-10">
-        <h2 className="text-heading-sm mb-5 flex items-center gap-2">
-          <HardDrive className="w-5 h-5 text-spotify-green" />
-          {t('libraryManagement')}
-        </h2>
-
-        {libraryStats && (
-          <div className="bg-spotify-lightgray rounded-lg p-4 mb-4 space-y-1 text-sm">
-            <p>{t('downloadedTracks')}: <span className="text-white font-medium">{libraryStats.downloadedCount}</span></p>
-            <p>{t('storageUsed')}: <span className="text-white font-medium">{formatBytes(libraryStats.totalBytes)}</span></p>
           </div>
-        )}
+          <button onClick={handleSave} className="green-btn w-full md:w-auto mt-2">
+            {saved ? t('success') : t('save')}
+          </button>
+        </section>
+      )}
 
-        <div className="space-y-3">
+      {/* Storage */}
+      {activeTab === 'storage' && (
+        <section className="space-y-4">
+          {libraryStats && (
+            <div className="bg-spotify-lightgray rounded-xl p-4 space-y-1 text-sm">
+              <p>{t('downloadedTracks')}: <span className="text-white font-medium">{libraryStats.downloadedCount}</span></p>
+              <p>{t('storageUsed')}: <span className="text-white font-medium">{formatBytes(libraryStats.totalBytes)}</span></p>
+            </div>
+          )}
+
           <button
             onClick={() => handleCleanup('all')}
             disabled={cleaning}
-            className="w-full flex items-center justify-center gap-2 bg-red-900/40 hover:bg-red-900/60 border border-red-500/40 text-red-300 rounded-lg py-3 px-4 text-sm font-medium transition-colors disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-2 bg-red-900/40 hover:bg-red-900/60 border border-red-500/40 text-red-300 rounded-xl py-3.5 px-4 text-sm font-bold transition-colors disabled:opacity-50"
           >
             <Trash2 className="w-4 h-4" />
             {t('deleteAllTracks')}
           </button>
 
-          <div className="bg-spotify-lightgray rounded-lg p-4 space-y-3">
+          <div className="bg-spotify-lightgray rounded-xl p-4 space-y-3">
             <p className="text-sm text-spotify-text">{t('deleteRecentTracks')}</p>
             <div className="flex flex-wrap gap-2">
               {[1, 7, 30].map((d) => (
@@ -400,107 +484,114 @@ export default function SettingsPage() {
                   key={d}
                   type="button"
                   onClick={() => setCleanupDays(d)}
-                  className={`px-3 py-1.5 rounded-full text-sm ${cleanupDays === d ? 'bg-white text-black font-bold' : 'bg-spotify-gray text-spotify-text'}`}
+                  className={clsx(
+                    'px-3 py-2 rounded-full text-sm font-bold',
+                    cleanupDays === d ? 'bg-white text-black' : 'bg-spotify-gray text-spotify-text',
+                  )}
                 >
                   {d === 1 ? t('deleteLastDay') : t('deleteLastDays', { count: d })}
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <input
                 type="number"
                 min={1}
                 max={365}
                 value={cleanupDays}
                 onChange={(e) => setCleanupDays(Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-20 bg-spotify-gray rounded-md px-3 py-2 text-sm focus:outline-none"
+                className="w-20 bg-spotify-gray rounded-lg px-3 py-2.5 text-sm focus:outline-none"
               />
               <span className="text-sm text-spotify-text">{t('days')}</span>
               <button
                 onClick={() => handleCleanup('recent')}
                 disabled={cleaning}
-                className="ms-auto green-btn py-2 px-4 text-sm disabled:opacity-50"
+                className="ms-auto green-btn py-2.5 px-5 text-sm disabled:opacity-50"
               >
                 {t('delete')}
               </button>
             </div>
           </div>
 
-          {cleanupMsg && (
-            <p className="text-sm text-spotify-green">{cleanupMsg}</p>
-          )}
-        </div>
-      </section>
-
-      {/* Admin: Platform theme */}
-      {user?.role === 'ADMIN' && (
-        <section className="mb-10">
-          <div className="flex items-center gap-2 mb-4">
-            <Palette className="w-5 h-5 text-spotify-green" />
-            <h2 className="text-xl font-bold">{t('platformTheme')}</h2>
-          </div>
-          <p className="text-body mb-4">{t('platformThemeHint')}</p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {themePresets.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                disabled={themeSaving}
-                onClick={() => void handleThemeChange(p.id)}
-                className={`flex items-center gap-3 p-3 rounded-spotify-lg border-2 transition-all text-start ${
-                  themePreset === p.id
-                    ? 'border-spotify-green bg-spotify-lightgray'
-                    : 'border-transparent bg-spotify-gray hover:bg-spotify-lightgray'
-                }`}
-              >
-                <span
-                  className="w-8 h-8 rounded-full shrink-0 shadow-card"
-                  style={{ background: `linear-gradient(135deg, ${p.accent}, ${p.accentHover})` }}
-                />
-                <span className="text-sm font-bold truncate">{t(`theme_${p.id}`, p.label)}</span>
-              </button>
-            ))}
-          </div>
-          {themeMsg && <p className="text-sm text-spotify-green mt-3">{themeMsg}</p>}
+          {cleanupMsg && <p className="text-sm text-spotify-green">{cleanupMsg}</p>}
         </section>
       )}
 
-      {/* Admin Panel */}
-      {user?.role === 'ADMIN' && (
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold">{t('adminPanel')}</h2>
-            <button onClick={() => setShowCreateUser(true)} className="green-btn py-2 px-4 text-sm flex items-center gap-2">
-              <UserPlus className="w-4 h-4" />
-              {t('createUser')}
-            </button>
+      {/* Admin */}
+      {activeTab === 'admin' && isAdmin && (
+        <section className="space-y-8">
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Palette className="w-5 h-5 text-spotify-green" />
+              <h2 className="text-lg font-bold">{t('platformTheme')}</h2>
+            </div>
+            <p className="text-body mb-4">{t('platformThemeHint')}</p>
+            <div className="grid grid-cols-2 gap-3">
+              {themePresets.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={themeSaving}
+                  onClick={() => void handleThemeChange(p.id)}
+                  className={clsx(
+                    'flex items-center gap-3 p-3 rounded-xl border-2 transition-all text-start',
+                    themePreset === p.id
+                      ? 'border-spotify-green bg-spotify-lightgray'
+                      : 'border-transparent bg-spotify-gray hover:bg-spotify-lightgray',
+                  )}
+                >
+                  <span
+                    className="w-8 h-8 rounded-full shrink-0 shadow-card"
+                    style={{ background: `linear-gradient(135deg, ${p.accent}, ${p.accentHover})` }}
+                  />
+                  <span className="text-sm font-bold truncate">{t(`theme_${p.id}`, p.label)}</span>
+                </button>
+              ))}
+            </div>
+            {themeMsg && <p className="text-sm text-spotify-green mt-3">{themeMsg}</p>}
           </div>
 
-          <div className="space-y-2">
-            {users.map((u) => (
-              <div key={u.id} className="flex items-center gap-4 bg-spotify-lightgray rounded-md p-4">
-                <div className="w-10 h-10 rounded-full bg-spotify-gray flex items-center justify-center font-bold">
-                  {u.username[0].toUpperCase()}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold truncate">{u.displayName || u.username}</p>
-                  <p className="text-sm text-spotify-text truncate">{u.email}</p>
-                </div>
-                <span className={`text-xs px-2 py-1 rounded-full ${u.role === 'ADMIN' ? 'bg-spotify-green text-black' : 'bg-spotify-gray text-spotify-text'}`}>
-                  {u.role === 'ADMIN' ? t('admin') : t('user')}
-                </span>
-                {u.id !== user.id && (
-                  <button onClick={() => deleteUser(u.id)} className="icon-btn text-red-400">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
+          <div>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2">
+                <HardDrive className="w-5 h-5 text-spotify-green" />
+                <h2 className="text-lg font-bold">{t('adminPanel')}</h2>
               </div>
-            ))}
+              <button onClick={() => setShowCreateUser(true)} className="green-btn py-2 px-4 text-sm flex items-center gap-2 shrink-0">
+                <UserPlus className="w-4 h-4" />
+                <span className="hidden sm:inline">{t('createUser')}</span>
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {users.map((u) => (
+                <div key={u.id} className="flex items-center gap-3 bg-spotify-lightgray rounded-xl p-3 md:p-4">
+                  <div className="w-10 h-10 rounded-full bg-spotify-gray flex items-center justify-center font-bold shrink-0">
+                    {u.username[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold truncate">{u.displayName || u.username}</p>
+                    <p className="text-sm text-spotify-text truncate">{u.email}</p>
+                  </div>
+                  <span className={clsx(
+                    'text-xs px-2 py-1 rounded-full shrink-0',
+                    u.role === 'ADMIN' ? 'bg-spotify-green text-black' : 'bg-spotify-gray text-spotify-text',
+                  )}>
+                    {u.role === 'ADMIN' ? t('admin') : t('user')}
+                  </span>
+                  {u.id !== user?.id && (
+                    <button onClick={() => deleteUser(u.id)} className="icon-btn text-red-400 shrink-0">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
 
           {showCreateUser && (
-            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-              <div className="bg-spotify-gray rounded-lg p-6 w-full max-w-md">
+            <div className="fixed inset-0 bg-black/70 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+              <div className="bg-spotify-gray rounded-t-2xl sm:rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
                 <h3 className="text-xl font-bold mb-4">{t('createUser')}</h3>
                 <div className="space-y-3">
                   <input
@@ -533,7 +624,7 @@ export default function SettingsPage() {
                   </select>
                 </div>
                 <div className="flex gap-2 justify-end mt-4">
-                  <button onClick={() => setShowCreateUser(false)} className="px-4 py-2 text-spotify-text">{t('cancel')}</button>
+                  <button onClick={() => setShowCreateUser(false)} className="px-4 py-2 text-spotify-text font-bold">{t('cancel')}</button>
                   <button onClick={createUser} className="green-btn py-2 px-6">{t('createUser')}</button>
                 </div>
               </div>

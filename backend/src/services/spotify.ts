@@ -4,12 +4,14 @@ import { addTrackToPlaylist } from '../lib/playlistTracks';
 import { promoteTrackToLibrary } from './trackStorage';
 import {
   fetchSpotifyUrlTracks,
+  fetchSpotifyUserPlaylists,
   extractSpotifyTrackId,
   searchSpotifyTracks,
   getSpotifyStatus,
   isSpotifyConfigured,
   type SpotifySearchResult,
   type SpotifySearchResponse,
+  type SpotifyUserPlaylistSummary,
 } from './spotifyApi';
 import { getSpotifyAccessTokenForUser } from './spotifyOAuth';
 
@@ -20,9 +22,11 @@ export {
   isSpotifyConfigured,
   fetchSpotifyTrackByUrl,
   fetchSpotifyUrlTracks,
+  fetchSpotifyUserPlaylists,
   type SpotifySearchResult,
   type SpotifySearchResponse,
   type SpotifyUrlParseResult,
+  type SpotifyUserPlaylistSummary,
 } from './spotifyApi';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -60,16 +64,28 @@ export async function parseSpotifyUrl(url: string, userId?: string): Promise<{
   name: string;
   tracks: SpotifyTrackInfo[];
 }> {
+  const isPlaylist = /open\.spotify\.com\/playlist\//i.test(url);
+
   let userToken: string | undefined;
   if (userId) {
     try {
       userToken = await getSpotifyAccessTokenForUser(userId);
     } catch {
-      /* user not connected — fall back to app credentials */
+      if (isPlaylist) {
+        throw new Error('Connect Spotify in Settings to import playlists');
+      }
     }
+  } else if (isPlaylist) {
+    throw new Error('Connect Spotify in Settings to import playlists');
   }
 
-  const apiResult = await fetchSpotifyUrlTracks(url, { accessToken: userToken });
+  const userAuthenticated = !!userToken;
+  const apiResult = await fetchSpotifyUrlTracks(url, {
+    accessToken: userToken,
+    userAuthenticated,
+    requireComplete: isPlaylist,
+  });
+
   if (apiResult && apiResult.tracks.length > 0) {
     return {
       name: apiResult.name,
@@ -84,6 +100,14 @@ export async function parseSpotifyUrl(url: string, userId?: string): Promise<{
         source: 'spotify' as const,
       })),
     };
+  }
+
+  if (isPlaylist) {
+    throw new Error(
+      userAuthenticated
+        ? 'Could not load playlist from Spotify. Try disconnecting and reconnecting in Settings.'
+        : 'Connect Spotify in Settings to import playlists',
+    );
   }
 
   const tracks = await spotifyUrlInfo.getTracks(url);
@@ -113,6 +137,11 @@ export async function parseSpotifyUrl(url: string, userId?: string): Promise<{
   } catch { /* ignore */ }
 
   return { name: playlistName, tracks: parsed };
+}
+
+export async function listUserSpotifyPlaylists(userId: string): Promise<SpotifyUserPlaylistSummary[]> {
+  const token = await getSpotifyAccessTokenForUser(userId);
+  return fetchSpotifyUserPlaylists(token);
 }
 
 export async function importSpotifyPlaylist(

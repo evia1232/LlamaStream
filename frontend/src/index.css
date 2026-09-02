@@ -220,6 +220,15 @@
     border: 3px solid transparent;
     background-clip: padding-box;
   }
+
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 [dir="rtl"] .flip-rtl {

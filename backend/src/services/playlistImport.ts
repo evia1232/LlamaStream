@@ -92,6 +92,25 @@ export async function parsePlaylistUrl(url: string, userId?: string): Promise<{ 
   throw new Error('Unsupported URL — paste a Spotify or YouTube playlist link');
 }
 
+export async function startSpotifyPlaylistsImport(
+  playlistIds: string[],
+  userId: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
+) {
+  if (!playlistIds.length) {
+    throw new Error('No playlists selected');
+  }
+
+  const imports = [];
+  for (const playlistId of playlistIds) {
+    const url = `https://open.spotify.com/playlist/${playlistId}`;
+    const result = await startPlaylistImport(url, userId, quality);
+    imports.push(result);
+  }
+
+  return { imports, count: imports.length };
+}
+
 export async function startPlaylistImport(
   url: string,
   userId: string,
@@ -183,7 +202,7 @@ export async function resumePendingImports() {
   for (const job of jobs) {
     if (job.status === 'parsing') {
       setImmediate(() => {
-        runPlaylistImport(job.id, job.sourceUrl).catch(console.error);
+        runPlaylistImport(job.id, job.sourceUrl, job.userId).catch(console.error);
       });
     } else {
       setImmediate(() => {

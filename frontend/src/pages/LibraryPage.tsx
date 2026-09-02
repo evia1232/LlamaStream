@@ -2,16 +2,23 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Plus, Import } from 'lucide-react';
+import clsx from 'clsx';
 import api from '../api/client';
 import { Playlist } from '../types';
+import { useAuthStore } from '../store';
 import PlaylistCover from '../components/playlists/PlaylistCover';
 import ImportStatusPanel from '../components/playlists/ImportStatusPanel';
+import SpotifyPlaylistPicker, { SpotifyConnectPrompt } from '../components/playlists/SpotifyPlaylistPicker';
+
+type ImportTab = 'spotify' | 'url';
 
 export default function LibraryPage() {
   const { t } = useTranslation();
+  const spotifyConnected = useAuthStore((s) => s.user?.spotify?.connected ?? false);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [importTab, setImportTab] = useState<ImportTab>('spotify');
   const [newName, setNewName] = useState('');
   const [importUrl, setImportUrl] = useState('');
   const [importing, setImporting] = useState(false);
@@ -23,6 +30,12 @@ export default function LibraryPage() {
 
   useEffect(() => { fetchPlaylists(); }, [fetchPlaylists]);
 
+  const openImport = (tab: ImportTab) => {
+    setImportTab(tab);
+    setImportMessage(null);
+    setShowImport(true);
+  };
+
   const createPlaylist = async () => {
     if (!newName.trim()) return;
     await api.post('/playlists', { name: newName });
@@ -33,10 +46,17 @@ export default function LibraryPage() {
 
   const importPlaylist = async () => {
     if (!importUrl.trim()) return;
+
+    const isSpotify = /open\.spotify\.com\/playlist\//i.test(importUrl.trim());
+    if (isSpotify && !spotifyConnected) {
+      setImportMessage(t('spotifyImportRequiresConnect'));
+      return;
+    }
+
     setImporting(true);
     setImportMessage(null);
     try {
-      const { data } = await api.post('/playlists/import', { url: importUrl.trim() });
+      await api.post('/playlists/import', { url: importUrl.trim() });
       setImportUrl('');
       setShowImport(false);
       setImportMessage(t('importStarted'));
@@ -49,12 +69,25 @@ export default function LibraryPage() {
     }
   };
 
+  const handleSpotifyImported = () => {
+    setShowImport(false);
+    setImportMessage(t('importStarted'));
+    fetchPlaylists();
+  };
+
   return (
     <div className="p-4 md:p-8">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <h1 className="text-heading">{t('library')}</h1>
-        <div className="flex gap-2">
-          <button onClick={() => setShowImport(true)} className="icon-btn flex items-center gap-2 px-4 border border-white/20">
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => openImport('spotify')}
+            className="icon-btn flex items-center gap-2 px-4 border border-spotify-green/40 text-spotify-green"
+          >
+            <Import className="w-5 h-5" />
+            <span className="text-sm font-bold">{t('importSpotify')}</span>
+          </button>
+          <button onClick={() => openImport('url')} className="icon-btn flex items-center gap-2 px-4 border border-white/20">
             <Import className="w-5 h-5" />
             <span className="text-sm font-bold">{t('importPlaylist')}</span>
           </button>
@@ -94,7 +127,6 @@ export default function LibraryPage() {
         ))}
       </div>
 
-      {/* Create Modal */}
       {showCreate && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="surface-elevated p-6 md:p-8 w-full max-w-md">
@@ -114,24 +146,77 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Import Modal */}
       {showImport && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="surface-elevated p-6 md:p-8 w-full max-w-md">
-            <h3 className="text-heading-sm mb-5">{t('importPlaylist')}</h3>
-            <input
-              value={importUrl}
-              onChange={(e) => setImportUrl(e.target.value)}
-              placeholder={t('playlistImportUrl')}
-              className="input-spotify mb-5"
-              dir="ltr"
-            />
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setShowImport(false)} className="px-4 py-2 text-body hover:text-white font-bold">{t('cancel')}</button>
-              <button onClick={importPlaylist} disabled={importing} className="green-btn py-2 px-6 disabled:opacity-50">
-                {importing ? t('importing') : t('import')}
+          <div className="surface-elevated p-6 md:p-8 w-full max-w-lg max-h-[90vh] flex flex-col">
+            <h3 className="text-heading-sm mb-4">{importTab === 'spotify' ? t('importSpotify') : t('importPlaylist')}</h3>
+
+            <div className="flex gap-1 mb-4 p-1 bg-white/5 rounded-lg">
+              <button
+                type="button"
+                onClick={() => { setImportTab('spotify'); setImportMessage(null); }}
+                className={clsx(
+                  'flex-1 py-2 text-sm font-bold rounded-md transition-colors',
+                  importTab === 'spotify' ? 'bg-white/10 text-white' : 'text-spotify-text hover:text-white',
+                )}
+              >
+                {t('importFromSpotifyAccount')}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setImportTab('url'); setImportMessage(null); }}
+                className={clsx(
+                  'flex-1 py-2 text-sm font-bold rounded-md transition-colors',
+                  importTab === 'url' ? 'bg-white/10 text-white' : 'text-spotify-text hover:text-white',
+                )}
+              >
+                {t('importFromUrl')}
               </button>
             </div>
+
+            <div className="flex-1 min-h-0 overflow-hidden">
+              {importTab === 'spotify' ? (
+                spotifyConnected ? (
+                  <SpotifyPlaylistPicker
+                    onImported={handleSpotifyImported}
+                    onError={setImportMessage}
+                  />
+                ) : (
+                  <SpotifyConnectPrompt />
+                )
+              ) : (
+                <div>
+                  <input
+                    value={importUrl}
+                    onChange={(e) => setImportUrl(e.target.value)}
+                    placeholder={t('playlistImportUrl')}
+                    className="input-spotify mb-4"
+                    dir="ltr"
+                  />
+                  {importMessage && importTab === 'url' && (
+                    <p className="text-sm text-red-400 mb-4">{importMessage}</p>
+                  )}
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setShowImport(false)} className="px-4 py-2 text-body hover:text-white font-bold">{t('cancel')}</button>
+                    <button onClick={importPlaylist} disabled={importing} className="green-btn py-2 px-6 disabled:opacity-50">
+                      {importing ? t('importing') : t('import')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {importTab === 'spotify' && importMessage && (
+              <p className="text-sm text-red-400 mt-3">{importMessage}</p>
+            )}
+
+            {importTab === 'spotify' && (
+              <div className="flex justify-end mt-4 pt-2 border-t border-white/10">
+                <button onClick={() => setShowImport(false)} className="px-4 py-2 text-body hover:text-white font-bold">
+                  {t('cancel')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
