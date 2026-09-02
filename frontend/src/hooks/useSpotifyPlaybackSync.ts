@@ -22,6 +22,7 @@ export function useSpotifyPlaybackSync() {
       if (!s) return;
       setCurrentTime(s.position / 1000);
       setDuration(s.duration / 1000);
+      if (s.paused && useSpotifyPlayerStore.getState().resumeInFlight) return;
       setIsPlaying(!s.paused);
     };
 
@@ -40,7 +41,6 @@ export function useSpotifyPlaybackSync() {
         if (s) {
           setCurrentTime(s.position / 1000);
           if (s.duration > 0) setDuration(s.duration / 1000);
-          setIsPlaying(!s.paused);
         }
       } catch { /* ignore */ }
     };
@@ -48,7 +48,7 @@ export function useSpotifyPlaybackSync() {
     void poll();
     const pollId = setInterval(poll, 400);
     return () => clearInterval(pollId);
-  }, [playbackEngine, engine, isPlaying, setCurrentTime, setDuration, setIsPlaying]);
+  }, [playbackEngine, engine, isPlaying, setCurrentTime, setDuration]);
 
   useEffect(() => {
     if (playbackEngine !== 'spotify') return;

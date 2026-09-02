@@ -13,11 +13,14 @@ interface SpotifyPlayerState {
   deviceId: string | null;
   engine: SpotifyEngine | null;
   initError: string | null;
+  lastUri: string | null;
+  lastPositionMs: number;
+  resumeInFlight: boolean;
   init: (volume: number) => Promise<boolean>;
   destroy: () => void;
   playUri: (uri: string, positionMs?: number) => Promise<void>;
   pause: () => Promise<void>;
-  resume: () => Promise<void>;
+  resume: (positionMs?: number) => Promise<void>;
   seek: (positionMs: number) => Promise<void>;
   setVolume: (volume: number) => Promise<void>;
 }
@@ -27,11 +30,33 @@ async function fetchSpotifyToken(): Promise<string> {
   return data.accessToken as string;
 }
 
+async function transferPlayToDevice(
+  deviceId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const token = await fetchSpotifyToken();
+  const res = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || 'Spotify playback failed');
+  }
+}
+
 export const useSpotifyPlayerStore = create<SpotifyPlayerState>((set, get) => ({
   ready: false,
   deviceId: null,
   engine: null,
   initError: null,
+  lastUri: null,
+  lastPositionMs: 0,
+  resumeInFlight: false,
 
   init: async (volume) => {
     if (get().engine) return true;
@@ -92,7 +117,7 @@ export const useSpotifyPlayerStore = create<SpotifyPlayerState>((set, get) => ({
   destroy: () => {
     const { engine } = get();
     engine?.player.disconnect();
-    set({ ready: false, deviceId: null, engine: null });
+    set({ ready: false, deviceId: null, engine: null, lastUri: null, lastPositionMs: 0 });
   },
 
   playUri: async (uri, positionMs = 0) => {
@@ -100,35 +125,57 @@ export const useSpotifyPlayerStore = create<SpotifyPlayerState>((set, get) => ({
     if (!active) throw new Error('Spotify player not ready');
 
     await active.player.activateElement();
-    const token = await fetchSpotifyToken();
-    const res = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${active.deviceId}`, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        uris: [uri],
-        position_ms: Math.max(0, positionMs),
-      }),
+    set({ lastUri: uri, lastPositionMs: Math.max(0, positionMs) });
+    await transferPlayToDevice(active.deviceId, {
+      uris: [uri],
+      position_ms: Math.max(0, positionMs),
     });
-
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(body || 'Spotify playback failed');
-    }
   },
 
   pause: async () => {
-    await get().engine?.player.pause();
+    const active = get().engine;
+    if (!active) return;
+    await active.player.pause();
   },
 
-  resume: async () => {
-    await get().engine?.player.resume();
+  resume: async (positionMs?: number) => {
+    const active = get().engine;
+    if (!active) throw new Error('Spotify player not ready');
+
+    const pos = positionMs ?? get().lastPositionMs;
+    if (positionMs !== undefined) set({ lastPositionMs: pos });
+
+    set({ resumeInFlight: true });
+    try {
+      await active.player.activateElement();
+
+      try {
+        await active.player.resume();
+        const state = await active.player.getCurrentState();
+        if (state && !state.paused) return;
+      } catch {
+        /* SDK resume failed — fall through to Web API */
+      }
+
+      const { lastUri } = get();
+      if (lastUri) {
+        await transferPlayToDevice(active.deviceId, {
+          uris: [lastUri],
+          position_ms: Math.max(0, pos),
+        });
+        return;
+      }
+
+      await transferPlayToDevice(active.deviceId, {});
+    } finally {
+      window.setTimeout(() => set({ resumeInFlight: false }), 600);
+    }
   },
 
   seek: async (positionMs) => {
-    await get().engine?.player.seek(positionMs);
+    const ms = Math.max(0, positionMs);
+    set({ lastPositionMs: ms });
+    await get().engine?.player.seek(ms);
   },
 
   setVolume: async (volume) => {

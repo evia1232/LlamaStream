@@ -70,9 +70,9 @@ export async function parseYouTubePlaylist(url: string): Promise<{ name: string;
   return { name: 'Imported from YouTube', tracks };
 }
 
-export async function parsePlaylistUrl(url: string): Promise<{ name: string; tracks: ImportTrackItem[]; sourceType: 'spotify' | 'youtube' }> {
+export async function parsePlaylistUrl(url: string, userId?: string): Promise<{ name: string; tracks: ImportTrackItem[]; sourceType: 'spotify' | 'youtube' }> {
   if (isSpotifyUrl(url)) {
-    const parsed = await parseSpotifyUrl(url);
+    const parsed = await parseSpotifyUrl(url, userId);
     return {
       name: parsed.name,
       sourceType: 'spotify',
@@ -125,7 +125,7 @@ export async function startPlaylistImport(
   });
 
   setImmediate(() => {
-    runPlaylistImport(job.id, url).catch((err) => {
+    runPlaylistImport(job.id, url, userId).catch((err) => {
       console.error(`[Import] Job ${job.id} failed:`, err);
     });
   });
@@ -138,12 +138,12 @@ export async function startPlaylistImport(
   };
 }
 
-async function runPlaylistImport(jobId: string, url: string) {
+async function runPlaylistImport(jobId: string, url: string, userId?: string) {
   const job = await prisma.playlistImportJob.findUnique({ where: { id: jobId } });
   if (!job) return;
 
   try {
-    const { name, tracks, sourceType } = await parsePlaylistUrl(url);
+    const { name, tracks, sourceType } = await parsePlaylistUrl(url, userId ?? job.userId);
 
     await prisma.playlist.update({
       where: { id: job.playlistId },
@@ -317,7 +317,7 @@ export async function importSpotifyPlaylist(
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
   onProgress?: (current: number, total: number, trackName: string) => void
 ) {
-  const { name, tracks, sourceType } = await parsePlaylistUrl(url);
+  const { name, tracks, sourceType } = await parsePlaylistUrl(url, userId);
 
   const playlist = await prisma.playlist.create({
     data: { name, description: `Imported from ${sourceType}: ${url}`, userId, visibility: 'PRIVATE' },

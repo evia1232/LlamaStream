@@ -175,7 +175,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     if (playbackEngine === 'spotify') {
       const spot = useSpotifyPlayerStore.getState();
-      if (playing) void spot.resume();
+      if (playing) void spot.resume(get().currentTime * 1000);
       else void spot.pause();
     }
     set({ isPlaying: playing, activeDeviceId: get().localDeviceId, activeDeviceName: get().localDeviceName, isRemoteActive: false });
@@ -797,7 +797,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         break;
       case 'play':
         set({ isPlaying: true });
-        if (get().playbackEngine === 'spotify') void useSpotifyPlayerStore.getState().resume();
+        if (get().playbackEngine === 'spotify') void useSpotifyPlayerStore.getState().resume(get().currentTime * 1000);
         break;
       case 'seek': {
         if (msg.seekTime == null) break;

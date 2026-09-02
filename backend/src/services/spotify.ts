@@ -11,6 +11,7 @@ import {
   type SpotifySearchResult,
   type SpotifySearchResponse,
 } from './spotifyApi';
+import { getSpotifyAccessTokenForUser } from './spotifyOAuth';
 
 export {
   searchSpotifyTracks,
@@ -55,11 +56,20 @@ export function isYouTubeUrl(input: string): boolean {
   return /youtube\.com|youtu\.be|music\.youtube\.com/i.test(input);
 }
 
-export async function parseSpotifyUrl(url: string): Promise<{
+export async function parseSpotifyUrl(url: string, userId?: string): Promise<{
   name: string;
   tracks: SpotifyTrackInfo[];
 }> {
-  const apiResult = await fetchSpotifyUrlTracks(url);
+  let userToken: string | undefined;
+  if (userId) {
+    try {
+      userToken = await getSpotifyAccessTokenForUser(userId);
+    } catch {
+      /* user not connected — fall back to app credentials */
+    }
+  }
+
+  const apiResult = await fetchSpotifyUrlTracks(url, { accessToken: userToken });
   if (apiResult && apiResult.tracks.length > 0) {
     return {
       name: apiResult.name,
@@ -111,7 +121,7 @@ export async function importSpotifyPlaylist(
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
   onProgress?: (current: number, total: number, trackName: string) => void
 ) {
-  const { name, tracks } = await parseSpotifyUrl(url);
+  const { name, tracks } = await parseSpotifyUrl(url, userId);
 
   const playlist = await prisma.playlist.create({
     data: { name, description: `Imported from Spotify: ${url}`, userId, visibility: 'PRIVATE' },

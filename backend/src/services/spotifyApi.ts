@@ -318,26 +318,86 @@ export async function fetchSpotifyTrackByUrl(url: string): Promise<SpotifySearch
   }
 }
 
+function mapSimplifiedSpotifyTrack(
+  t: {
+    id: string;
+    name: string;
+    duration_ms: number;
+    external_urls: { spotify: string };
+    artists: { id: string; name: string }[];
+  },
+  albumName?: string,
+  thumbnailUrl?: string,
+): SpotifySearchResult {
+  return {
+    id: t.id,
+    name: t.name,
+    artist: t.artists.map((a) => a.name).join(', '),
+    primaryArtistId: t.artists[0]?.id,
+    album: albumName,
+    duration: Math.round(t.duration_ms / 1000),
+    thumbnailUrl: thumbnailUrl || '',
+    spotifyUrl: t.external_urls.spotify,
+    source: 'spotify',
+  };
+}
+
+async function fetchSpotifyPaginated<T>(
+  startUrl: string,
+  headers: Record<string, string>,
+  mapItem: (item: T) => SpotifySearchResult | null,
+): Promise<SpotifySearchResult[]> {
+  const out: SpotifySearchResult[] = [];
+  let nextUrl: string | null = startUrl;
+
+  while (nextUrl) {
+    const res = await fetch(nextUrl, { headers });
+    if (!res.ok) {
+      console.error('[Spotify] Paginated fetch failed:', nextUrl, res.status);
+      break;
+    }
+    const data = await res.json() as {
+      items: T[];
+      next: string | null;
+    };
+    for (const item of data.items) {
+      const mapped = mapItem(item);
+      if (mapped) out.push(mapped);
+    }
+    nextUrl = data.next;
+  }
+
+  return out;
+}
+
 export interface SpotifyUrlParseResult {
   name: string;
   tracks: SpotifySearchResult[];
 }
 
-/** Resolve a Spotify track/album/playlist URL to tracks with spotifyUrl (API when configured). */
-export async function fetchSpotifyUrlTracks(url: string): Promise<SpotifyUrlParseResult | null> {
-  if (!isSpotifyConfigured()) return null;
-
-  const { token } = await fetchSpotifyToken();
+/** Resolve a Spotify track/album/playlist URL to tracks (uses user token when provided). */
+export async function fetchSpotifyUrlTracks(
+  url: string,
+  options?: { accessToken?: string },
+): Promise<SpotifyUrlParseResult | null> {
+  let token = options?.accessToken;
+  if (!token) {
+    if (!isSpotifyConfigured()) return null;
+    const appToken = await fetchSpotifyToken();
+    token = appToken.token ?? undefined;
+  }
   if (!token) return null;
 
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  const market = normalizeMarket(config.spotifyMarket);
+  const marketParam = market ? `&market=${market}` : '';
   const trackMatch = url.match(/open\.spotify\.com\/track\/([a-zA-Z0-9]+)/i);
   const albumMatch = url.match(/open\.spotify\.com\/album\/([a-zA-Z0-9]+)/i);
   const playlistMatch = url.match(/open\.spotify\.com\/playlist\/([a-zA-Z0-9]+)/i);
 
   try {
     if (trackMatch) {
-      const res = await fetch(`https://api.spotify.com/v1/tracks/${trackMatch[1]}`, { headers });
+      const res = await fetch(`https://api.spotify.com/v1/tracks/${trackMatch[1]}${market ? `?market=${market}` : ''}`, { headers });
       if (!res.ok) return null;
       const data = await res.json() as SpotifyApiTrack;
       const track = mapSpotifyApiTrack(data);
@@ -345,38 +405,39 @@ export async function fetchSpotifyUrlTracks(url: string): Promise<SpotifyUrlPars
     }
 
     if (albumMatch) {
-      const albumRes = await fetch(`https://api.spotify.com/v1/albums/${albumMatch[1]}`, { headers });
-      if (!albumRes.ok) return null;
-      const album = await albumRes.json() as { name: string; tracks: { items: SpotifyApiTrack[] } };
-      return {
-        name: album.name,
-        tracks: album.tracks.items.map(mapSpotifyApiTrack),
-      };
+      const metaRes = await fetch(`https://api.spotify.com/v1/albums/${albumMatch[1]}?fields=name,images`, { headers });
+      if (!metaRes.ok) return null;
+      const meta = await metaRes.json() as { name: string; images?: { url: string }[] };
+      const thumb = meta.images?.[0]?.url || '';
+
+      const tracks = await fetchSpotifyPaginated<{
+        id: string;
+        name: string;
+        duration_ms: number;
+        external_urls: { spotify: string };
+        artists: { id: string; name: string }[];
+      }>(
+        `https://api.spotify.com/v1/albums/${albumMatch[1]}/tracks?limit=50${marketParam}`,
+        headers,
+        (t) => mapSimplifiedSpotifyTrack(t, meta.name, thumb),
+      );
+
+      return tracks.length > 0 ? { name: meta.name, tracks } : null;
     }
 
     if (playlistMatch) {
-      const tracks: SpotifySearchResult[] = [];
-      let nextUrl: string | null = `https://api.spotify.com/v1/playlists/${playlistMatch[1]}/tracks?limit=100`;
       let playlistName = 'Imported Playlist';
-
       const metaRes = await fetch(`https://api.spotify.com/v1/playlists/${playlistMatch[1]}?fields=name`, { headers });
       if (metaRes.ok) {
         const meta = await metaRes.json() as { name?: string };
         if (meta.name) playlistName = meta.name;
       }
 
-      while (nextUrl) {
-        const res = await fetch(nextUrl, { headers });
-        if (!res.ok) break;
-        const data = await res.json() as {
-          items: Array<{ track: SpotifyApiTrack | null }>;
-          next: string | null;
-        };
-        for (const item of data.items) {
-          if (item.track?.id) tracks.push(mapSpotifyApiTrack(item.track));
-        }
-        nextUrl = data.next;
-      }
+      const tracks = await fetchSpotifyPaginated<{ track: SpotifyApiTrack | null }>(
+        `https://api.spotify.com/v1/playlists/${playlistMatch[1]}/tracks?limit=100${marketParam}`,
+        headers,
+        (item) => (item.track?.id ? mapSpotifyApiTrack(item.track) : null),
+      );
 
       return tracks.length > 0 ? { name: playlistName, tracks } : null;
     }

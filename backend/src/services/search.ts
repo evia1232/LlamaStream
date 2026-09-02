@@ -125,7 +125,7 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
     detectedUrl = { type: 'spotify', url: trimmed };
     if (searchSpotify) {
       try {
-        const parsed = await parseSpotifyUrl(trimmed);
+        const parsed = await parseSpotifyUrl(trimmed, userId);
         spotifyUrlTracks = parsed.tracks;
       } catch (err) {
         console.error('Spotify URL parse failed:', err);
