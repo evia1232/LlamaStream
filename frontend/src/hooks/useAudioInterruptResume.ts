@@ -1,49 +1,39 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { usePlayerStore } from '../store';
+import { resumeAudioIfNeeded } from '../lib/audioPlay';
 
 /**
- * Resume playback after system interrupts (phone call, etc.).
- * Only resumes when the store still expects playing and audio was paused externally.
+ * Resume playback after system interrupts or background-tab autoplay blocks.
  */
 export function useAudioInterruptResume() {
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const playbackEngine = usePlayerStore((s) => s.playbackEngine);
-  const interruptedRef = useRef(false);
+  const isPreparingPlayback = usePlayerStore((s) => s.isPreparingPlayback);
 
   useEffect(() => {
     if (playbackEngine !== 'local') return;
-    const audio = document.querySelector('footer.player-bar audio') as HTMLAudioElement | null;
-    if (!audio) return;
 
-    const onPause = () => {
-      if (usePlayerStore.getState().isPlaying) {
-        interruptedRef.current = true;
-      }
-    };
-
-    const onPlay = () => {
-      interruptedRef.current = false;
-    };
+    const getAudio = () =>
+      document.querySelector('footer.player-bar audio') as HTMLAudioElement | null;
 
     const tryResume = () => {
-      if (!interruptedRef.current) return;
-      const { isPlaying: wantPlay, isPreparingPlayback } = usePlayerStore.getState();
-      if (wantPlay && !isPreparingPlayback && audio.paused) {
-        audio.play().catch(() => { /* user may have paused manually */ });
-        interruptedRef.current = false;
-      }
+      const audio = getAudio();
+      if (!audio) return;
+      const { isPlaying: wantPlay, isPreparingPlayback: preparing } = usePlayerStore.getState();
+      resumeAudioIfNeeded(audio, wantPlay, preparing);
     };
 
-    audio.addEventListener('pause', onPause);
-    audio.addEventListener('play', onPlay);
     document.addEventListener('visibilitychange', tryResume);
+    window.addEventListener('pageshow', tryResume);
     window.addEventListener('focus', tryResume);
 
+    const interval = window.setInterval(tryResume, 2500);
+
     return () => {
-      audio.removeEventListener('pause', onPause);
-      audio.removeEventListener('play', onPlay);
       document.removeEventListener('visibilitychange', tryResume);
+      window.removeEventListener('pageshow', tryResume);
       window.removeEventListener('focus', tryResume);
+      window.clearInterval(interval);
     };
-  }, [playbackEngine, isPlaying]);
+  }, [playbackEngine, isPlaying, isPreparingPlayback]);
 }

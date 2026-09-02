@@ -18,6 +18,7 @@ import { useMediaSession } from '../../hooks/useMediaSession';
 import { useSpotifyPlaybackSync } from '../../hooks/useSpotifyPlaybackSync';
 import { canStreamTrackLocally, prepareTrackForPlayback, isLibraryId } from '../../lib/ensureDownload';
 import { effectivePlaybackVolume, isMobileViewport } from '../../lib/volume';
+import { safeAudioPlay, resumeAudioIfNeeded } from '../../lib/audioPlay';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -51,6 +52,7 @@ export default function PlayerBar() {
   const isLiked = currentTrack ? isTrackLiked(currentTrack, likedTrackIds, likedPendingTracks) : false;
   const lastPersistRef = useRef(0);
   const loadTokenRef = useRef(0);
+  const endedHandledRef = useRef(false);
   const isSpotifyMode = playbackEngine === 'spotify';
 
   useMediaSession();
@@ -69,6 +71,7 @@ export default function PlayerBar() {
     audio.pause();
     audio.removeAttribute('src');
     audio.load();
+    endedHandledRef.current = false;
     setIsBuffering(true);
 
     const applyPendingSeek = () => {
@@ -86,7 +89,7 @@ export default function PlayerBar() {
       setIsBuffering(false);
       applyPendingSeek();
       if (usePlayerStore.getState().isPlaying) {
-        audio.play().catch(() => setIsPlaying(false));
+        safeAudioPlay(audio, () => setIsPlaying(false));
       }
     };
 
@@ -158,7 +161,7 @@ export default function PlayerBar() {
 
     if (isPlaying) {
       const startPlayback = () => {
-        audio.play().catch(() => setIsPlaying(false));
+        safeAudioPlay(audio, () => setIsPlaying(false));
       };
 
       if (!audio.src) {
@@ -235,14 +238,19 @@ export default function PlayerBar() {
   useEffect(() => {
     const onVisibility = () => {
       const audio = audioRef.current;
-      if (!audio || document.visibilityState !== 'visible' || isRemoteActive) return;
-      if (isPlaying && audio.paused && !isPreparingPlayback) {
-        audio.play().catch(() => usePlayerStore.getState().setIsPlaying(false));
-      }
+      if (!audio || isRemoteActive) return;
+      const { isPlaying: wantPlay, isPreparingPlayback: preparing } = usePlayerStore.getState();
+      resumeAudioIfNeeded(audio, wantPlay, preparing);
     };
     document.addEventListener('visibilitychange', onVisibility);
-    return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [isPlaying, isPreparingPlayback, isRemoteActive]);
+    window.addEventListener('pageshow', onVisibility);
+    window.addEventListener('focus', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', onVisibility);
+      window.removeEventListener('focus', onVisibility);
+    };
+  }, [isRemoteActive]);
 
   // Smooth progress updates while local audio plays (timeupdate alone is too coarse)
   useEffect(() => {
@@ -290,11 +298,29 @@ export default function PlayerBar() {
     return () => cancelAnimationFrame(raf);
   }, [isRemoteActive, isPlaying, setCurrentTime]);
 
+  const handleEnded = () => {
+    if (isRemoteActive) return;
+    setIsPlaying(true);
+    playNext();
+  };
+
   const handleTimeUpdate = () => {
     if (isRemoteActive) return;
-    if (!audioRef.current) return;
-    const time = audioRef.current.currentTime;
+    const audio = audioRef.current;
+    if (!audio) return;
+    const time = audio.currentTime;
     setCurrentTime(time);
+
+    const d = audio.duration;
+    if (Number.isFinite(d) && d > 0 && time >= d - 0.35) {
+      if (!endedHandledRef.current) {
+        endedHandledRef.current = true;
+        handleEnded();
+      }
+    } else if (!Number.isFinite(d) || time < d - 1) {
+      endedHandledRef.current = false;
+    }
+
     const now = Date.now();
     if (now - lastPersistRef.current > 4000) {
       lastPersistRef.current = now;
@@ -322,11 +348,6 @@ export default function PlayerBar() {
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     seekTo(parseFloat(e.target.value));
-  };
-
-  const handleEnded = () => {
-    if (isRemoteActive) return;
-    playNext();
   };
 
   if (!currentTrack) {
@@ -430,7 +451,6 @@ export default function PlayerBar() {
             {isRemoteActive && activeDeviceName && (
               <p className="text-2xs text-spotify-green truncate">{t('playingOnDevice', { device: activeDeviceName })}</p>
             )}
-            <PlaybackMeta track={currentTrack} className="mt-0.5" />
           </div>
         </button>
         <div className="flex items-center gap-1 shrink-0">

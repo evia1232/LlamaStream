@@ -72,7 +72,7 @@ interface PlayerState {
   setQueue: (queue: QueueItem[]) => void;
   addToLiked: (trackId: string) => void;
   removeFromLiked: (trackId: string) => void;
-  playTrack: (track: Track, startTime?: number) => Promise<void>;
+  playTrack: (track: Track, startTime?: number, opts?: { seamless?: boolean }) => Promise<void>;
   playTracks: (tracks: Track[], startIndex?: number) => Promise<void>;
   playNext: () => void;
   playPrevious: () => void;
@@ -94,6 +94,7 @@ interface PlayerState {
   registerPause: (fn: (() => void) | null) => void;
   registerStop: (fn: (() => void) | null) => void;
   stopPlaybackImmediate: () => void;
+  beginTrackTransition: () => void;
   seekTo: (time: number) => void;
   persistPlayback: () => Promise<void>;
   persistVolume: () => Promise<void>;
@@ -216,14 +217,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     return { likedTrackIds: ids };
   }),
 
-  playTrack: async (track, startTime = 0) => {
+  playTrack: async (track, startTime = 0, opts?: { seamless?: boolean }) => {
+    const seamless = opts?.seamless ?? false;
     const { localDeviceId, localDeviceName } = get();
     set({
       isRemoteActive: false,
       activeDeviceId: localDeviceId,
       activeDeviceName: localDeviceName,
     });
-    get().stopPlaybackImmediate();
+    if (seamless) {
+      get().beginTrackTransition();
+    } else {
+      get().stopPlaybackImmediate();
+    }
     const generation = get()._playGeneration;
 
     const { contextTracks, volume } = get();
@@ -247,9 +253,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     set({
       currentTrack: streamableTrack,
-      isPlaying: !useSpotify,
+      isPlaying: seamless ? true : !useSpotify,
       isPreparingPlayback: !useSpotify && !canPlayLocal,
-      isBuffering: !useSpotify,
+      isBuffering: true,
       currentTime: startTime,
       pendingSeekTime: startTime,
       lyrics: null,
@@ -342,6 +348,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     } catch {
       if (!stale()) set({ isPreparingPlayback: false, isPlaying: false, isBuffering: false });
     }
+  },
+
+  beginTrackTransition: () => {
+    set((s) => ({ _playGeneration: s._playGeneration + 1, isBuffering: true }));
+    get()._pauseFn?.();
   },
 
   stopPlaybackImmediate: () => {
@@ -458,7 +469,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const resolved = get().resolveNextTrack();
 
     if (resolved) {
-      get().stopPlaybackImmediate();
       if (resolved.contextIndex !== undefined) {
         set({ contextIndex: resolved.contextIndex });
       }
@@ -466,12 +476,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         get().removeFromQueue(resolved.queueItemId);
       }
       set({
-        isPreparingPlayback: !resolved.track.isDownloaded && !resolved.track.streamUrl,
+        isPreparingPlayback: !canStreamTrackLocally(resolved.track),
         isBuffering: true,
-        isPlaying: false,
+        isPlaying: true,
         duration: resolved.track.duration || 0,
       });
-      void get().playTrack(resolved.track);
+      void get().playTrack(resolved.track, 0, { seamless: true });
       return;
     }
 
@@ -482,8 +492,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     if (autoplay && currentTrack) {
-      get().stopPlaybackImmediate();
-      set({ isPreparingPlayback: true, isBuffering: true, isPlaying: false });
+      set({ isPreparingPlayback: true, isBuffering: true, isPlaying: true });
       void get().playDiscoverNext();
       return;
     }
@@ -555,7 +564,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         set({ contextTracks: [track], contextIndex: 0 });
       }
 
-      await get().playTrack(track);
+      await get().playTrack(track, 0, { seamless: true });
     } catch {
       set({ isPlaying: false });
     } finally {
