@@ -282,12 +282,12 @@ function mapSpotifyApiTrack(t: SpotifyApiTrack): SpotifySearchResult {
   return {
     id: t.id,
     name: t.name,
-    artist: t.artists.map((a) => a.name).join(', '),
-    primaryArtistId: t.artists[0]?.id,
-    album: t.album.name,
-    duration: Math.round(t.duration_ms / 1000),
-    thumbnailUrl: t.album.images[0]?.url || '',
-    spotifyUrl: t.external_urls.spotify,
+    artist: (t.artists || []).map((a) => a.name).join(', '),
+    primaryArtistId: t.artists?.[0]?.id,
+    album: t.album?.name,
+    duration: Math.round((t.duration_ms || 0) / 1000),
+    thumbnailUrl: t.album?.images?.[0]?.url || '',
+    spotifyUrl: t.external_urls?.spotify || `https://open.spotify.com/track/${t.id}`,
     source: 'spotify',
   };
 }
@@ -341,8 +341,6 @@ function mapSimplifiedSpotifyTrack(
     source: 'spotify',
   };
 }
-
-const PLAYLIST_TRACKS_PAGE_SIZE = 100;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -398,6 +396,46 @@ async function fetchSpotifyPaginated<T>(
   return out;
 }
 
+const PLAYLIST_ITEMS_PAGE_SIZE = 50;
+const PLAYLIST_TRACKS_PAGE_SIZE = 100;
+
+type SpotifyPlaylistEntry = {
+  track?: (SpotifyApiTrack & { type?: string }) | null;
+  item?: (SpotifyApiTrack & { type?: string }) | null;
+};
+
+function readPlaylistItemTotal(playlist: {
+  items?: { total?: number };
+  tracks?: { total?: number };
+}): number {
+  return playlist.items?.total ?? playlist.tracks?.total ?? 0;
+}
+
+/** Spotify 2024+ uses `item`; legacy responses use `track`. */
+function extractTrackFromPlaylistEntry(entry: SpotifyPlaylistEntry): SpotifyApiTrack | null {
+  const legacy = entry.track;
+  if (legacy?.id && (!legacy.type || legacy.type === 'track')) return legacy;
+
+  const item = entry.item;
+  if (!item?.id) return null;
+  if (item.type && item.type !== 'track') return null;
+  return item;
+}
+
+async function resolvePlaylistContentEndpoint(
+  playlistId: string,
+  headers: Record<string, string>,
+  marketParam: string,
+): Promise<'items' | 'tracks'> {
+  const probeUrl =
+    `https://api.spotify.com/v1/playlists/${playlistId}/items` +
+    `?limit=1&offset=0${marketParam}&additional_types=track`;
+  const res = await fetchSpotifyApiWithRetry(probeUrl, headers);
+  if (res.ok) return 'items';
+  console.warn(`[Spotify] Playlist ${playlistId}: /items unavailable (${res.status}), falling back to /tracks`);
+  return 'tracks';
+}
+
 /** Fetch all playlist tracks via offset pagination (more reliable than next-link alone). */
 async function fetchSpotifyPlaylistTracks(
   playlistId: string,
@@ -406,15 +444,14 @@ async function fetchSpotifyPlaylistTracks(
   options?: { requireComplete?: boolean },
 ): Promise<{ tracks: SpotifySearchResult[]; total: number; complete: boolean }> {
   const metaRes = await fetchSpotifyApiWithRetry(
-    `https://api.spotify.com/v1/playlists/${playlistId}?fields=name,tracks.total,public`,
+    `https://api.spotify.com/v1/playlists/${playlistId}?fields=name,items.total,tracks.total,public`,
     headers,
   );
   let total = 0;
   if (metaRes.ok) {
-    const meta = await metaRes.json() as { tracks?: { total?: number } };
-    total = meta.tracks?.total ?? 0;
+    const meta = await metaRes.json() as { items?: { total?: number }; tracks?: { total?: number } };
+    total = readPlaylistItemTotal(meta);
   } else if (metaRes.status === 403 || metaRes.status === 404) {
-    const body = await metaRes.text().catch(() => '');
     throw new Error(
       metaRes.status === 403
         ? 'Private playlist — connect Spotify in Settings and import from your account'
@@ -422,23 +459,25 @@ async function fetchSpotifyPlaylistTracks(
     );
   }
 
+  const endpoint = await resolvePlaylistContentEndpoint(playlistId, headers, marketParam);
+  const pageSize = endpoint === 'items' ? PLAYLIST_ITEMS_PAGE_SIZE : PLAYLIST_TRACKS_PAGE_SIZE;
+
   const out: SpotifySearchResult[] = [];
   const seen = new Set<string>();
-  const limit = PLAYLIST_TRACKS_PAGE_SIZE;
-  const maxPages = Math.ceil((total > 0 ? total : 10_000) / limit) + 1;
+  const maxPages = Math.ceil((total > 0 ? total : 10_000) / pageSize) + 1;
 
   for (let page = 0; page < maxPages; page++) {
-    const offset = page * limit;
+    const offset = page * pageSize;
     if (total > 0 && offset >= total) break;
 
     const url =
-      `https://api.spotify.com/v1/playlists/${playlistId}/tracks` +
-      `?limit=${limit}&offset=${offset}${marketParam}&additional_types=track`;
+      `https://api.spotify.com/v1/playlists/${playlistId}/${endpoint}` +
+      `?limit=${pageSize}&offset=${offset}${marketParam}&additional_types=track`;
     const res = await fetchSpotifyApiWithRetry(url, headers);
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       console.error(
-        `[Spotify] Playlist ${playlistId} offset=${offset} failed (${res.status}):`,
+        `[Spotify] Playlist ${playlistId} ${endpoint} offset=${offset} failed (${res.status}):`,
         body.slice(0, 300),
       );
       if (offset === 0) {
@@ -452,21 +491,21 @@ async function fetchSpotifyPlaylistTracks(
     }
 
     const data = await res.json() as {
-      items: Array<{ track: SpotifyApiTrack | null }>;
+      items: SpotifyPlaylistEntry[];
       total?: number;
     };
     if (!total && typeof data.total === 'number') total = data.total;
     if (!data.items?.length) break;
 
-    for (const item of data.items) {
-      const t = item.track;
+    for (const entry of data.items) {
+      const t = extractTrackFromPlaylistEntry(entry);
       if (t?.id && !seen.has(t.id)) {
         seen.add(t.id);
         out.push(mapSpotifyApiTrack(t));
       }
     }
 
-    if (data.items.length < limit) break;
+    if (data.items.length < pageSize) break;
     if (total > 0 && out.length >= total) break;
     await sleep(100);
   }
@@ -474,7 +513,7 @@ async function fetchSpotifyPlaylistTracks(
   const complete = total === 0 ? out.length > 0 : out.length >= total;
   if (complete) {
     console.log(
-      `[Spotify] Playlist ${playlistId}: fetched ${out.length} tracks${total ? `/${total}` : ''}`,
+      `[Spotify] Playlist ${playlistId}: fetched ${out.length} tracks${total ? `/${total}` : ''} via /${endpoint}`,
     );
   } else {
     console.warn(
@@ -523,7 +562,8 @@ export async function fetchSpotifyUserPlaylists(
         name: string;
         description: string | null;
         public: boolean | null;
-        tracks: { total: number };
+        items?: { total: number };
+        tracks?: { total: number };
         owner: { display_name: string | null };
         external_urls: { spotify: string };
         images: { url: string }[];
@@ -536,7 +576,7 @@ export async function fetchSpotifyUserPlaylists(
         id: p.id,
         name: p.name,
         description: p.description || '',
-        trackCount: p.tracks?.total ?? 0,
+        trackCount: readPlaylistItemTotal(p),
         imageUrl: p.images?.[0]?.url || '',
         ownerName: p.owner?.display_name || '',
         isPublic: p.public ?? false,
