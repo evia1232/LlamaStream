@@ -26,6 +26,7 @@ import queueRoutes from './routes/queue';
 import homeRoutes from './routes/home';
 import discoverRoutes from './routes/discover';
 import mediaRoutes from './routes/media';
+import settingsRoutes from './routes/settings';
 import { resumePendingImports } from './services/playlistImport';
 import { evictStaleCache } from './services/trackStorage';
 import { reconcileAllStaleTracks } from './services/trackIntegrity';
@@ -224,6 +225,7 @@ app.use('/api/queue', queueRoutes);
 app.use('/api/home', homeRoutes);
 app.use('/api/discover', discoverRoutes);
 app.use('/api/media', mediaRoutes);
+app.use('/api/settings', settingsRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

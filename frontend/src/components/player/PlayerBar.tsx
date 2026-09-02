@@ -421,7 +421,7 @@ export default function PlayerBar() {
               <div className="w-full h-full flex items-center justify-center text-spotify-text text-sm">♪</div>
             )}
           </div>
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 text-start" dir="auto">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
             <p className="text-caption truncate">{artistName}</p>
             {showPreparing && (

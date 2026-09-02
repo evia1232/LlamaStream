@@ -6,7 +6,8 @@ import { applyDocumentDirection } from '../lib/direction';
 import { useAuthStore, usePlayerStore } from '../store';
 import api from '../api/client';
 import { User } from '../types';
-import { Trash2, UserPlus, HardDrive, Infinity, Music2 } from 'lucide-react';
+import { Trash2, UserPlus, HardDrive, Infinity, Music2, Palette } from 'lucide-react';
+import { fetchThemeSettings, updateThemePreset, type ThemePreset } from '../lib/theme';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -30,6 +31,10 @@ export default function SettingsPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', username: '', password: '', role: 'USER' });
+  const [themePreset, setThemePreset] = useState('green');
+  const [themePresets, setThemePresets] = useState<ThemePreset[]>([]);
+  const [themeSaving, setThemeSaving] = useState(false);
+  const [themeMsg, setThemeMsg] = useState('');
 
   const [libraryStats, setLibraryStats] = useState<{ downloadedCount: number; totalCount: number; totalBytes: number } | null>(null);
   const [cleanupDays, setCleanupDays] = useState(7);
@@ -102,6 +107,12 @@ export default function SettingsPage() {
   useEffect(() => {
     if (user?.role === 'ADMIN') {
       api.get('/auth/users').then(({ data }) => setUsers(data.users)).catch(console.error);
+      fetchThemeSettings()
+        .then((data) => {
+          setThemePreset(data.theme.preset);
+          setThemePresets(data.presets);
+        })
+        .catch(console.error);
     }
   }, [user]);
 
@@ -141,6 +152,21 @@ export default function SettingsPage() {
     setNewUser({ email: '', username: '', password: '', role: 'USER' });
     const { data } = await api.get('/auth/users');
     setUsers(data.users);
+  };
+
+  const handleThemeChange = async (preset: string) => {
+    setThemeSaving(true);
+    setThemeMsg('');
+    try {
+      const theme = await updateThemePreset(preset);
+      setThemePreset(theme.preset);
+      setThemeMsg(t('themeSaved'));
+    } catch {
+      setThemeMsg(t('error'));
+    } finally {
+      setThemeSaving(false);
+      setTimeout(() => setThemeMsg(''), 2500);
+    }
   };
 
   const deleteUser = async (id: string) => {
@@ -405,6 +431,39 @@ export default function SettingsPage() {
           )}
         </div>
       </section>
+
+      {/* Admin: Platform theme */}
+      {user?.role === 'ADMIN' && (
+        <section className="mb-10">
+          <div className="flex items-center gap-2 mb-4">
+            <Palette className="w-5 h-5 text-spotify-green" />
+            <h2 className="text-xl font-bold">{t('platformTheme')}</h2>
+          </div>
+          <p className="text-body mb-4">{t('platformThemeHint')}</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {themePresets.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                disabled={themeSaving}
+                onClick={() => void handleThemeChange(p.id)}
+                className={`flex items-center gap-3 p-3 rounded-spotify-lg border-2 transition-all text-start ${
+                  themePreset === p.id
+                    ? 'border-spotify-green bg-spotify-lightgray'
+                    : 'border-transparent bg-spotify-gray hover:bg-spotify-lightgray'
+                }`}
+              >
+                <span
+                  className="w-8 h-8 rounded-full shrink-0 shadow-card"
+                  style={{ background: `linear-gradient(135deg, ${p.accent}, ${p.accentHover})` }}
+                />
+                <span className="text-sm font-bold truncate">{t(`theme_${p.id}`, p.label)}</span>
+              </button>
+            ))}
+          </div>
+          {themeMsg && <p className="text-sm text-spotify-green mt-3">{themeMsg}</p>}
+        </section>
+      )}
 
       {/* Admin Panel */}
       {user?.role === 'ADMIN' && (

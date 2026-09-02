@@ -9,6 +9,7 @@ import {
   resolveSpotifyArtistIdFromTrack,
   fetchSpotifyArtistTopTracks,
   fetchSpotifyArtistAlbums,
+  fetchSpotifyAlbumTracks,
   SpotifySearchResult,
   SpotifyArtistResult,
   SpotifyAlbumResult,
@@ -89,6 +90,7 @@ export interface ArtistPageLocal {
   localTracks: ReturnType<typeof formatTrack>[];
   localAlbums: ReturnType<typeof formatAlbum>[];
   listenedTracks: ReturnType<typeof formatTrack>[];
+  recommendedTracks: SpotifySearchResult[];
 }
 
 export interface ArtistSpotifyData {
@@ -133,24 +135,14 @@ async function persistArtistSpotifyMeta(
 
 async function findLocalTracks(artistName: string, artistId?: string | null) {
   const candidates = await prisma.track.findMany({
-    where: {
-      AND: [
-        {
+    where: artistId
+      ? {
           OR: [
-            { isDownloaded: true },
-            { sourceUrl: { not: null } },
+            { artistId },
+            { artist: { name: { contains: artistName, mode: 'insensitive' } } },
           ],
-        },
-        artistId
-          ? {
-              OR: [
-                { artistId },
-                { artist: { name: { contains: artistName, mode: 'insensitive' } } },
-              ],
-            }
-          : { artist: { name: { contains: artistName, mode: 'insensitive' } } },
-      ],
-    },
+        }
+      : { artist: { name: { contains: artistName, mode: 'insensitive' } } },
     include: { artist: true, album: true },
     orderBy: { title: 'asc' },
     take: 500,
@@ -182,18 +174,35 @@ async function findLocalAlbums(artistName: string, artistId?: string | null) {
   return candidates.filter((a) => artistNameMatches(a.artist.name, artistName));
 }
 
-async function findListenedTracks(userId: string, artistName: string) {
+async function findListenedTracks(userId: string, artistName: string, artistId?: string | null) {
+  const primaryName = artistName.split(/[,;&]/)[0].trim();
   const history = await prisma.playHistory.findMany({
-    where: { userId },
+    where: {
+      userId,
+      track: artistId
+        ? {
+            OR: [
+              { artistId },
+              { artist: { name: { contains: primaryName, mode: 'insensitive' } } },
+            ],
+          }
+        : { artist: { name: { contains: primaryName, mode: 'insensitive' } } },
+    },
     include: { track: { include: { artist: true, album: true } } },
     orderBy: { playedAt: 'desc' },
-    take: 100,
-    distinct: ['trackId'],
+    take: 500,
   });
 
-  return history
-    .map((h) => h.track)
-    .filter((t) => artistNameMatches(t.artist.name, artistName) && isTrackPlayable(t));
+  const seen = new Set<string>();
+  const tracks = [];
+  for (const h of history) {
+    if (seen.has(h.trackId)) continue;
+    if (!artistNameMatches(h.track.artist.name, artistName)) continue;
+    if (!isTrackPlayable(h.track)) continue;
+    seen.add(h.trackId);
+    tracks.push(h.track);
+  }
+  return tracks;
 }
 
 async function resolveArtist(artistName: string, artistId?: string | null) {
@@ -210,6 +219,64 @@ async function resolveArtist(artistName: string, artistId?: string | null) {
   };
 }
 
+function normalizeTitleKey(title: string): string {
+  return title.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function buildKnownTrackKeys(
+  listened: ReturnType<typeof formatTrack>[],
+  local: ReturnType<typeof formatTrack>[],
+) {
+  const titles = new Set<string>();
+  const spotifyIds = new Set<string>();
+  for (const t of [...listened, ...local]) {
+    titles.add(normalizeTitleKey(t.title));
+    if (t.sourceId) spotifyIds.add(t.sourceId);
+  }
+  return { titles, spotifyIds };
+}
+
+function isUnheardSpotifyTrack(
+  track: SpotifySearchResult,
+  known: { titles: Set<string>; spotifyIds: Set<string> },
+): boolean {
+  if (known.spotifyIds.has(track.id)) return false;
+  return !known.titles.has(normalizeTitleKey(track.name));
+}
+
+async function buildArtistRecommendations(
+  topTracks: SpotifySearchResult[],
+  albums: SpotifyAlbumResult[],
+  listened: ReturnType<typeof formatTrack>[],
+  local: ReturnType<typeof formatTrack>[],
+): Promise<SpotifySearchResult[]> {
+  const known = buildKnownTrackKeys(listened, local);
+  const out: SpotifySearchResult[] = [];
+  const seen = new Set<string>();
+
+  for (const t of topTracks) {
+    if (!isUnheardSpotifyTrack(t, known) || seen.has(t.id)) continue;
+    seen.add(t.id);
+    out.push(t);
+  }
+
+  const recentSingles = albums
+    .filter((a) => a.albumType === 'single')
+    .sort((a, b) => (b.releaseYear ?? 0) - (a.releaseYear ?? 0))
+    .slice(0, 3);
+
+  for (const album of recentSingles) {
+    const tracks = await withTimeout(fetchSpotifyAlbumTracks(album.id), 8000, []);
+    for (const t of tracks) {
+      if (!isUnheardSpotifyTrack(t, known) || seen.has(t.id)) continue;
+      seen.add(t.id);
+      out.push(t);
+    }
+  }
+
+  return out.slice(0, 20);
+}
+
 export async function buildArtistPageLocal(
   userId: string,
   artistName: string,
@@ -220,7 +287,7 @@ export async function buildArtistPageLocal(
   const [localTrackRows, localAlbumRows, listenedRows] = await Promise.all([
     findLocalTracks(resolvedName, resolvedId),
     findLocalAlbums(resolvedName, resolvedId),
-    findListenedTracks(userId, resolvedName),
+    findListenedTracks(userId, resolvedName, resolvedId),
   ]);
 
   return {
@@ -234,6 +301,7 @@ export async function buildArtistPageLocal(
     localTracks: localTrackRows.map(formatTrack),
     localAlbums: localAlbumRows.map(formatAlbum),
     listenedTracks: listenedRows.map(formatTrack),
+    recommendedTracks: [],
   };
 }
 
@@ -335,6 +403,15 @@ export async function buildArtistPage(
   const imageUrl = local.artist.imageUrl || spotify.artist?.imageUrl || null;
   const spotifyArtistId = spotify.artist?.id || local.artist.spotifyArtistId;
 
+  const recommendedTracks = spotify.topTracks.length > 0 || spotify.albums.length > 0
+    ? await buildArtistRecommendations(
+        spotify.topTracks,
+        spotify.albums,
+        local.listenedTracks,
+        local.localTracks,
+      )
+    : [];
+
   return {
     ...local,
     artist: {
@@ -344,6 +421,7 @@ export async function buildArtistPage(
       spotifyArtistId,
     },
     spotify,
+    recommendedTracks,
   };
 }
 

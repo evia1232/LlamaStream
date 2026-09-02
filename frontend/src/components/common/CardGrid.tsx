@@ -73,8 +73,8 @@ export default function CardGrid({ title, items, onPlay, linkPrefix = '/playlist
                   </button>
                 )}
               </div>
-              <p className="text-title truncate mb-0.5">{label}</p>
-              {item.artist && <p className="text-body truncate">{item.artist}</p>}
+              <p className="text-title truncate mb-0.5 text-start">{label}</p>
+              {item.artist && <p className="text-body truncate text-start">{item.artist}</p>}
               {item.trackCount !== undefined && (
                 <p className="text-caption mt-1">{item.trackCount} tracks</p>
               )}

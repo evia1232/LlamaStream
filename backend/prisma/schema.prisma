@@ -281,3 +281,9 @@ model SearchHistoryTrack {
   @@unique([userId, trackKey])
   @@index([userId, searchedAt])
 }
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

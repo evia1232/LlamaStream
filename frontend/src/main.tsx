@@ -7,9 +7,11 @@ import './i18n';
 import './index.css';
 import { applyDocumentDirection } from './lib/direction';
 import { applyAppBranding } from './lib/appName';
+import { loadAndApplyTheme } from './lib/theme';
 
 applyDocumentDirection();
 applyAppBranding();
+void loadAndApplyTheme();
 
 // PWA: activate new service worker immediately and reload to pick up fresh CSS/JS
 const updateSW = registerSW({

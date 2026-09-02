@@ -2,7 +2,7 @@ import prisma from '../lib/prisma';
 import { searchYouTube, SearchResult, resolveYouTubeSource, upsertPendingTrack, prefetchLibraryTrack } from './downloader';
 import { rankYouTubeResults, extractTrackTitleFromYouTube } from '../lib/trackMatch';
 import { trackStreamUrl, ensureBackgroundDownload } from './trackDownload';
-import { effectiveDownloadedFlag } from './trackIntegrity';
+import { effectiveDownloadedFlag, isTrackPlayable } from './trackIntegrity';
 
 export interface DiscoverItem {
   id: string;
@@ -65,28 +65,32 @@ async function getExcludeIds(userId: string, extraTrackId?: string) {
 
 async function collectLibraryRecs(
   userId: string,
-  seed: { artistId: string; id: string },
+  seed: { artistId: string; id: string; artist?: { name: string } },
   exclude: Set<string>,
   limit: number
 ) {
+  const artistFilter = seed.artistId
+    ? { artistId: seed.artistId }
+    : seed.artist?.name
+      ? { artist: { name: { contains: seed.artist.name.split(/[,;&]/)[0].trim(), mode: 'insensitive' as const } } }
+      : null;
+
   const [sameArtist, liked] = await Promise.all([
-    prisma.track.findMany({
-      where: {
-        artistId: seed.artistId,
-        id: { notIn: [...exclude] },
-        OR: [{ isDownloaded: true }, { sourceUrl: { not: null } }],
-      },
-      include: { artist: true, album: true },
-      orderBy: { updatedAt: 'desc' },
-      take: limit,
-    }),
+    artistFilter
+      ? prisma.track.findMany({
+          where: {
+            ...artistFilter,
+            id: { notIn: [...exclude] },
+          },
+          include: { artist: true, album: true },
+          orderBy: { updatedAt: 'desc' },
+          take: limit * 2,
+        })
+      : Promise.resolve([]),
     prisma.likedTrack.findMany({
       where: {
         userId,
-        track: {
-          id: { notIn: [...exclude, seed.id] },
-          OR: [{ isDownloaded: true }, { sourceUrl: { not: null } }],
-        },
+        track: { id: { notIn: [...exclude, seed.id] } },
       },
       include: { track: { include: { artist: true, album: true } } },
       take: limit,
@@ -96,10 +100,14 @@ async function collectLibraryRecs(
   const out = [];
   const seen = new Set<string>();
   for (const t of sameArtist) {
-    if (!seen.has(t.id)) { seen.add(t.id); out.push(t); }
+    if (!isTrackPlayable(t) || seen.has(t.id)) continue;
+    seen.add(t.id);
+    out.push(t);
   }
   for (const l of liked) {
-    if (!seen.has(l.track.id)) { seen.add(l.track.id); out.push(l.track); }
+    if (!isTrackPlayable(l.track) || seen.has(l.track.id)) continue;
+    seen.add(l.track.id);
+    out.push(l.track);
   }
   return out.slice(0, limit);
 }
@@ -149,7 +157,8 @@ async function collectYouTubeRecs(
 export async function getDiscoverRecommendations(
   userId: string,
   seedTrackId?: string,
-  limit = 12
+  limit = 12,
+  seedMeta?: { title?: string; artist?: string },
 ) {
   const { trackIds, sourceIds, titles } = await getExcludeIds(userId, seedTrackId);
 
@@ -159,6 +168,20 @@ export async function getDiscoverRecommendations(
         include: { artist: true, album: true },
       })
     : null;
+
+  if (!seed && seedMeta?.title && seedMeta?.artist) {
+    const artist = await prisma.artist.findFirst({
+      where: { name: { contains: seedMeta.artist.split(/[,;&]/)[0].trim(), mode: 'insensitive' } },
+    });
+    seed = {
+      id: seedTrackId || '',
+      title: seedMeta.title,
+      artistId: artist?.id || '',
+      duration: 0,
+      artist: artist || { id: '', name: seedMeta.artist, imageUrl: null },
+      album: null,
+    } as typeof seed & { artist: { id: string; name: string; imageUrl: string | null } };
+  }
 
   if (!seed) {
     const last = await prisma.playHistory.findFirst({

@@ -56,6 +56,7 @@ interface ArtistPageData {
     artist: { id: string; name: string };
   }[];
   listenedTracks: Track[];
+  recommendedTracks?: SpotifyTrackInfo[];
   spotify: {
     configured: boolean;
     artist: SpotifyArtistInfo | null;
@@ -150,6 +151,7 @@ export default function ArtistPage() {
   const spotifyGenres = spotify?.artist?.genres ?? [];
   const spotifyAlbums = spotify?.albums ?? [];
   const spotifyTopTracks = spotify?.topTracks ?? [];
+  const recommendedRaw = local?.recommendedTracks ?? [];
 
   const displayName = spotify?.artist?.name || local?.artist.name || searchName || '';
   const imageUrl = spotify?.artist?.imageUrl || local?.artist.imageUrl || null;
@@ -167,7 +169,15 @@ export default function ArtistPage() {
     }),
   );
 
+  const recommendedTracks = recommendedRaw.map((t) =>
+    externalTrack(t.id, t.name, t.artist, t.duration, t.thumbnailUrl, t.album, {
+      spotifyUrl: t.spotifyUrl,
+      spotifyArtistId: t.primaryArtistId || spotify?.artist?.id,
+    }),
+  );
+
   const hasContent = spotifyAsTracks.length > 0
+    || recommendedTracks.length > 0
     || normalizedListened.length > 0
     || localOnly.length > 0
     || (local?.localAlbums.length ?? 0) > 0
@@ -204,7 +214,7 @@ export default function ArtistPage() {
 
   return (
     <div>
-      <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-end gap-6">
+      <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-start sm:items-end gap-6">
         <div className="w-36 h-36 md:w-48 md:h-48 rounded-full shadow-card bg-spotify-lightgray shrink-0 overflow-hidden">
           {imageUrl ? (
             <img src={imageUrl} alt="" className="w-full h-full object-cover" />
@@ -216,7 +226,7 @@ export default function ArtistPage() {
             <div className="w-full h-full flex items-center justify-center text-6xl">🎤</div>
           )}
         </div>
-        <div className="min-w-0 pb-2 flex-1">
+        <div className="min-w-0 pb-2 flex-1 text-start">
           <p className="text-label mb-2">{t('artists')}</p>
           <h1 className="text-hero mb-2">{displayName || '—'}</h1>
           {loading && !spotify?.artist && (
@@ -305,6 +315,25 @@ export default function ArtistPage() {
                 </a>
               ))}
             </div>
+          </section>
+        )}
+
+        {recommendedTracks.length > 0 && (
+          <section>
+            <div className="flex items-center gap-4 mb-3 px-2">
+              <h2 className="text-heading-sm">{t('artistRecommendations')}</h2>
+              <button
+                type="button"
+                onClick={() => handlePlayAll(recommendedTracks)}
+                className="w-10 h-10 bg-spotify-green rounded-full flex items-center justify-center hover:scale-105 transition-transform"
+                aria-label={t('playAll')}
+              >
+                <Play className="w-5 h-5 fill-black text-black play-icon-nudge" />
+              </button>
+            </div>
+            {recommendedTracks.map((track, i) => (
+              <TrackRow key={track.id} track={track} index={i} contextTracks={recommendedTracks} />
+            ))}
           </section>
         )}
 

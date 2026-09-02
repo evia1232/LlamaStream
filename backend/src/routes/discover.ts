@@ -8,8 +8,15 @@ const router = Router();
 router.get('/recommendations', authenticate, async (req: AuthRequest, res) => {
   try {
     const seedTrackId = req.query.seedTrackId as string | undefined;
+    const seedTitle = req.query.seedTitle as string | undefined;
+    const seedArtist = req.query.seedArtist as string | undefined;
     const limit = Math.min(20, parseInt(req.query.limit as string, 10) || 12);
-    const result = await getDiscoverRecommendations(req.user!.userId, seedTrackId, limit);
+    const result = await getDiscoverRecommendations(
+      req.user!.userId,
+      seedTrackId,
+      limit,
+      seedTitle && seedArtist ? { title: seedTitle, artist: seedArtist } : undefined,
+    );
     res.json(result);
   } catch (err) {
     console.error('Discover recommendations error:', err);

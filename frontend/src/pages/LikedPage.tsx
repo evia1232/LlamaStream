@@ -58,11 +58,11 @@ export default function LikedPage() {
 
   return (
     <div>
-      <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-end gap-6">
+      <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-start sm:items-end gap-6">
         <div className="w-36 h-36 md:w-48 md:h-48 rounded-spotify shadow-card bg-gradient-to-br from-indigo-700 to-purple-300 shrink-0 flex items-center justify-center">
           <span className="text-6xl md:text-7xl">💜</span>
         </div>
-        <div className="min-w-0 pb-2">
+        <div className="min-w-0 pb-2 text-start">
           <p className="text-label mb-2">{t('playlists')}</p>
           <h1 className="text-hero mb-3 md:mb-4">{t('likedSongs')}</h1>
           <p className="text-caption">{t('trackCount', { count: tracks.length })}</p>

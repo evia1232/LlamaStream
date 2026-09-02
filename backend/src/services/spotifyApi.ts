@@ -732,3 +732,7 @@ export async function fetchSpotifyArtistAlbums(artistId: string): Promise<Spotif
   return albums;
 }
 
+export async function fetchSpotifyAlbumTracks(albumId: string): Promise<SpotifySearchResult[]> {
+  const data = await spotifyGet<{ items: SpotifyApiTrack[] }>(`/albums/${albumId}/tracks?limit=50`);
+  return (data?.items || []).map(mapSpotifyApiTrack);
+}

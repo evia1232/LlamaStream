@@ -76,7 +76,7 @@ export default function LibraryPage() {
           <div className="aspect-square rounded-spotify bg-gradient-to-br from-indigo-700 to-purple-300 mb-4 flex items-center justify-center shadow-card">
             <span className="text-5xl">💜</span>
           </div>
-          <p className="text-title">{t('likedSongs')}</p>
+          <p className="text-title text-start">{t('likedSongs')}</p>
         </Link>
 
         {playlists.map((playlist) => (
@@ -88,8 +88,8 @@ export default function LibraryPage() {
                 className="w-full h-full"
               />
             </div>
-            <p className="text-title truncate">{playlist.name}</p>
-            <p className="text-body mt-0.5">{t('trackCount', { count: playlist.trackCount || 0 })}</p>
+            <p className="text-title truncate text-start">{playlist.name}</p>
+            <p className="text-body mt-0.5 text-start">{t('trackCount', { count: playlist.trackCount || 0 })}</p>
           </Link>
         ))}
       </div>

@@ -65,7 +65,7 @@ export default function PlaylistPage() {
 
   return (
     <div>
-      <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-end gap-6">
+      <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-start sm:items-end gap-6">
         <div className="w-36 h-36 md:w-48 md:h-48 rounded-spotify shadow-card bg-spotify-lightgray shrink-0 overflow-hidden">
           <PlaylistCover
             coverUrl={playlist.coverUrl}
@@ -74,7 +74,7 @@ export default function PlaylistPage() {
             fallback={<span className="text-6xl">♪</span>}
           />
         </div>
-        <div className="min-w-0 pb-2">
+        <div className="min-w-0 pb-2 text-start">
           <p className="text-label mb-2">{t('playlists')}</p>
           <h1 className="text-hero mb-3 md:mb-4">{playlist.name}</h1>
           {playlist.description && <p className="text-body mb-2">{playlist.description}</p>}

@@ -10,6 +10,7 @@ import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from 
 import { fetchLyricsForTrack } from './lyrics';
 import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress, waitForTrackDownload } from './trackDownload';
 import { getCacheAudioDir, getDownloadDirForTrack, finalizeFileStorage, promoteTrackToLibrary, isTrackPinned } from './trackStorage';
+import { findCanonicalDownloadedTrack, linkTrackToCanonical, propagateDownloadToSourceId } from './trackDedup';
 
 export interface SearchResult {
   id: string;
@@ -264,6 +265,18 @@ export async function saveTrackRecord(
     ? await prisma.track.findFirst({ where: { sourceId: download.sourceId } })
     : null;
 
+  const canonical = await findCanonicalDownloadedTrack(download.sourceId, download.sourceUrl);
+  if (canonical?.filePath && fs.existsSync(canonical.filePath)) {
+    const trackId = existing?.id ?? null;
+    if (trackId) {
+      await linkTrackToCanonical(trackId, canonical);
+      return prisma.track.findUniqueOrThrow({
+        where: { id: trackId },
+        include: { artist: true, album: true, lyrics: true },
+      });
+    }
+  }
+
   const trackId = existing?.id ?? null;
   const { filePath, storageTier } = trackId
     ? await finalizeFileStorage(trackId, download.filePath)
@@ -294,6 +307,22 @@ export async function saveTrackRecord(
         data,
         include: { artist: true, album: true, lyrics: true },
       });
+
+  if (download.sourceId && filePath) {
+    await propagateDownloadToSourceId(
+      download.sourceId,
+      {
+        filePath,
+        sourceUrl: download.sourceUrl,
+        downloadedAt: data.downloadedAt as Date,
+        storageTier,
+        quality,
+        duration: download.duration,
+        thumbnailUrl: download.thumbnailUrl,
+      },
+      track.id,
+    );
+  }
 
   if (await isTrackPinned(track.id)) {
     await promoteTrackToLibrary(track.id);
@@ -329,6 +358,17 @@ export async function upsertPendingTrack(
     return existing;
   }
 
+  const canonical = await findCanonicalDownloadedTrack(source.sourceId, source.url);
+  if (canonical?.filePath && fs.existsSync(canonical.filePath)) {
+    if (existing) {
+      await linkTrackToCanonical(existing.id, canonical);
+      return prisma.track.findUniqueOrThrow({
+        where: { id: existing.id },
+        include: { artist: true, album: true, lyrics: true },
+      });
+    }
+  }
+
   const data = {
     title: trackTitle,
     artistId: artist.id,
@@ -343,17 +383,33 @@ export async function upsertPendingTrack(
   };
 
   if (existing) {
-    return prisma.track.update({
+    const updated = await prisma.track.update({
       where: { id: existing.id },
       data,
       include: { artist: true, album: true, lyrics: true },
     });
+    if (canonical?.filePath && fs.existsSync(canonical.filePath)) {
+      await linkTrackToCanonical(updated.id, canonical);
+      return prisma.track.findUniqueOrThrow({
+        where: { id: updated.id },
+        include: { artist: true, album: true, lyrics: true },
+      });
+    }
+    return updated;
   }
 
-  return prisma.track.create({
+  const created = await prisma.track.create({
     data,
     include: { artist: true, album: true, lyrics: true },
   });
+  if (canonical?.filePath && fs.existsSync(canonical.filePath)) {
+    await linkTrackToCanonical(created.id, canonical);
+    return prisma.track.findUniqueOrThrow({
+      where: { id: created.id },
+      include: { artist: true, album: true, lyrics: true },
+    });
+  }
+  return created;
 }
 
 export async function resolveYouTubeSource(

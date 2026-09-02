@@ -288,6 +288,10 @@
 }
 
 :root {
+  --color-accent: #1db954;
+  --color-accent-hover: #1ed760;
+  --color-accent-rgb: 29 185 84;
+  --color-accent-hover-rgb: 30 215 96;
   --player-h-mobile: 4rem;
   --player-h-desktop: 5.625rem;
   --mobile-nav-h: 3.5rem;

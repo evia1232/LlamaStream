@@ -100,6 +100,7 @@ interface PlayerState {
   restorePlayback: () => Promise<void>;
   toggleAutoplay: () => void;
   playDiscoverNext: () => Promise<void>;
+  prepareDiscoverAutoplay: () => Promise<void>;
   prefetchUpcoming: () => void;
   resolveNextTrack: () => { track: Track; contextIndex?: number; queueItemId?: string } | null;
   downloadToLibrary: () => Promise<void>;
@@ -229,6 +230,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const ctxIdx = contextTracks.findIndex((t) => t.id === track.id);
     if (ctxIdx >= 0) {
       set({ contextIndex: ctxIdx });
+    } else {
+      set({ contextTracks: [], contextIndex: -1 });
     }
 
     const user = useAuthStore.getState().user;
@@ -273,6 +276,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         void get().persistPlayback();
         get().prefetchUpcoming();
         get().broadcastPlaybackSync();
+        void get().prepareDiscoverAutoplay();
       } catch { /* ignore */ }
       return;
     }
@@ -334,6 +338,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       void get().persistPlayback();
       get().prefetchUpcoming();
       get().broadcastPlaybackSync();
+      void get().prepareDiscoverAutoplay();
     } catch {
       if (!stale()) set({ isPreparingPlayback: false, isPlaying: false, isBuffering: false });
     }
@@ -490,6 +495,40 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const next = !get().autoplay;
     saveAutoplayEnabled(next);
     set({ autoplay: next });
+  },
+
+  prepareDiscoverAutoplay: async () => {
+    const { currentTrack, autoplay, queue, contextTracks, _discoverLoading } = get();
+    if (!autoplay || !currentTrack || _discoverLoading) return;
+    if (queue.length > 0 || contextTracks.length > 1) return;
+
+    const artistName = typeof currentTrack.artist === 'string'
+      ? currentTrack.artist
+      : currentTrack.artist?.name;
+
+    try {
+      const params: Record<string, string | number> = { limit: 8 };
+      if (isLibraryId(currentTrack.id)) {
+        params.seedTrackId = currentTrack.id;
+      } else if (currentTrack.title && artistName) {
+        params.seedTitle = currentTrack.title;
+        params.seedArtist = artistName;
+      } else {
+        return;
+      }
+
+      const { data } = await api.get('/discover/recommendations', { params });
+      const recs = (data.recommendations || []).map((t: Track) => normalizeTrack(t));
+      if (recs.length === 0) return;
+
+      const { currentTrack: nowPlaying } = get();
+      if (!nowPlaying || nowPlaying.id !== currentTrack.id) return;
+
+      set({ contextTracks: [currentTrack, ...recs], contextIndex: 0 });
+      for (const t of recs.slice(0, 2)) {
+        if (!t.isDownloaded) prefetchTrack(t);
+      }
+    } catch { /* ignore */ }
   },
 
   playDiscoverNext: async () => {
