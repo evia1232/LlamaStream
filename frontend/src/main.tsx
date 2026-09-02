@@ -8,9 +8,11 @@ import './index.css';
 import { applyDocumentDirection } from './lib/direction';
 import { applyAppBranding } from './lib/appName';
 import { loadAndApplyTheme } from './lib/theme';
+import { configureAudioSession } from './lib/backgroundPlayback';
 
 applyDocumentDirection();
 applyAppBranding();
+configureAudioSession();
 void loadAndApplyTheme();
 
 // PWA: activate new service worker immediately and reload to pick up fresh CSS/JS

@@ -60,6 +60,8 @@ interface PlayerState {
   setCurrentTrack: (track: Track | null) => void;
   setIsPlaying: (playing: boolean) => void;
   setIsBuffering: (buffering: boolean) => void;
+  setOffline: (offline: boolean) => void;
+  setReconnecting: (reconnecting: boolean) => void;
   setCurrentTime: (time: number) => void;
   setDuration: (duration: number) => void;
   setVolume: (volume: number) => void;
@@ -82,6 +84,8 @@ interface PlayerState {
   _discoverLoading: boolean;
   isPreparingPlayback: boolean;
   isBuffering: boolean;
+  isOffline: boolean;
+  isReconnecting: boolean;
   playbackEngine: PlaybackEngine;
   fetchQueue: () => Promise<void>;
   addToQueue: (trackId: string, playNext?: boolean, trackHint?: Track) => void;
@@ -164,10 +168,14 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   _discoverLoading: false,
   isPreparingPlayback: false,
   isBuffering: false,
+  isOffline: false,
+  isReconnecting: false,
   playbackEngine: 'local' as PlaybackEngine,
 
   setCurrentTrack: (track) => set({ currentTrack: track }),
   setIsBuffering: (buffering) => set({ isBuffering: buffering }),
+  setOffline: (offline) => set({ isOffline: offline }),
+  setReconnecting: (reconnecting) => set({ isReconnecting: reconnecting }),
   setIsPlaying: (playing) => {
     const { playbackEngine, isRemoteActive, activeDeviceId, localDeviceId } = get();
     if (isRemoteActive && activeDeviceId && activeDeviceId !== localDeviceId) {
@@ -351,7 +359,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   beginTrackTransition: () => {
     set((s) => ({ _playGeneration: s._playGeneration + 1, isBuffering: true }));
-    get()._pauseFn?.();
+    // Keep current audio playing until the next track is ready — avoids background autoplay blocks.
   },
 
   stopPlaybackImmediate: () => {

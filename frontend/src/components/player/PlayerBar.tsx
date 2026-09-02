@@ -20,6 +20,7 @@ import { canStreamTrackLocally, prepareTrackForPlayback, isLibraryId } from '../
 import { getCachedStreamBlobUrl, revokeBlobUrl } from '../../lib/audioStreamCache';
 import { effectivePlaybackVolume, isMobileViewport } from '../../lib/volume';
 import { safeAudioPlay, resumeAudioIfNeeded } from '../../lib/audioPlay';
+import { useNetworkPlaybackRecovery } from '../../hooks/useNetworkPlaybackRecovery';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -35,6 +36,7 @@ export default function PlayerBar() {
   const { t } = useTranslation();
   const audioRef = useRef<HTMLAudioElement>(null);
   const preloadRef = useRef<HTMLAudioElement | null>(null);
+  const preloadTrackIdRef = useRef<string | null>(null);
   const footerRef = useRef<HTMLElement>(null);
 
   const {
@@ -47,14 +49,18 @@ export default function PlayerBar() {
     clearPendingSeek, persistPlayback, registerSeek, registerPause, registerStop, seekTo, setShowNowPlaying,
     autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback, isBuffering, playbackEngine,
     setIsBuffering, isRemoteActive, activeDeviceName, sendRemoteCommand, prefetchUpcoming, resolveNextTrack,
+    isOffline, isReconnecting,
   } = usePlayerStore();
 
-  const canPlayLocal = canStreamTrackLocally(currentTrack);
-  const isLiked = currentTrack ? isTrackLiked(currentTrack, likedTrackIds, likedPendingTracks) : false;
   const lastPersistRef = useRef(0);
   const loadTokenRef = useRef(0);
   const activeBlobRef = useRef<string | null>(null);
   const endedHandledRef = useRef(false);
+
+  useNetworkPlaybackRecovery(audioRef, activeBlobRef);
+
+  const canPlayLocal = canStreamTrackLocally(currentTrack);
+  const isLiked = currentTrack ? isTrackLiked(currentTrack, likedTrackIds, likedPendingTracks) : false;
   const isSpotifyMode = playbackEngine === 'spotify';
 
   useMediaSession();
@@ -66,16 +72,11 @@ export default function PlayerBar() {
     if (!audio || isSpotifyMode || !currentTrack || !isLibraryId(currentTrack.id) || isRemoteActive) return;
     if (!canPlayLocal) return;
 
-    const token = localStorage.getItem('token');
     const loadToken = ++loadTokenRef.current;
     let cancelled = false;
 
     revokeBlobUrl(activeBlobRef.current);
     activeBlobRef.current = null;
-
-    audio.pause();
-    audio.removeAttribute('src');
-    audio.load();
     endedHandledRef.current = false;
 
     const applyPendingSeek = () => {
@@ -93,7 +94,7 @@ export default function PlayerBar() {
       setIsBuffering(false);
       applyPendingSeek();
       if (usePlayerStore.getState().isPlaying) {
-        safeAudioPlay(audio, () => setIsPlaying(false));
+        safeAudioPlay(audio, undefined, { persistent: true });
       }
     };
 
@@ -126,24 +127,39 @@ export default function PlayerBar() {
     audio.addEventListener('error', onError);
 
     void (async () => {
+      const token = localStorage.getItem('token');
+      const networkSrc = streamUrl(currentTrack.id, token);
       const cachedBlob = await getCachedStreamBlobUrl(currentTrack.id);
       if (cancelled || loadToken !== loadTokenRef.current) {
         revokeBlobUrl(cachedBlob);
         return;
       }
 
-      const networkSrc = streamUrl(currentTrack.id, token);
-      if (cachedBlob) {
+      const preload = preloadRef.current;
+      const preloaded = preloadTrackIdRef.current === currentTrack.id
+        && preload?.src
+        && preload.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
+
+      if (preloaded && preload?.src) {
+        if (preload.src.startsWith('blob:')) {
+          activeBlobRef.current = preload.src;
+        }
+        audio.src = preload.src;
+        audio.load();
+        preload.removeAttribute('src');
+        preload.load();
+        preloadTrackIdRef.current = null;
+      } else if (cachedBlob) {
         activeBlobRef.current = cachedBlob;
         audio.src = cachedBlob;
+        audio.load();
       } else {
         audio.src = networkSrc;
+        audio.load();
       }
 
-      audio.load();
-      // Attempt immediate play — browser buffers progressively while playing
       if (usePlayerStore.getState().isPlaying) {
-        safeAudioPlay(audio, () => setIsPlaying(false));
+        safeAudioPlay(audio, undefined, { persistent: true });
       }
     })();
 
@@ -203,7 +219,7 @@ export default function PlayerBar() {
 
     if (isPlaying) {
       const startPlayback = () => {
-        safeAudioPlay(audio, () => setIsPlaying(false));
+        safeAudioPlay(audio, undefined, { persistent: true });
       };
 
       if (!audio.src) {
@@ -251,19 +267,26 @@ export default function PlayerBar() {
   useEffect(() => {
     if (isSpotifyMode || isRemoteActive) return;
     const next = resolveNextTrack();
-    if (!next?.track || !canStreamTrackLocally(next.track)) return;
+    if (!next?.track || !canStreamTrackLocally(next.track)) {
+      preloadTrackIdRef.current = null;
+      return;
+    }
 
     const token = localStorage.getItem('token');
     const src = streamUrl(next.track.id, token);
     const el = preloadRef.current ?? new Audio();
     preloadRef.current = el;
     el.preload = 'auto';
+    preloadTrackIdRef.current = next.track.id;
     if (el.src !== src) {
       el.src = src;
       el.load();
     }
 
     return () => {
+      if (preloadTrackIdRef.current === next.track.id) {
+        preloadTrackIdRef.current = null;
+      }
       el.removeAttribute('src');
       el.load();
     };
@@ -403,7 +426,14 @@ export default function PlayerBar() {
   const trackDuration = duration || currentTrack.duration || 0;
   const progressPct = (currentTime / (trackDuration || 1)) * 100;
   const volumePct = volume * 100;
-  const showPreparing = isPreparingPlayback || isBuffering;
+  const showPreparing = isPreparingPlayback || (isBuffering && !isOffline && !isReconnecting);
+  const networkBanner = isOffline
+    ? t('offlinePlayback')
+    : isReconnecting
+      ? t('reconnectingPlayback')
+      : isBuffering
+        ? t('bufferingPlayback')
+        : null;
   const preparingLabel = isBuffering && !isPreparingPlayback
     ? t('switchingTrack')
     : isPreparingPlayback && !isSpotifyMode && !canPlayLocal
@@ -455,7 +485,14 @@ export default function PlayerBar() {
   const imageUrl = getTrackImageUrl(currentTrack);
 
   return (
-    <footer ref={footerRef} className="player-bar shrink-0" dir="ltr">
+    <footer ref={footerRef} className="player-bar shrink-0 relative" dir="ltr">
+      {networkBanner && !isSpotifyMode && (
+        <div className="absolute bottom-full inset-x-0 flex justify-center pointer-events-none px-4 pb-1 z-10">
+          <p className="text-xs font-medium text-white/90 bg-[#5038a0] px-3 py-1 rounded-full shadow-lg">
+            {networkBanner}
+          </p>
+        </div>
+      )}
       <audio
         ref={audioRef}
         onTimeUpdate={handleTimeUpdate}
@@ -464,6 +501,7 @@ export default function PlayerBar() {
         crossOrigin="anonymous"
         playsInline
         preload="auto"
+        {...({ 'x-webkit-airplay': 'allow' } as React.AudioHTMLAttributes<HTMLAudioElement>)}
       />
 
       <div className="md:hidden absolute top-0 inset-x-0 h-0.5 bg-spotify-hover">

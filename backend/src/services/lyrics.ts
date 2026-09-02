@@ -43,42 +43,72 @@ function normalizeText(s: string): string {
     .trim();
 }
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function cleanTitle(title: string): string {
   return title
-    .replace(/\s*[\(\[\{](official\s*(video|audio|lyric(s)?|visualizer)|lyrics?|audio|video|hd|4k|visual|prod\.?)[^)\]\}]*[\)\]\}]/gi, '')
+    .replace(/\s*[\(\[\{](official\s*(video|audio|lyric(s)?|visualizer)|lyrics?|audio|video|hd|4k|visual|prod\.?|topic)[^)\]\}]*[\)\]\}]/gi, '')
     .replace(/\s*[\(\[\{][^)\]\}]*[\)\]\}]/g, '')
-    .replace(/\s+-\s+(remix|live|acoustic|cover|karaoke|version).*$/i, '')
+    .replace(/\s+-\s+(remix|live|acoustic|cover|karaoke|version|edit|remaster(ed)?).*$/i, '')
+    .replace(/\s+(feat\.?|ft\.?|featuring)\s+.+$/i, '')
+    .replace(/\s+\|\s+.+$/g, '')
     .trim();
 }
 
 function primaryArtist(artist: string): string {
-  return artist.split(/\s*,\s*|\s*&\s*|\s+feat\.?\s+|\s+ft\.?\s+|\s+x\s+/i)[0].trim();
+  return artist.split(/\s*,\s*|\s*&\s*|\s+feat\.?\s+|\s+ft\.?\s+|\s+featuring\s+|\s+x\s+/i)[0].trim();
+}
+
+function artistVariants(artist: string): string[] {
+  const parts = artist
+    .split(/\s*,\s*|\s*&\s*|\s+feat\.?\s+|\s+ft\.?\s+|\s+featuring\s+|\s+x\s+/i)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return [...new Set([artist.trim(), primaryArtist(artist), ...parts].filter(Boolean))];
+}
+
+function stripArtistFromTitle(title: string, artist: string): string {
+  let result = title.trim();
+  for (const name of artistVariants(artist)) {
+    if (!name) continue;
+    const pattern = new RegExp(`^${escapeRegex(name)}\\s*[-–—:|]\\s*`, 'i');
+    result = result.replace(pattern, '').trim();
+  }
+  return result || title.trim();
 }
 
 function tokenOverlap(a: string, b: string): number {
-  const ta = new Set(normalizeText(a).split(' ').filter(Boolean));
-  const tb = new Set(normalizeText(b).split(' ').filter(Boolean));
+  const ta = new Set(normalizeText(a).split(' ').filter((w) => w.length > 1));
+  const tb = new Set(normalizeText(b).split(' ').filter((w) => w.length > 1));
   if (ta.size === 0 || tb.size === 0) return 0;
   let shared = 0;
   for (const t of ta) if (tb.has(t)) shared++;
   return shared / Math.max(ta.size, tb.size);
 }
 
-function scoreRecord(record: LrcRecord, target: { title: string; artist: string; duration?: number; album?: string | null }): number {
+function scoreRecord(
+  record: LrcRecord,
+  target: { title: string; artist: string; duration?: number; album?: string | null },
+  opts?: { ignoreDuration?: boolean },
+): number {
   const name = record.trackName || record.name || '';
   let score = tokenOverlap(name, target.title) * 50;
   score += tokenOverlap(record.artistName || '', target.artist) * 35;
   if (target.album && record.albumName) {
     score += tokenOverlap(record.albumName, target.album) * 10;
   }
-  if (target.duration && record.duration) {
+  if (!opts?.ignoreDuration && target.duration && record.duration) {
     const diff = Math.abs(record.duration - target.duration);
     if (diff <= 2) score += 25;
     else if (diff <= 5) score += 15;
     else if (diff <= 12) score += 5;
-    else score -= 10;
+    else if (diff <= 20) score -= 5;
+    else score -= 15;
   }
   if (record.syncedLyrics) score += 5;
+  if (record.plainLyrics || record.syncedLyrics) score += 3;
   return score;
 }
 
@@ -102,32 +132,42 @@ async function searchLyrics(params: Record<string, string>): Promise<LrcRecord[]
   return Array.isArray(data) ? data as LrcRecord[] : [];
 }
 
-function pickBest(records: LrcRecord[], target: { title: string; artist: string; duration?: number; album?: string | null }): LrcRecord | null {
+function pickBest(
+  records: LrcRecord[],
+  target: { title: string; artist: string; duration?: number; album?: string | null },
+  minScore = 35,
+  opts?: { ignoreDuration?: boolean },
+): LrcRecord | null {
   if (records.length === 0) return null;
   const scored = records
-    .map((r) => ({ r, score: scoreRecord(r, target) }))
-    .filter(({ score }) => score >= 35)
+    .map((r) => ({ r, score: scoreRecord(r, target, opts) }))
+    .filter(({ r, score }) => score >= minScore && (r.plainLyrics || r.syncedLyrics))
     .sort((a, b) => b.score - a.score);
   return scored[0]?.r ?? null;
 }
 
+function buildSearchTargets(target: { title: string; artist: string; duration?: number; album?: string | null }) {
+  const rawTitle = target.title.trim();
+  const cleaned = cleanTitle(rawTitle);
+  const stripped = stripArtistFromTitle(cleaned, target.artist);
+  const titles = [...new Set([rawTitle, cleaned, stripped].filter(Boolean))];
+  const artists = artistVariants(target.artist);
+  return { titles, artists, album: target.album?.trim() || undefined, duration: target.duration };
+}
+
 async function resolveFromLrcLib(target: { title: string; artist: string; duration?: number; album?: string | null }): Promise<LrcRecord | null> {
-  const title = cleanTitle(target.title);
-  const artist = primaryArtist(target.artist);
-  const album = target.album?.trim() || undefined;
-  const duration = target.duration && target.duration > 0 ? Math.round(target.duration) : undefined;
+  const { titles, artists, album, duration } = buildSearchTargets(target);
 
   const getAttempts: Record<string, string>[] = [];
-  if (duration) {
-    getAttempts.push({ track_name: title, artist_name: artist, duration: String(duration), ...(album ? { album_name: album } : {}) });
-    getAttempts.push({ track_name: title, artist_name: artist, duration: String(duration) });
-  }
-  getAttempts.push({ track_name: title, artist_name: artist, ...(album ? { album_name: album } : {}) });
-  getAttempts.push({ track_name: title, artist_name: artist });
-
-  const cleanedTitle = cleanTitle(title);
-  if (cleanedTitle !== title) {
-    getAttempts.push({ track_name: cleanedTitle, artist_name: artist, ...(duration ? { duration: String(duration) } : {}) });
+  for (const title of titles) {
+    for (const artist of artists) {
+      if (duration) {
+        getAttempts.push({ track_name: title, artist_name: artist, duration: String(duration), ...(album ? { album_name: album } : {}) });
+        getAttempts.push({ track_name: title, artist_name: artist, duration: String(duration) });
+      }
+      getAttempts.push({ track_name: title, artist_name: artist, ...(album ? { album_name: album } : {}) });
+      getAttempts.push({ track_name: title, artist_name: artist });
+    }
   }
 
   for (const params of getAttempts) {
@@ -135,16 +175,35 @@ async function resolveFromLrcLib(target: { title: string; artist: string; durati
     if (hit && (hit.plainLyrics || hit.syncedLyrics)) return hit;
   }
 
-  const searchQueries: Record<string, string>[] = [
-    { q: `${title} ${artist}` },
-    { track_name: title, artist_name: artist },
-    { q: `${cleanedTitle} ${artist}` },
-    { track_name: cleanedTitle, artist_name: primaryArtist(artist) },
-  ];
+  const searchQueries: Record<string, string>[] = [];
+  for (const title of titles) {
+    for (const artist of artists) {
+      searchQueries.push({ q: `${title} ${artist}` });
+      searchQueries.push({ track_name: title, artist_name: artist });
+    }
+    searchQueries.push({ q: title });
+    searchQueries.push({ track_name: title });
+  }
+
+  const scoredTarget = { title: titles[0] || target.title, artist: artists[0] || target.artist, duration, album };
 
   for (const params of searchQueries) {
     const results = await searchLyrics(params);
-    const best = pickBest(results, { title, artist, duration, album });
+    const best = pickBest(results, scoredTarget, 35);
+    if (best) return best;
+  }
+
+  // Relaxed fallback — ignore duration mismatch (common for popular radio edits / live versions)
+  for (const params of searchQueries.slice(0, 6)) {
+    const results = await searchLyrics(params);
+    const best = pickBest(results, scoredTarget, 28, { ignoreDuration: true });
+    if (best) return best;
+  }
+
+  // Last resort: title-only with very loose match
+  for (const title of titles) {
+    const results = await searchLyrics({ q: title });
+    const best = pickBest(results, { ...scoredTarget, title }, 22, { ignoreDuration: true });
     if (best) return best;
   }
 

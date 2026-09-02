@@ -27,7 +27,7 @@ export function useAudioInterruptResume() {
     window.addEventListener('pageshow', tryResume);
     window.addEventListener('focus', tryResume);
 
-    const interval = window.setInterval(tryResume, 2500);
+    const interval = window.setInterval(tryResume, document.hidden ? 700 : 2500);
 
     return () => {
       document.removeEventListener('visibilitychange', tryResume);

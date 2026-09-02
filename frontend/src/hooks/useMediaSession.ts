@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { usePlayerStore } from '../store';
 import { getArtistName, getTrackImageUrl } from '../lib/trackUtils';
 import { getAppName } from '../lib/appName';
+import { resumePlayerAudio } from '../lib/audioPlay';
 
 function setHandler(action: MediaSessionAction, handler: MediaSessionActionHandler | null) {
   try {
@@ -20,7 +21,10 @@ export function useMediaSession() {
   useEffect(() => {
     if (!('mediaSession' in navigator)) return;
 
-    setHandler('play', () => usePlayerStore.getState().setIsPlaying(true));
+    setHandler('play', () => {
+      usePlayerStore.getState().setIsPlaying(true);
+      resumePlayerAudio();
+    });
     setHandler('pause', () => usePlayerStore.getState().setIsPlaying(false));
     setHandler('previoustrack', () => usePlayerStore.getState().playPrevious());
     setHandler('nexttrack', () => usePlayerStore.getState().playNext());

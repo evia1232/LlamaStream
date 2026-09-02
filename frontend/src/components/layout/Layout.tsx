@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
 import clsx from 'clsx';
 import Sidebar from './Sidebar';
 import MobileNav from './MobileNav';
@@ -12,11 +12,14 @@ import { usePlayerStore } from '../../store';
 import { useAudioInterruptResume } from '../../hooks/useAudioInterruptResume';
 import { usePlaybackSync } from '../../hooks/usePlaybackSync';
 import DevicePicker from '../player/DevicePicker';
+import { startPlaybackKeeper } from '../../lib/backgroundPlayback';
 
 export default function Layout({ children }: { children: ReactNode }) {
   const hasTrack = usePlayerStore((s) => !!s.currentTrack);
   useAudioInterruptResume();
   usePlaybackSync();
+
+  useEffect(() => startPlaybackKeeper(), []);
 
   return (
     <div className="h-screen flex flex-col bg-spotify-black safe-area">
