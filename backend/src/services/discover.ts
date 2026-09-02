@@ -2,6 +2,7 @@ import prisma from '../lib/prisma';
 import { searchYouTube, SearchResult, resolveYouTubeSource, upsertPendingTrack, prefetchLibraryTrack } from './downloader';
 import { rankYouTubeResults, extractTrackTitleFromYouTube } from '../lib/trackMatch';
 import { trackStreamUrl, ensureBackgroundDownload } from './trackDownload';
+import { effectiveDownloadedFlag } from './trackIntegrity';
 
 export interface DiscoverItem {
   id: string;
@@ -25,16 +26,18 @@ function formatDiscoverTrack(track: {
   sourceId: string | null;
   quality: string;
   isDownloaded: boolean;
+  filePath: string | null;
   artist: { id: string; name: string; imageUrl: string | null };
   album?: { id: string; title: string; coverUrl: string | null } | null;
 }): DiscoverItem {
+  const isDownloaded = effectiveDownloadedFlag(track);
   return {
     id: track.id,
     title: track.title,
     duration: track.duration,
     thumbnailUrl: track.thumbnailUrl,
-    isDownloaded: track.isDownloaded,
-    streamUrl: trackStreamUrl(track),
+    isDownloaded,
+    streamUrl: trackStreamUrl({ id: track.id, isDownloaded, sourceUrl: track.sourceUrl }),
     artist: track.artist,
     album: track.album ?? null,
     source: 'library',

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Play, ExternalLink } from 'lucide-react';
@@ -96,27 +96,40 @@ export default function ArtistPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const playTracks = usePlayerStore((s) => s.playTracks);
+  const persistedSpotifyIdRef = useRef<string | null>(null);
 
   const searchName = useMemo(() => {
     if (nameParam) return decodeURIComponent(nameParam);
     return null;
   }, [nameParam]);
 
+  useEffect(() => {
+    persistedSpotifyIdRef.current = null;
+  }, [searchName, id]);
+
   const load = useCallback(async () => {
     const path = artistApiPath(searchName, id, { spotifyArtistId, spotifyTrackId });
-    if (!path) return;
+    if (!path) {
+      setLoading(false);
+      setError(t('artistLoadError'));
+      return;
+    }
 
     setLoading(true);
     setError('');
-    setData(null);
 
     try {
       const { data: page } = await api.get<ArtistPageData>(path);
       setData(page);
 
-      // Persist resolved Spotify artist id in URL for reliable reloads / sharing
-      const resolvedId = page.artist.spotifyArtistId || page.spotify.artist?.id;
-      if (resolvedId && resolvedId !== spotifyArtistId && searchName) {
+      const resolvedId = page.artist.spotifyArtistId || page.spotify?.artist?.id;
+      if (
+        resolvedId
+        && resolvedId !== spotifyArtistId
+        && searchName
+        && persistedSpotifyIdRef.current !== resolvedId
+      ) {
+        persistedSpotifyIdRef.current = resolvedId;
         setSearchParams((prev) => {
           const next = new URLSearchParams(prev);
           next.set('spotifyArtistId', resolvedId);
@@ -128,12 +141,15 @@ export default function ArtistPage() {
     } finally {
       setLoading(false);
     }
-  }, [searchName, id, spotifyArtistId, spotifyTrackId, setSearchParams, t]);
+  }, [searchName, id, spotifyTrackId, setSearchParams, t]);
 
   useEffect(() => { void load(); }, [load]);
 
   const spotify = data?.spotify ?? null;
   const local = data;
+  const spotifyGenres = spotify?.artist?.genres ?? [];
+  const spotifyAlbums = spotify?.albums ?? [];
+  const spotifyTopTracks = spotify?.topTracks ?? [];
 
   const displayName = spotify?.artist?.name || local?.artist.name || searchName || '';
   const imageUrl = spotify?.artist?.imageUrl || local?.artist.imageUrl || null;
@@ -144,7 +160,7 @@ export default function ArtistPage() {
   const listenedIds = new Set(normalizedListened.map((t) => t.id));
   const localOnly = normalizedLocal.filter((t) => !listenedIds.has(t.id));
 
-  const spotifyAsTracks = (spotify?.topTracks ?? []).map((t) =>
+  const spotifyAsTracks = spotifyTopTracks.map((t) =>
     externalTrack(t.id, t.name, t.artist, t.duration, t.thumbnailUrl, t.album, {
       spotifyUrl: t.spotifyUrl,
       spotifyArtistId: t.primaryArtistId || spotify?.artist?.id,
@@ -155,7 +171,7 @@ export default function ArtistPage() {
     || normalizedListened.length > 0
     || localOnly.length > 0
     || (local?.localAlbums.length ?? 0) > 0
-    || (spotify?.albums.length ?? 0) > 0
+    || spotifyAlbums.length > 0
     || !!spotify?.artist;
 
   if (loading && !data) {
@@ -215,7 +231,7 @@ export default function ArtistPage() {
           {spotify?.artist && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption">
               <span>{formatFollowers(spotify.artist.followers)} {t('followersLabel')}</span>
-              {spotify.artist.genres.slice(0, 3).map((g) => (
+              {spotifyGenres.slice(0, 3).map((g) => (
                 <span key={g} className="capitalize">{g}</span>
               ))}
               <a
@@ -262,11 +278,11 @@ export default function ArtistPage() {
           </section>
         )}
 
-        {(spotify?.albums.length ?? 0) > 0 && (
+        {spotifyAlbums.length > 0 && (
           <section className="px-4">
             <h2 className="text-heading-sm mb-4">{t('spotifyAlbums')}</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {spotify!.albums.map((album) => (
+              {spotifyAlbums.map((album) => (
                 <a
                   key={album.id}
                   href={album.spotifyUrl}

@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma';
 import { artistNameMatches } from '../lib/artistMatch';
 import { trackStreamUrl, isDownloadInProgress } from './trackDownload';
+import { effectiveDownloadedFlag, isTrackPlayable } from './trackIntegrity';
 import {
   isSpotifyConfigured,
   searchSpotifyArtist,
@@ -44,11 +45,15 @@ function formatTrack(track: {
     sourceUrl: track.sourceUrl,
     sourceId: track.sourceId,
     quality: track.quality,
-    isDownloaded: track.isDownloaded,
-    isDownloading: !track.isDownloaded && !!track.sourceUrl && isDownloadInProgress(track.id),
+    isDownloaded: effectiveDownloadedFlag(track),
+    isDownloading: !effectiveDownloadedFlag(track) && !!track.sourceUrl && isDownloadInProgress(track.id),
     artist: track.artist,
     album: track.album || null,
-    streamUrl: trackStreamUrl(track),
+    streamUrl: trackStreamUrl({
+      id: track.id,
+      isDownloaded: effectiveDownloadedFlag(track),
+      sourceUrl: track.sourceUrl,
+    }),
     spotifyArtistId: track.artist.spotifyArtistId ?? undefined,
   };
 }
@@ -127,22 +132,31 @@ async function persistArtistSpotifyMeta(
 async function findLocalTracks(artistName: string, artistId?: string | null) {
   const candidates = await prisma.track.findMany({
     where: {
-      isDownloaded: true,
-      ...(artistId
-        ? {
-            OR: [
-              { artistId },
-              { artist: { name: { contains: artistName, mode: 'insensitive' } } },
-            ],
-          }
-        : { artist: { name: { contains: artistName, mode: 'insensitive' } } }),
+      AND: [
+        {
+          OR: [
+            { isDownloaded: true },
+            { sourceUrl: { not: null } },
+          ],
+        },
+        artistId
+          ? {
+              OR: [
+                { artistId },
+                { artist: { name: { contains: artistName, mode: 'insensitive' } } },
+              ],
+            }
+          : { artist: { name: { contains: artistName, mode: 'insensitive' } } },
+      ],
     },
     include: { artist: true, album: true },
     orderBy: { title: 'asc' },
     take: 500,
   });
 
-  return candidates.filter((t) => artistNameMatches(t.artist.name, artistName));
+  return candidates.filter(
+    (t) => artistNameMatches(t.artist.name, artistName) && isTrackPlayable(t),
+  );
 }
 
 async function findLocalAlbums(artistName: string, artistId?: string | null) {
@@ -177,7 +191,7 @@ async function findListenedTracks(userId: string, artistName: string) {
 
   return history
     .map((h) => h.track)
-    .filter((t) => artistNameMatches(t.artist.name, artistName));
+    .filter((t) => artistNameMatches(t.artist.name, artistName) && isTrackPlayable(t));
 }
 
 async function resolveArtist(artistName: string, artistId?: string | null) {

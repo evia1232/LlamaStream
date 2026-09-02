@@ -15,6 +15,7 @@ import { getSpotifyStatus } from '../services/spotifyApi';
 import { getValidatedActiveDevice } from '../services/playbackSync';
 import { cleanupLibrary, deleteTrackById, getLibraryStats } from '../services/trackCleanup';
 import { promoteTrackToLibrary, evictTrackIfUnpinned, touchTrackAccess } from '../services/trackStorage';
+import { effectiveDownloadedFlag, reconcileTrackRecord, reconcileAllStaleTracks } from '../services/trackIntegrity';
 import {
   getSearchHistory,
   addSearchQuery,
@@ -43,6 +44,8 @@ function formatTrack(track: {
   artist: { id: string; name: string; imageUrl: string | null };
   album?: { id: string; title: string; coverUrl: string | null } | null;
 }) {
+  const isDownloaded = effectiveDownloadedFlag(track);
+  const forStream = { id: track.id, isDownloaded, sourceUrl: track.sourceUrl };
   return {
     id: track.id,
     title: track.title,
@@ -51,19 +54,30 @@ function formatTrack(track: {
     sourceUrl: track.sourceUrl,
     sourceId: track.sourceId,
     quality: track.quality,
-    isDownloaded: track.isDownloaded,
-    isDownloading: !track.isDownloaded && !!track.sourceUrl && isDownloadInProgress(track.id),
+    isDownloaded,
+    isDownloading: !isDownloaded && !!track.sourceUrl && isDownloadInProgress(track.id),
     artist: track.artist,
     album: track.album || null,
-    streamUrl: trackStreamUrl(track),
+    streamUrl: trackStreamUrl(forStream),
   };
 }
 
 router.get('/library/stats', authenticate, async (_req, res) => {
   try {
+    await reconcileAllStaleTracks();
     const stats = await getLibraryStats();
     res.json(stats);
   } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/library/reconcile', authenticate, async (_req, res) => {
+  try {
+    const fixed = await reconcileAllStaleTracks();
+    res.json({ fixed });
+  } catch (err) {
+    console.error('Library reconcile error:', err);
     res.status(500).json({ error: (err as Error).message });
   }
 });
@@ -76,6 +90,7 @@ router.delete(
     const { mode, days } = req.body as { mode: 'all' | 'recent'; days?: number };
     try {
       const result = await cleanupLibrary({ mode, days });
+      await reconcileAllStaleTracks();
       res.json(result);
     } catch (err) {
       console.error('Library cleanup error:', err);
@@ -316,6 +331,7 @@ router.put('/playback-state', authenticate, async (req: AuthRequest, res) => {
 });
 
 router.get('/:id', authenticate, async (req, res) => {
+  await reconcileTrackRecord(req.params.id);
   const track = await prisma.track.findUnique({
     where: { id: req.params.id },
     include: { artist: true, album: true, lyrics: true },
@@ -433,12 +449,19 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
   });
   if (!track) return res.status(404).json({ error: 'Track not found' });
 
-  if (track.isDownloaded && track.filePath && fs.existsSync(track.filePath)) {
-    void touchTrackAccess(track.id);
-    if (!track.filePath.toLowerCase().endsWith('.mp3')) {
+  await reconcileTrackRecord(track.id);
+  const fresh = await prisma.track.findUnique({
+    where: { id: track.id },
+    include: { artist: true, album: true },
+  });
+  if (!fresh) return res.status(404).json({ error: 'Track not found' });
+
+  if (fresh.isDownloaded && fresh.filePath && fs.existsSync(fresh.filePath)) {
+    void touchTrackAccess(fresh.id);
+    if (!fresh.filePath.toLowerCase().endsWith('.mp3')) {
       return res.status(500).json({ error: 'Invalid audio file format' });
     }
-    const stat = fs.statSync(track.filePath);
+    const stat = fs.statSync(fresh.filePath);
     const fileSize = stat.size;
     const range = req.headers.range;
 
@@ -454,28 +477,28 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
         'Content-Length': chunkSize,
         'Content-Type': 'audio/mpeg',
       });
-      fs.createReadStream(track.filePath, { start, end }).pipe(res);
+      fs.createReadStream(fresh.filePath, { start, end }).pipe(res);
     } else {
       res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': 'audio/mpeg',
         'Accept-Ranges': 'bytes',
       });
-      fs.createReadStream(track.filePath).pipe(res);
+      fs.createReadStream(fresh.filePath).pipe(res);
     }
     return;
   }
 
-  if (track.sourceUrl) {
-    const quality = parseStoredQuality(track.quality);
-    if (!isDownloadInProgress(track.id)) {
-      ensureBackgroundDownload(track.id, track.sourceUrl, quality, {
-        title: track.title,
-        artist: track.artist.name,
-        album: track.album?.title,
+  if (fresh.sourceUrl) {
+    const quality = parseStoredQuality(fresh.quality);
+    if (!isDownloadInProgress(fresh.id)) {
+      ensureBackgroundDownload(fresh.id, fresh.sourceUrl, quality, {
+        title: fresh.title,
+        artist: fresh.artist.name,
+        album: fresh.album?.title,
       });
     }
-    pipeYouTubeAudio(track.sourceUrl, quality, req, res);
+    pipeYouTubeAudio(fresh.sourceUrl, quality, req, res);
     return;
   }
 

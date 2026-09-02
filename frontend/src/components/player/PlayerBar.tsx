@@ -16,7 +16,7 @@ import { DevicePickerButton } from './DevicePicker';
 import { openTrackContextMenu } from '../../store/trackMenuStore';
 import { useMediaSession } from '../../hooks/useMediaSession';
 import { useSpotifyPlaybackSync } from '../../hooks/useSpotifyPlaybackSync';
-import { canStreamTrackLocally } from '../../lib/ensureDownload';
+import { canStreamTrackLocally, prepareTrackForPlayback, isLibraryId } from '../../lib/ensureDownload';
 import { effectivePlaybackVolume, isMobileViewport } from '../../lib/volume';
 
 function formatTime(seconds: number) {
@@ -89,8 +89,16 @@ export default function PlayerBar() {
       }
     };
 
-    const onError = () => {
+    const onError = async () => {
       if (loadToken !== loadTokenRef.current) return;
+      const track = usePlayerStore.getState().currentTrack;
+      if (track && isLibraryId(track.id)) {
+        try {
+          const ready = await prepareTrackForPlayback(track);
+          usePlayerStore.setState({ currentTrack: ready });
+          if (canStreamTrackLocally(ready)) return;
+        } catch { /* fall through */ }
+      }
       setIsBuffering(false);
     };
 

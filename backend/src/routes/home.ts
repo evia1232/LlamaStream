@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { trackStreamUrl } from '../services/trackDownload';
+import { effectiveDownloadedFlag } from '../services/trackIntegrity';
 import { buildArtistPage, fetchArtistSpotifyData } from '../services/artistPage';
 import prisma from '../lib/prisma';
 import { extractPlaylistCoverImages, playlistCoverTracksQuery } from '../lib/playlistCovers';
@@ -87,17 +88,19 @@ function formatHomeTrack(track: {
   duration: number;
   thumbnailUrl: string | null;
   isDownloaded: boolean;
+  filePath: string | null;
   sourceUrl: string | null;
   artist: { id: string; name: string };
   album?: { id: string; title: string; coverUrl: string | null } | null;
 }) {
+  const isDownloaded = effectiveDownloadedFlag(track);
   return {
     id: track.id,
     title: track.title,
     duration: track.duration,
     thumbnailUrl: track.thumbnailUrl,
-    isDownloaded: track.isDownloaded,
-    streamUrl: trackStreamUrl(track),
+    isDownloaded,
+    streamUrl: trackStreamUrl({ id: track.id, isDownloaded, sourceUrl: track.sourceUrl }),
     artist: { id: track.artist.id, name: track.artist.name },
     album: track.album ? { id: track.album.id, title: track.album.title, coverUrl: track.album.coverUrl } : null,
   };
