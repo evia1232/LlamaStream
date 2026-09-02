@@ -43,7 +43,18 @@ export function moveFileToDir(filePath: string, targetDir: string): string {
   if (path.resolve(path.dirname(filePath)) === path.resolve(targetDir)) return filePath;
   fs.mkdirSync(targetDir, { recursive: true });
   const dest = path.join(targetDir, path.basename(filePath));
-  fs.renameSync(filePath, dest);
+  try {
+    fs.renameSync(filePath, dest);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // Separate Docker volumes (cache vs music) cannot use rename across devices
+    if (code === 'EXDEV') {
+      fs.copyFileSync(filePath, dest);
+      fs.unlinkSync(filePath);
+    } else {
+      throw err;
+    }
+  }
   return dest;
 }
 
