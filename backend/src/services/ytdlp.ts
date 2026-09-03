@@ -15,8 +15,8 @@ const BASE_ARGS = [
   '--retries', '5',
   '--fragment-retries', '5',
   '--socket-timeout', '30',
-  // Prefer Deno (default); fall back to Node 22+ for YouTube EJS signature challenges
-  '--js-runtimes', 'deno,node',
+  // Node 22+ in the backend image solves YouTube EJS signature challenges
+  '--js-runtimes', 'node',
   '--remote-components', 'ejs:github',
 ];
 

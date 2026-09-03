@@ -22,7 +22,7 @@ const YTDLP_BASE = [
   '--retries', '5',
   '--fragment-retries', '5',
   '--socket-timeout', '30',
-  '--js-runtimes', 'deno,node',
+  '--js-runtimes', 'node',
   '--remote-components', 'ejs:github',
   '--extractor-args', 'youtube:player_client=android,web',
 ];
