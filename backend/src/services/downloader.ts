@@ -216,6 +216,8 @@ export async function downloadFromYouTube(
       const args = [
         '--no-warnings', '--no-playlist', '--retries', '5', '--fragment-retries', '5',
         '--socket-timeout', '30',
+        '--js-runtimes', 'deno,node',
+        '--remote-components', 'ejs:github',
         ...ytDlpAuthArgs(),
         ...attempt.args,
         '-o', outputTemplate,

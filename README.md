@@ -300,7 +300,12 @@ docker compose exec backend yt-dlp --cookies /app/storage/cookies/youtube.txt -f
 
 2. **Best fix — cookies:** On your PC, log into YouTube in Chrome → install extension **Get cookies.txt LOCALLY** → export `youtube.com` → save as `storage/cookies/youtube.txt` on the server → `docker compose up -d backend`.
 
-3. Optional: set `YTDLP_PROXY` in `.env` to a residential SOCKS/HTTP proxy.
+3. **Signature / "n challenge" errors:** The backend image ships Deno + `yt-dlp[default]` (EJS). Rebuild the backend image after pulling:
+```bash
+docker compose build --no-cache backend && docker compose up -d backend
+```
+
+4. Optional: set `YTDLP_PROXY` in `.env` to a residential SOCKS/HTTP proxy.
 
 **Reset everything:**
 ```bash

@@ -15,6 +15,9 @@ const BASE_ARGS = [
   '--retries', '5',
   '--fragment-retries', '5',
   '--socket-timeout', '30',
+  // Prefer Deno (default); fall back to Node 22+ for YouTube EJS signature challenges
+  '--js-runtimes', 'deno,node',
+  '--remote-components', 'ejs:github',
 ];
 
 /** Shared auth / network args (cookies, proxy) for every yt-dlp invocation. */
