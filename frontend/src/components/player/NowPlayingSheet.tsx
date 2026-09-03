@@ -139,7 +139,7 @@ export default function NowPlayingSheet() {
       <button type="button" onClick={toggleShuffle} className={clsx('icon-btn p-3', shuffle && 'text-spotify-green')}>
         <Shuffle className="w-6 h-6" />
       </button>
-      <button type="button" onClick={playPrevious} className="icon-btn p-3" aria-label={t('previous')}>
+      <button type="button" onClick={() => playPrevious()} className="icon-btn p-3" aria-label={t('previous')}>
         <SkipBack className="w-8 h-8 fill-current" />
       </button>
       <button
@@ -157,7 +157,7 @@ export default function NowPlayingSheet() {
           <PlayIcon className="w-7 h-7 text-black fill-black" />
         )}
       </button>
-      <button type="button" onClick={playNext} className="icon-btn p-3" aria-label={t('next')}>
+      <button type="button" onClick={() => playNext()} className="icon-btn p-3" aria-label={t('next')}>
         <SkipForward className="w-8 h-8 fill-current" />
       </button>
       <button type="button" onClick={cycleRepeat} className={clsx('icon-btn p-3', repeat !== 'off' && 'text-spotify-green')}>
