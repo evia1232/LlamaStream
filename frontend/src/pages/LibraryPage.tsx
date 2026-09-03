@@ -171,11 +171,14 @@ export default function LibraryPage() {
       )}
 
       {showImport && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="surface-elevated p-6 md:p-8 w-full max-w-lg max-h-[90vh] flex flex-col">
-            <h3 className="text-heading-sm mb-4">{importTab === 'spotify' ? t('importSpotify') : t('importPlaylist')}</h3>
+        <div className="fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[calc(var(--player-h-desktop)+1rem)]">
+          <div className={clsx(
+            'surface-elevated p-6 md:p-8 w-full max-w-lg max-h-full flex flex-col overflow-hidden',
+            importTab === 'spotify' && 'h-[min(40rem,100%)]',
+          )}>
+            <h3 className="text-heading-sm mb-4 shrink-0">{importTab === 'spotify' ? t('importSpotify') : t('importPlaylist')}</h3>
 
-            <div className="flex gap-1 mb-4 p-1 bg-white/5 rounded-lg">
+            <div className="flex gap-1 mb-4 p-1 bg-white/5 rounded-lg shrink-0">
               <button
                 type="button"
                 onClick={() => { setImportTab('spotify'); setImportMessage(null); }}
@@ -198,7 +201,7 @@ export default function LibraryPage() {
               </button>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
               {importTab === 'spotify' ? (
                 spotifyConnected ? (
                   <SpotifyPlaylistPicker
@@ -235,7 +238,7 @@ export default function LibraryPage() {
             )}
 
             {importTab === 'spotify' && (
-              <div className="flex justify-end mt-4 pt-2 border-t border-white/10">
+              <div className="flex justify-end mt-4 pt-2 border-t border-white/10 shrink-0">
                 <button onClick={() => setShowImport(false)} className="px-4 py-2 text-body hover:text-white font-bold">
                   {t('cancel')}
                 </button>

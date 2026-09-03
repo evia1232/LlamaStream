@@ -80,7 +80,8 @@ interface PlayerState {
   removeFromLiked: (trackId: string) => void;
   playTrack: (track: Track, startTime?: number, opts?: { seamless?: boolean }) => Promise<void>;
   playTracks: (tracks: Track[], startIndex?: number) => Promise<void>;
-  playNext: () => void;
+  playNext: (opts?: { crossfade?: boolean }) => void;
+  _pendingCrossfade: boolean;
   playPrevious: () => void;
   contextTracks: Track[];
   contextIndex: number;
@@ -173,6 +174,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   contextTracks: [] as Track[],
   contextIndex: -1,
   autoplay: loadAutoplayEnabled(),
+  _pendingCrossfade: false,
   crossfadeEnabled: loadCrossfadeEnabled(),
   crossfadeDuration: loadCrossfadeDuration(),
   _discoverLoading: false,
@@ -238,6 +240,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   playTrack: async (track, startTime = 0, opts?: { seamless?: boolean }) => {
     const seamless = opts?.seamless ?? false;
+    if (!seamless) set({ _pendingCrossfade: false });
     const { localDeviceId, localDeviceName } = get();
     set({
       isRemoteActive: false,
@@ -470,15 +473,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     return null;
   },
 
-  playNext: () => {
+  playNext: (opts) => {
+    const wantCrossfade = !!opts?.crossfade && get().crossfadeEnabled;
+    set({ _pendingCrossfade: wantCrossfade });
+
     const { isRemoteActive, activeDeviceId, localDeviceId } = get();
     if (isRemoteActive && activeDeviceId && activeDeviceId !== localDeviceId) {
+      set({ _pendingCrossfade: false });
       get().sendRemoteCommand('next');
       return;
     }
 
     const { currentTrack, repeat, autoplay } = get();
     if (repeat === 'one' && currentTrack) {
+      set({ _pendingCrossfade: false });
       get().seekTo(0);
       set({ isPlaying: true, isBuffering: false });
       return;
@@ -504,6 +512,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     if (repeat === 'all' && currentTrack) {
+      set({ _pendingCrossfade: false });
       get().seekTo(0);
       set({ isPlaying: true, isBuffering: false });
       return;
@@ -610,6 +619,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
 
     const { currentTime, currentTrack, contextTracks, contextIndex } = get();
+    set({ _pendingCrossfade: false });
     if (currentTime > 3) {
       get().seekTo(0);
       return;

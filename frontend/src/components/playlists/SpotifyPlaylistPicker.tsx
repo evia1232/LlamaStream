@@ -96,10 +96,10 @@ export default function SpotifyPlaylistPicker({ onImported, onError }: SpotifyPl
   }
 
   return (
-    <div className="flex flex-col gap-4 min-h-0">
-      <p className="text-sm text-spotify-text">{t('spotifyPlaylistsSelect')}</p>
+    <div className="flex flex-col gap-3 min-h-0 h-full">
+      <p className="text-sm text-spotify-text shrink-0">{t('spotifyPlaylistsSelect')}</p>
 
-      <div className="relative">
+      <div className="relative shrink-0">
         <Search className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-spotify-text" />
         <input
           value={query}
@@ -109,7 +109,7 @@ export default function SpotifyPlaylistPicker({ onImported, onError }: SpotifyPl
         />
       </div>
 
-      <div className="max-h-[min(50vh,360px)] overflow-y-auto space-y-1 -mx-1 px-1">
+      <div className="flex-1 min-h-[8rem] overflow-y-auto space-y-1 -mx-1 px-1">
         {filtered.map((playlist) => {
           const isSelected = selected.has(playlist.id);
           return (
@@ -147,7 +147,7 @@ export default function SpotifyPlaylistPicker({ onImported, onError }: SpotifyPl
         })}
       </div>
 
-      <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+      <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10 shrink-0">
         <span className="text-xs text-spotify-text">
           {t('spotifyPlaylistsSelected', { count: selected.size })}
         </span>

@@ -128,36 +128,52 @@ async function pickVerifiedCandidate(
 }
 
 export async function searchYouTube(query: string, limit = 15, minDuration?: number): Promise<SearchResult[]> {
-  const args = [
-    '--flat-playlist',
-    '--dump-json',
-    '--skip-download',
+  const clientAttempts = [
+    'android,web',
+    'ios,web',
+    'tv_embedded,web',
+    'web',
   ];
 
-  if (minDuration && minDuration >= 60) {
-    const floor = Math.max(45, Math.floor(minDuration * 0.45));
-    args.push('--match-filter', `duration >= ${floor}`);
+  let lastError = '';
+
+  for (const clients of clientAttempts) {
+    const args = [
+      '--flat-playlist',
+      '--dump-json',
+      '--skip-download',
+      '--extractor-args', `youtube:player_client=${clients}`,
+    ];
+
+    if (minDuration && minDuration >= 60) {
+      const floor = Math.max(45, Math.floor(minDuration * 0.45));
+      args.push('--match-filter', `duration >= ${floor}`);
+    }
+
+    args.push(`ytsearch${limit}:${query}`);
+
+    const result = await runYtDlp(args, 60000);
+
+    if (result.code === 0) {
+      return parseJsonLines<Record<string, unknown>>(result.stdout)
+        .map((data) => ({
+          id: String(data.id),
+          title: String(data.title || 'Unknown'),
+          artist: String(data.uploader || data.channel || extractArtistFromTitle(String(data.title || ''))),
+          duration: Number(data.duration || 0),
+          thumbnailUrl: String(data.thumbnail || (data.thumbnails as { url: string }[])?.[0]?.url || ''),
+          url: String(data.url || data.webpage_url || `https://www.youtube.com/watch?v=${data.id}`),
+          source: 'youtube' as const,
+        }))
+        .filter((r) => !isYouTubeShortOrReel(r));
+    }
+
+    lastError = lastLines(result.stderr) || 'YouTube search failed';
+    const blocked = /403|Forbidden|Sign in to confirm/i.test(result.stderr);
+    if (!blocked) break;
   }
 
-  args.push(`ytsearch${limit}:${query}`);
-
-  const result = await runYtDlp(args, 60000);
-
-  if (result.code !== 0) {
-    throw new Error(lastLines(result.stderr) || 'YouTube search failed');
-  }
-
-  return parseJsonLines<Record<string, unknown>>(result.stdout)
-    .map((data) => ({
-      id: String(data.id),
-      title: String(data.title || 'Unknown'),
-      artist: String(data.uploader || data.channel || extractArtistFromTitle(String(data.title || ''))),
-      duration: Number(data.duration || 0),
-      thumbnailUrl: String(data.thumbnail || (data.thumbnails as { url: string }[])?.[0]?.url || ''),
-      url: String(data.url || data.webpage_url || `https://www.youtube.com/watch?v=${data.id}`),
-      source: 'youtube' as const,
-    }))
-    .filter((r) => !isYouTubeShortOrReel(r));
+  throw new Error(lastError || 'YouTube search failed');
 }
 
 export async function downloadFromYouTube(

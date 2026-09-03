@@ -124,8 +124,10 @@ export default function PlayerBar() {
     const loadToken = ++loadTokenRef.current;
     let cancelled = false;
 
-    const { crossfadeEnabled, crossfadeDuration } = usePlayerStore.getState();
-    const canOverlap = crossfadeEnabled
+    const { crossfadeEnabled, crossfadeDuration, _pendingCrossfade } = usePlayerStore.getState();
+    usePlayerStore.setState({ _pendingCrossfade: false });
+    const canOverlap = _pendingCrossfade
+      && crossfadeEnabled
       && !!audio.src
       && !audio.paused
       && audio.currentTime > 0.4
@@ -451,7 +453,7 @@ export default function PlayerBar() {
   const handleEnded = () => {
     if (isRemoteActive) return;
     setIsPlaying(true);
-    playNext();
+    playNext({ crossfade: true });
   };
 
   const handleTimeUpdate = () => {
@@ -470,7 +472,7 @@ export default function PlayerBar() {
         crossfadeTriggeredRef.current = true;
         endedHandledRef.current = true;
         setIsPlaying(true);
-        playNext();
+        playNext({ crossfade: true });
       } else if (time < fadeStart - 1) {
         crossfadeTriggeredRef.current = false;
       }

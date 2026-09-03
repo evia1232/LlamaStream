@@ -836,10 +836,10 @@ async function searchSpotifyArtistOnce(query: string): Promise<SpotifyArtistResu
         artists?: { items: Array<{
           id: string;
           name: string;
-          followers: { total: number };
-          genres: string[];
-          external_urls: { spotify: string };
-          images: { url: string }[];
+          followers?: { total?: number } | null;
+          genres?: string[];
+          external_urls?: { spotify?: string };
+          images?: { url: string }[];
         }> };
       };
 
@@ -850,10 +850,10 @@ async function searchSpotifyArtistOnce(query: string): Promise<SpotifyArtistResu
         return {
           id: a.id,
           name: a.name,
-          imageUrl: a.images[0]?.url || '',
-          followers: a.followers.total,
-          genres: a.genres,
-          spotifyUrl: a.external_urls.spotify,
+          imageUrl: a.images?.[0]?.url || '',
+          followers: a.followers?.total ?? 0,
+          genres: a.genres ?? [],
+          spotifyUrl: a.external_urls?.spotify || '',
         };
       }
 
@@ -867,16 +867,16 @@ async function searchSpotifyArtistOnce(query: string): Promise<SpotifyArtistResu
           const matched = words.filter((w) => aNorm.includes(w));
           score += Math.round((matched.length / Math.max(words.length, 1)) * 25);
         }
-        if (a.followers.total > 1000) score += 5;
+        if ((a.followers?.total ?? 0) > 1000) score += 5;
         if (score > bestScore) {
           bestScore = score;
           best = {
             id: a.id,
             name: a.name,
-            imageUrl: a.images[0]?.url || '',
-            followers: a.followers.total,
-            genres: a.genres,
-            spotifyUrl: a.external_urls.spotify,
+            imageUrl: a.images?.[0]?.url || '',
+            followers: a.followers?.total ?? 0,
+            genres: a.genres ?? [],
+            spotifyUrl: a.external_urls?.spotify || '',
           };
         }
       }

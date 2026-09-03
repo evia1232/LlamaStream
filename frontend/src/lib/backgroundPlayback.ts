@@ -41,7 +41,7 @@ export function startPlaybackKeeper(): () => void {
       const trackId = state.currentTrack?.id ?? null;
       if (audio.ended && trackId && lastEndedTrackId !== trackId) {
         lastEndedTrackId = trackId;
-        state.playNext();
+        state.playNext({ crossfade: true });
       }
     } else {
       lastEndedTrackId = null;
