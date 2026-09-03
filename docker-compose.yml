@@ -60,6 +60,7 @@ services:
       - ${CACHE_DATA_PATH:-${STORAGE_PATH:-./storage}/cache}:/app/storage/cache
       - ${AVATARS_DATA_PATH:-${STORAGE_PATH:-./storage}/avatars}:/app/storage/avatars
       - ${COOKIES_DATA_PATH:-${STORAGE_PATH:-./storage}/cookies}:/app/storage/cookies
+      - ${BIN_DATA_PATH:-${STORAGE_PATH:-./storage}/bin}:/app/storage/bin
     ports:
       - "${BACKEND_PORT:-3001}:3001"
     networks:

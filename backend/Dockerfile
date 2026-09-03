@@ -1,25 +1,5 @@
 FROM node:22
 
-# Full node image already has ca-certificates + curl — no apt-get (BuildKit hangs on Debian mirrors here).
-
-# Standalone yt-dlp_linux (PyInstaller) — no system Python needed; bundles EJS
-RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
-      -o /usr/local/bin/yt-dlp \
-      https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
-    && chmod a+rx /usr/local/bin/yt-dlp \
-    && yt-dlp --version
-
-# Static ffmpeg/ffprobe
-RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
-      -o /tmp/ffmpeg.tar.xz \
-      https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
-    && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
-    && cp /tmp/ffmpeg-*/bin/ffmpeg /usr/local/bin/ffmpeg \
-    && cp /tmp/ffmpeg-*/bin/ffprobe /usr/local/bin/ffprobe \
-    && chmod a+rx /usr/local/bin/ffmpeg /usr/local/bin/ffprobe \
-    && rm -rf /tmp/ffmpeg* \
-    && ffmpeg -version | head -n 1
-
 WORKDIR /app
 
 COPY package*.json ./
@@ -29,10 +9,15 @@ RUN npm install
 
 COPY . .
 
-RUN npm run build && npx prisma generate
+RUN npm run build && npx prisma generate \
+    && chmod +x /app/docker-entrypoint.sh \
+    && mkdir -p /app/storage/music /app/storage/cache /app/storage/avatars /app/storage/cookies /app/storage/bin
 
-RUN mkdir -p /app/storage/music /app/storage/cache /app/storage/avatars /app/storage/cookies
+ENV PATH="/app/storage/bin:/usr/local/bin:${PATH}" \
+    YTDLP_BIN=/app/storage/bin/yt-dlp \
+    FFMPEG_BIN=/app/storage/bin/ffmpeg
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux && chmod a+rx /usr/local/bin/yt-dlp; npx prisma migrate deploy && node dist/index.js"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]

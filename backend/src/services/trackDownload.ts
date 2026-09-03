@@ -4,7 +4,7 @@ import { Response } from 'express';
 import prisma from '../lib/prisma';
 import type { DownloadResult } from './downloader';
 import { fetchLyricsForTrack } from './lyrics';
-import { lastLines, ytDlpAudioExtractArgs, ytDlpAuthArgs } from './ytdlp';
+import { lastLines, ytDlpAudioExtractArgs, ytDlpAuthArgs, ytDlpCommand } from './ytdlp';
 import { finalizeFileStorage, getDownloadDirForTrack, touchTrackAccess } from './trackStorage';
 import {
   downloadKey,
@@ -235,7 +235,7 @@ export function pipeYouTubeAudio(
   res: Response,
   startSec = 0
 ): ChildProcess {
-  const proc = spawn('yt-dlp', ytdlpArgs(
+  const proc = spawn(ytDlpCommand(), ytdlpArgs(
     ...ytDlpAudioExtractArgs(quality),
     '-o', '-',
     sourceUrl,
@@ -277,7 +277,7 @@ export function pipeYouTubeSearch(
   req: { on: (event: string, cb: () => void) => void },
   res: Response,
 ): ChildProcess {
-  const proc = spawn('yt-dlp', ytdlpArgs(
+  const proc = spawn(ytDlpCommand(), ytdlpArgs(
     ...ytDlpAudioExtractArgs(quality),
     '-o', '-',
     `ytsearch1:${searchQuery}`,

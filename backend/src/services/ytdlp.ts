@@ -34,9 +34,21 @@ export function ytDlpAuthArgs(): string[] {
   return args;
 }
 
+function resolveYtDlpBin(): string {
+  const fromEnv = (process.env.YTDLP_BIN || '').trim();
+  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+  const storageBin = path.join(config.cachePath, '..', 'bin', 'yt-dlp');
+  if (fs.existsSync(storageBin)) return storageBin;
+  return 'yt-dlp';
+}
+
+export function ytDlpCommand(): string {
+  return resolveYtDlpBin();
+}
+
 export function runYtDlp(args: string[], timeoutMs = 300000): Promise<YtDlpResult> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('yt-dlp', [...BASE_ARGS, ...ytDlpAuthArgs(), ...args], {
+    const proc = spawn(resolveYtDlpBin(), [...BASE_ARGS, ...ytDlpAuthArgs(), ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
