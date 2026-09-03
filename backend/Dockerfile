@@ -1,15 +1,25 @@
 FROM node:22-slim
 
-# Node 22 is the JS runtime for yt-dlp YouTube EJS challenges (--js-runtimes node).
-# Avoid Deno install.sh — it often hangs on slow VPS networks.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    ffmpeg \
-    curl \
-    ca-certificates \
-    && pip3 install --break-system-packages -U "yt-dlp[default]" \
-    && rm -rf /var/lib/apt/lists/* \
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+# Split layers so a hang is obvious (apt vs pip vs yt-dlp)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      python3 \
+      python3-pip \
+      curl \
+      ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ffmpeg is large — separate so progress is visible
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp + EJS solvers (YouTube signature challenges need Node 22 via --js-runtimes node)
+RUN pip3 install --break-system-packages -U "yt-dlp[default]" \
     && yt-dlp --version \
     && node --version
 
