@@ -1,30 +1,32 @@
 FROM node:22-slim
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Prefer IPv4 — Docker builds often hang on apt when DNS returns only IPv6
+# Prefer IPv4 for any apt use
 RUN printf 'Acquire::ForceIPv4 "true";\n' > /etc/apt/apt.conf.d/99force-ipv4
 
-# Split layers so a hang is obvious (apt vs pip vs yt-dlp)
+# Minimal packages only (avoid heavy apt like full ffmpeg from Debian mirrors)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-      python3 \
-      python3-pip \
-      curl \
-      ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# ffmpeg is large — separate so progress is visible
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+# Official yt-dlp binary — bundles EJS solvers (no pip / yt-dlp[default] needed)
+RUN curl -fsSL --retry 5 --retry-delay 2 \
+      -o /usr/local/bin/yt-dlp \
+      https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp \
+    && yt-dlp --version
 
-# yt-dlp + EJS solvers (YouTube signature challenges need Node 22 via --js-runtimes node)
-RUN pip3 install --break-system-packages -U "yt-dlp[default]" \
-    && yt-dlp --version \
-    && node --version
+# Static ffmpeg/ffprobe (skips slow Debian ffmpeg package)
+RUN curl -fsSL --retry 5 --retry-delay 2 \
+      -o /tmp/ffmpeg.tar.xz \
+      https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
+    && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
+    && cp /tmp/ffmpeg-*/bin/ffmpeg /usr/local/bin/ffmpeg \
+    && cp /tmp/ffmpeg-*/bin/ffprobe /usr/local/bin/ffprobe \
+    && chmod a+rx /usr/local/bin/ffmpeg /usr/local/bin/ffprobe \
+    && rm -rf /tmp/ffmpeg* \
+    && ffmpeg -version | head -n 1
 
 WORKDIR /app
 
@@ -41,4 +43,5 @@ RUN mkdir -p /app/storage/music /app/storage/cache /app/storage/avatars /app/sto
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "pip3 install --break-system-packages -U \"yt-dlp[default]\" 2>/dev/null; npx prisma migrate deploy && node dist/index.js"]
+# Refresh yt-dlp binary on start (optional; ignores failures)
+CMD ["sh", "-c", "curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp; npx prisma migrate deploy && node dist/index.js"]

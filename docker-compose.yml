@@ -21,6 +21,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # Host network avoids BuildKit NAT hangs on apt / GitHub downloads
+      network: host
     container_name: llamastream-backend
     restart: unless-stopped
     env_file:
