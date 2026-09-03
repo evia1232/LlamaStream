@@ -4,6 +4,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
+# Prefer IPv4 — Docker builds often hang on apt when DNS returns only IPv6
+RUN printf 'Acquire::ForceIPv4 "true";\n' > /etc/apt/apt.conf.d/99force-ipv4
+
 # Split layers so a hang is obvious (apt vs pip vs yt-dlp)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
