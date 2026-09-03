@@ -32,6 +32,10 @@ export const config = {
   spotifyRedirectUri: (process.env.SPOTIFY_REDIRECT_URI || '').trim(),
   frontendUrl: (process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:3000').replace(/\/$/, ''),
   appName: (process.env.APP_NAME || 'LlamaStream').trim(),
+  /** Netscape cookies.txt for YouTube (bypasses many 403 / bot checks) */
+  ytdlpCookiesFile: (process.env.YTDLP_COOKIES_FILE || '').trim(),
+  /** Optional HTTP(S)/SOCKS proxy for yt-dlp, e.g. socks5://user:pass@host:1080 */
+  ytdlpProxy: (process.env.YTDLP_PROXY || '').trim(),
 };
 
 export const qualityBitrates: Record<string, string> = {

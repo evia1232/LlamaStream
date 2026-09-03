@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { qualityAudioScale } from '../config';
+import { config, qualityAudioScale } from '../config';
 
 export interface YtDlpResult {
   stdout: string;
@@ -17,9 +17,23 @@ const BASE_ARGS = [
   '--socket-timeout', '30',
 ];
 
+/** Shared auth / network args (cookies, proxy) for every yt-dlp invocation. */
+export function ytDlpAuthArgs(): string[] {
+  const args: string[] = [];
+  const cookies = config.ytdlpCookiesFile;
+  if (cookies && fs.existsSync(cookies)) {
+    args.push('--cookies', cookies);
+  }
+  const proxy = config.ytdlpProxy;
+  if (proxy) {
+    args.push('--proxy', proxy);
+  }
+  return args;
+}
+
 export function runYtDlp(args: string[], timeoutMs = 300000): Promise<YtDlpResult> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('yt-dlp', [...BASE_ARGS, ...args], {
+    const proc = spawn('yt-dlp', [...BASE_ARGS, ...ytDlpAuthArgs(), ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -129,4 +143,9 @@ export function lastLines(text: string, count = 5): string {
 export function isFormatUnavailableError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return /Requested format is not available|format is not available|Only images are available/i.test(msg);
+}
+
+export function isYouTubeBlockedError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /403|Forbidden|Sign in to confirm|confirm you.?re not a bot/i.test(msg);
 }

@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import http from 'http';
+import fs from 'fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import jwt from 'jsonwebtoken';
 import { config } from './config';
@@ -258,6 +259,14 @@ async function start() {
   await reconcileAllStaleTracks().catch(console.error);
   server.listen(config.port, () => {
     console.log(`${config.appName} backend running on port ${config.port}`);
+    if (config.ytdlpCookiesFile && fs.existsSync(config.ytdlpCookiesFile)) {
+      console.log(`[yt-dlp] Using cookies: ${config.ytdlpCookiesFile}`);
+    } else {
+      console.log('[yt-dlp] No cookies file — YouTube may return 403 on datacenter IPs. Set YTDLP_COOKIES_FILE.');
+    }
+    if (config.ytdlpProxy) {
+      console.log('[yt-dlp] Using proxy');
+    }
   });
 }
 

@@ -5,10 +5,12 @@ build/
 storage/music/*
 storage/cache/*
 storage/avatars/*
+storage/cookies/*
 storage/postgres/data/*
 !storage/music/.gitkeep
 !storage/cache/.gitkeep
 !storage/avatars/.gitkeep
+!storage/cookies/.gitkeep
 !storage/postgres/.gitkeep
 backend/prisma/*.js
 backend/prisma/*.js.map

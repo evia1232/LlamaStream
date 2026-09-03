@@ -51,10 +51,13 @@ services:
       SPOTIFY_MARKET: ${SPOTIFY_MARKET:-IL}
       SPOTIFY_REDIRECT_URI: ${SPOTIFY_REDIRECT_URI:-}
       FRONTEND_URL: ${FRONTEND_URL:-}
+      YTDLP_COOKIES_FILE: ${YTDLP_COOKIES_FILE:-/app/storage/cookies/youtube.txt}
+      YTDLP_PROXY: ${YTDLP_PROXY:-}
     volumes:
       - ${MUSIC_DATA_PATH:-${STORAGE_PATH:-./storage}/music}:/app/storage/music
       - ${CACHE_DATA_PATH:-${STORAGE_PATH:-./storage}/cache}:/app/storage/cache
       - ${AVATARS_DATA_PATH:-${STORAGE_PATH:-./storage}/avatars}:/app/storage/avatars
+      - ${COOKIES_DATA_PATH:-${STORAGE_PATH:-./storage}/cookies}:/app/storage/cookies
     ports:
       - "${BACKEND_PORT:-3001}:3001"
     networks:

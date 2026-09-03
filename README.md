@@ -288,11 +288,19 @@ docker compose logs postgres
 docker compose exec backend npx prisma migrate deploy
 ```
 
-**yt-dlp download errors:**
+**yt-dlp download errors / YouTube 403:**
+
+YouTube often blocks datacenter IPs. Restarting the container does **not** clear an IP ban.
+
+1. Update yt-dlp (happens on container start), then test:
 ```bash
 docker compose exec backend yt-dlp --version
-docker compose exec backend yt-dlp -x --audio-format mp3 "https://youtube.com/watch?v=..."
+docker compose exec backend yt-dlp --cookies /app/storage/cookies/youtube.txt -f ba "https://youtube.com/watch?v=dQw4w9WgXcQ" -o /tmp/t.%(ext)s --skip-download
 ```
+
+2. **Best fix — cookies:** On your PC, log into YouTube in Chrome → install extension **Get cookies.txt LOCALLY** → export `youtube.com` → save as `storage/cookies/youtube.txt` on the server → `docker compose up -d backend`.
+
+3. Optional: set `YTDLP_PROXY` in `.env` to a residential SOCKS/HTTP proxy.
 
 **Reset everything:**
 ```bash

@@ -4,7 +4,7 @@ import { Response } from 'express';
 import prisma from '../lib/prisma';
 import type { DownloadResult } from './downloader';
 import { fetchLyricsForTrack } from './lyrics';
-import { lastLines, ytDlpAudioExtractArgs } from './ytdlp';
+import { lastLines, ytDlpAudioExtractArgs, ytDlpAuthArgs } from './ytdlp';
 import { finalizeFileStorage, getDownloadDirForTrack, touchTrackAccess } from './trackStorage';
 import {
   downloadKey,
@@ -24,6 +24,10 @@ const YTDLP_BASE = [
   '--socket-timeout', '30',
   '--extractor-args', 'youtube:player_client=android,web',
 ];
+
+function ytdlpArgs(...extra: string[]): string[] {
+  return [...YTDLP_BASE, ...ytDlpAuthArgs(), ...extra];
+}
 
 export function isDownloadInProgress(trackId: string): boolean {
   const key = trackToDownloadKey.get(trackId);
@@ -229,12 +233,11 @@ export function pipeYouTubeAudio(
   res: Response,
   startSec = 0
 ): ChildProcess {
-  const proc = spawn('yt-dlp', [
-    ...YTDLP_BASE,
+  const proc = spawn('yt-dlp', ytdlpArgs(
     ...ytDlpAudioExtractArgs(quality),
     '-o', '-',
     sourceUrl,
-  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  ), { stdio: ['ignore', 'pipe', 'pipe'] });
 
   res.setHeader('Content-Type', 'audio/mpeg');
   res.setHeader('Cache-Control', 'private, max-age=86400');
@@ -272,12 +275,11 @@ export function pipeYouTubeSearch(
   req: { on: (event: string, cb: () => void) => void },
   res: Response,
 ): ChildProcess {
-  const proc = spawn('yt-dlp', [
-    ...YTDLP_BASE,
+  const proc = spawn('yt-dlp', ytdlpArgs(
     ...ytDlpAudioExtractArgs(quality),
     '-o', '-',
     `ytsearch1:${searchQuery}`,
-  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  ), { stdio: ['ignore', 'pipe', 'pipe'] });
 
   res.setHeader('Content-Type', 'audio/mpeg');
   res.setHeader('Cache-Control', 'private, max-age=86400');
