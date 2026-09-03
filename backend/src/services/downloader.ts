@@ -66,7 +66,11 @@ function extractTrackTitle(title: string): string {
 }
 
 async function fetchYouTubeDuration(url: string): Promise<number> {
-  const metaResult = await runYtDlp(['--dump-single-json', '--skip-download', url], 45000);
+  const metaResult = await runYtDlp([
+    '--dump-single-json', '--skip-download', '--ignore-no-formats-error',
+    '--extractor-args', 'youtube:player_client=tv,web,android',
+    url,
+  ], 45000);
   if (metaResult.code !== 0) return 0;
   try {
     const meta = JSON.parse(metaResult.stdout) as { duration?: number };
@@ -189,7 +193,11 @@ export async function downloadFromYouTube(
   const outputTemplate = path.join(dir, `${fileId}.%(ext)s`);
 
   // Fetch metadata
-  const metaResult = await runYtDlp(['--dump-single-json', '--skip-download', sourceUrl], 60000);
+  const metaResult = await runYtDlp([
+    '--dump-single-json', '--skip-download', '--ignore-no-formats-error',
+    '--extractor-args', 'youtube:player_client=tv,web,android',
+    sourceUrl,
+  ], 60000);
   if (metaResult.code !== 0) {
     throw new Error(lastLines(metaResult.stderr) || 'Failed to fetch video metadata');
   }
@@ -478,7 +486,13 @@ export async function resolveYouTubeSource(
     if (/\/shorts\//i.test(url)) {
       throw new Error('YouTube Shorts/Reels are not supported');
     }
-    const metaResult = await runYtDlp(['--dump-single-json', '--skip-download', url], 60000);
+    const metaResult = await runYtDlp([
+      '--dump-single-json',
+      '--skip-download',
+      '--ignore-no-formats-error',
+      '--extractor-args', 'youtube:player_client=tv,web,android',
+      url,
+    ], 60000);
     if (metaResult.code !== 0) {
       throw new Error(lastLines(metaResult.stderr) || 'Failed to fetch video metadata');
     }

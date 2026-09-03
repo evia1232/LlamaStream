@@ -134,9 +134,17 @@ export function ytDlpAudioExtractAttempts(quality: 'LOW' | 'NORMAL' | 'HIGH' = '
       ],
     },
     {
-      label: 'default best',
+      label: 'mweb any',
       args: [
+        '--extractor-args', 'youtube:player_client=mweb,web',
         '-f', 'ba/b',
+        ...extract,
+      ],
+    },
+    {
+      label: 'default any audio',
+      args: [
+        '-f', 'bestaudio/best/ba/b',
         ...extract,
       ],
     },

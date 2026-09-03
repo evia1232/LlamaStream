@@ -3,6 +3,10 @@ import { searchYouTube, SearchResult, resolveYouTubeSource, upsertPendingTrack, 
 import { rankYouTubeResults, extractTrackTitleFromYouTube } from '../lib/trackMatch';
 import { trackStreamUrl, ensureBackgroundDownload } from './trackDownload';
 import { effectiveDownloadedFlag, isTrackPlayable } from './trackIntegrity';
+import { isYouTubeBlockedError } from './ytdlp';
+
+/** Pause Discover YouTube searches after 403 to avoid log spam / hammering */
+let youtubeDiscoverBlockedUntil = 0;
 
 export interface DiscoverItem {
   id: string;
@@ -130,6 +134,7 @@ async function collectYouTubeRecs(
 
   for (const q of queries) {
     if (found.length >= limit) break;
+    if (Date.now() < youtubeDiscoverBlockedUntil) break;
     try {
       const results = await searchYouTube(q, 12);
       const ranked = rankYouTubeResults(
@@ -147,7 +152,12 @@ async function collectYouTubeRecs(
         if (found.length >= limit) break;
       }
     } catch (err) {
-      console.error('[Discover] YouTube search failed:', err);
+      if (isYouTubeBlockedError(err)) {
+        youtubeDiscoverBlockedUntil = Date.now() + 15 * 60 * 1000;
+        console.warn('[Discover] YouTube blocked (403) — pausing Discover YT searches for 15m');
+        break;
+      }
+      console.error('[Discover] YouTube search failed:', (err as Error).message);
     }
   }
 
@@ -296,7 +306,17 @@ export async function prefetchNextDiscoverTrack(
         });
         return { trackId: track.id, status: 'prefetching' };
       } catch (err) {
-        console.error('[Discover] Prefetch failed:', (err as Error).message);
+        const msg = (err as Error).message;
+        if (isYouTubeBlockedError(err)) {
+          youtubeDiscoverBlockedUntil = Date.now() + 15 * 60 * 1000;
+          console.warn('[Discover] Prefetch blocked by YouTube 403 — pausing 15m');
+          break;
+        }
+        if (/format is not available/i.test(msg)) {
+          console.warn('[Discover] Prefetch skipped (format):', msg.split('\n')[0]);
+        } else {
+          console.error('[Discover] Prefetch failed:', msg);
+        }
       }
     }
   }
