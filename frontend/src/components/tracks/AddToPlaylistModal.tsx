@@ -61,26 +61,36 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
     return () => { cancelled = true; };
   }, [open, track.id, track.title, t]);
 
-  const handleAdd = (playlistId: string) => {
-    if (addedIds.has(playlistId)) return;
-    setAddedIds((prev) => new Set(prev).add(playlistId));
+  const handleToggle = (playlistId: string) => {
+    const removing = addedIds.has(playlistId);
+    setAddedIds((prev) => {
+      const next = new Set(prev);
+      if (removing) next.delete(playlistId);
+      else next.add(playlistId);
+      return next;
+    });
     setError('');
 
     const sync = async (attempt = 0): Promise<void> => {
       try {
         const ready = await registerTrackInLibrary(track);
-        await api.post(`/playlists/${playlistId}/tracks`, { trackId: ready.id });
-        prefetchTrack(ready);
+        if (removing) {
+          await api.delete(`/playlists/${playlistId}/tracks/${ready.id}`);
+        } else {
+          await api.post(`/playlists/${playlistId}/tracks`, { trackId: ready.id });
+          prefetchTrack(ready);
+        }
       } catch (err: unknown) {
         const status = (err as { response?: { status?: number } })?.response?.status;
-        if (status === 409) return;
+        if (!removing && status === 409) return;
         if (attempt < 2) {
           await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
           return sync(attempt + 1);
         }
         setAddedIds((prev) => {
           const next = new Set(prev);
-          next.delete(playlistId);
+          if (removing) next.add(playlistId);
+          else next.delete(playlistId);
           return next;
         });
         const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
@@ -100,7 +110,7 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
       setPlaylists((prev) => [playlist, ...prev]);
       setNewName('');
       setShowCreate(false);
-      handleAdd(playlist.id);
+      handleToggle(playlist.id);
     } catch (err: unknown) {
       setError((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
     }
@@ -172,9 +182,9 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
                   <li key={pl.id}>
                     <button
                       type="button"
-                      onClick={() => !added && handleAdd(pl.id)}
-                      disabled={added}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 text-start disabled:opacity-70"
+                      onClick={() => handleToggle(pl.id)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/10 text-start"
+                      aria-label={added ? t('removeFromPlaylist') : t('addToPlaylist')}
                     >
                       <div className="w-12 h-12 rounded bg-spotify-gray overflow-hidden shrink-0">
                         <PlaylistCover

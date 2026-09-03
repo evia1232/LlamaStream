@@ -304,10 +304,25 @@ router.delete('/:id/tracks/:trackId', authenticate, async (req: AuthRequest, res
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  await prisma.playlistTrack.deleteMany({
-    where: { playlistId: req.params.id, trackId: req.params.trackId },
+  const trackId = req.params.trackId;
+  const track = await prisma.track.findUnique({
+    where: { id: trackId },
+    select: { sourceId: true },
   });
-  void syncTracksAfterUnpin([req.params.trackId]).catch(console.error);
+  const trackIds = new Set<string>([trackId]);
+  if (track?.sourceId) {
+    const siblings = await prisma.track.findMany({
+      where: { sourceId: track.sourceId },
+      select: { id: true },
+    });
+    for (const s of siblings) trackIds.add(s.id);
+  }
+
+  const ids = [...trackIds];
+  await prisma.playlistTrack.deleteMany({
+    where: { playlistId: req.params.id, trackId: { in: ids } },
+  });
+  void syncTracksAfterUnpin(ids).catch(console.error);
   res.json({ success: true });
 });
 
