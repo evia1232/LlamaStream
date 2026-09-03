@@ -4,7 +4,7 @@ import { X, Plus, Check } from 'lucide-react';
 import api from '../../api/client';
 import { Playlist, Track } from '../../types';
 import PlaylistCover from '../playlists/PlaylistCover';
-import { registerTrackInLibrary, prefetchTrack } from '../../lib/ensureDownload';
+import { registerTrackInLibrary, prefetchTrack, isLibraryId } from '../../lib/ensureDownload';
 
 interface AddToPlaylistModalProps {
   track: Track;
@@ -23,14 +23,43 @@ export default function AddToPlaylistModal({ track, open, onClose }: AddToPlayli
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     setLoading(true);
     setError('');
     setAddedIds(new Set());
-    api.get('/playlists')
-      .then(({ data }) => setPlaylists(data.playlists))
-      .catch(() => setError(t('error')))
-      .finally(() => setLoading(false));
-  }, [open, t]);
+
+    const load = async () => {
+      try {
+        const { data } = await api.get('/playlists');
+        if (cancelled) return;
+        setPlaylists(data.playlists);
+
+        let trackId = isLibraryId(track.id) ? track.id : null;
+        if (!trackId) {
+          try {
+            const ready = await registerTrackInLibrary(track);
+            trackId = ready.id;
+          } catch {
+            /* membership unknown until add */
+          }
+        }
+
+        if (trackId) {
+          const { data: membership } = await api.get(`/playlists/membership/${trackId}`);
+          if (!cancelled) {
+            setAddedIds(new Set(membership.playlistIds as string[]));
+          }
+        }
+      } catch {
+        if (!cancelled) setError(t('error'));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => { cancelled = true; };
+  }, [open, track.id, track.title, t]);
 
   const handleAdd = (playlistId: string) => {
     if (addedIds.has(playlistId)) return;

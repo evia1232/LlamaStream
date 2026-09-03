@@ -177,7 +177,7 @@ router.post('/avatar', authenticate, upload.single('avatar'), async (req: AuthRe
   res.json({ user: sanitizeUser(user) });
 });
 
-// Admin: list users
+// Admin: list users with cumulative saved storage (liked + playlist tracks)
 router.get('/users', authenticate, requireAdmin, async (_req, res) => {
   const users = await prisma.user.findMany({
     select: {
@@ -186,7 +186,32 @@ router.get('/users', authenticate, requireAdmin, async (_req, res) => {
     },
     orderBy: { createdAt: 'desc' },
   });
-  res.json({ users });
+
+  const withStorage = await Promise.all(users.map(async (u) => {
+    const tracks = await prisma.track.findMany({
+      where: {
+        isDownloaded: true,
+        filePath: { not: null },
+        OR: [
+          { likedBy: { some: { userId: u.id } } },
+          { playlistTracks: { some: { playlist: { userId: u.id } } } },
+        ],
+      },
+      select: { filePath: true },
+    });
+
+    let storageBytes = 0;
+    for (const t of tracks) {
+      if (!t.filePath) continue;
+      try {
+        if (fs.existsSync(t.filePath)) storageBytes += fs.statSync(t.filePath).size;
+      } catch { /* ignore */ }
+    }
+
+    return { ...u, storageBytes };
+  }));
+
+  res.json({ users: withStorage });
 });
 
 // Admin: create user

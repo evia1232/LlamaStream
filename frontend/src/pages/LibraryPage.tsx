@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, Import } from 'lucide-react';
+import { Plus, Import, Camera } from 'lucide-react';
 import clsx from 'clsx';
 import api from '../api/client';
 import { Playlist } from '../types';
@@ -20,6 +20,8 @@ export default function LibraryPage() {
   const [showImport, setShowImport] = useState(false);
   const [importTab, setImportTab] = useState<ImportTab>('spotify');
   const [newName, setNewName] = useState('');
+  const [newCover, setNewCover] = useState<File | null>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
   const [importUrl, setImportUrl] = useState('');
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -38,8 +40,15 @@ export default function LibraryPage() {
 
   const createPlaylist = async () => {
     if (!newName.trim()) return;
-    await api.post('/playlists', { name: newName });
+    const { data } = await api.post('/playlists', { name: newName });
+    const createdId = data?.playlist?.id as string | undefined;
+    if (createdId && newCover) {
+      const form = new FormData();
+      form.append('cover', newCover);
+      await api.post(`/playlists/${createdId}/cover`, form);
+    }
     setNewName('');
+    setNewCover(null);
     setShowCreate(false);
     fetchPlaylists();
   };
@@ -135,11 +144,26 @@ export default function LibraryPage() {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder={t('name')}
-              className="input-spotify mb-5"
+              className="input-spotify mb-4"
               autoFocus
             />
+            <button
+              type="button"
+              onClick={() => coverInputRef.current?.click()}
+              className="icon-btn w-full flex items-center justify-center gap-2 mb-5 py-2.5"
+            >
+              <Camera className="w-4 h-4" />
+              {newCover ? newCover.name : t('coverOptional')}
+            </button>
+            <input
+              ref={coverInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => setNewCover(e.target.files?.[0] ?? null)}
+            />
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setShowCreate(false)} className="px-4 py-2 text-body hover:text-white font-bold">{t('cancel')}</button>
+              <button onClick={() => { setShowCreate(false); setNewCover(null); }} className="px-4 py-2 text-body hover:text-white font-bold">{t('cancel')}</button>
               <button onClick={createPlaylist} className="green-btn py-2 px-6">{t('save')}</button>
             </div>
           </div>

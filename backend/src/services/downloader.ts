@@ -4,8 +4,8 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractArgs } from './ytdlp';
-import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults } from '../lib/trackMatch';
+import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractAttempts, isFormatUnavailableError } from './ytdlp';
+import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, cleanSearchTitle, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults } from '../lib/trackMatch';
 import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
 import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress, waitForTrackDownload } from './trackDownload';
@@ -186,32 +186,59 @@ export async function downloadFromYouTube(
   }
 
   const downloadResult = await new Promise<YtDlpDownloadResult>((resolve, reject) => {
-    const args = [
-      '--no-warnings', '--no-playlist', '--retries', '5', '--fragment-retries', '5',
-      '--socket-timeout', '30',
-      '--extractor-args', 'youtube:player_client=android,web',
-      ...ytDlpAudioExtractArgs(quality),
-      '-o', outputTemplate,
-      '--newline',
-      '--progress',
-      sourceUrl,
-    ];
+    const attempts = ytDlpAudioExtractAttempts(quality);
+    let attemptIndex = 0;
+    let lastStderr = '';
 
-    const proc = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = '';
+    const tryDownload = () => {
+      if (attemptIndex >= attempts.length) {
+        reject(new Error(lastLines(lastStderr) || 'Download failed (all format attempts)'));
+        return;
+      }
 
-    proc.stderr.on('data', (d: Buffer) => {
-      const line = d.toString();
-      stderr += line;
-      const match = line.match(/(\d+\.?\d*)%/);
-      if (match && onProgress) onProgress(parseFloat(match[1]));
-    });
+      const attempt = attempts[attemptIndex++];
+      const args = [
+        '--no-warnings', '--no-playlist', '--retries', '5', '--fragment-retries', '5',
+        '--socket-timeout', '30',
+        ...attempt.args,
+        '-o', outputTemplate,
+        '--newline',
+        '--progress',
+        sourceUrl,
+      ];
 
-    proc.on('error', reject);
-    proc.on('close', (code) => {
-      if (code === 0) resolve({ stderr });
-      else reject(new Error(lastLines(stderr) || `Download failed (exit ${code})`));
-    });
+      const proc = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+
+      proc.stderr.on('data', (d: Buffer) => {
+        const line = d.toString();
+        stderr += line;
+        const match = line.match(/(\d+\.?\d*)%/);
+        if (match && onProgress) onProgress(parseFloat(match[1]));
+      });
+
+      proc.on('error', reject);
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve({ stderr });
+          return;
+        }
+        lastStderr = stderr;
+        if (isFormatUnavailableError(stderr) && attemptIndex < attempts.length) {
+          console.warn(`[Download] Format unavailable (${attempt.label}), retrying…`);
+          tryDownload();
+          return;
+        }
+        if (attemptIndex < attempts.length) {
+          console.warn(`[Download] Failed with ${attempt.label}, retrying…`);
+          tryDownload();
+          return;
+        }
+        reject(new Error(lastLines(stderr) || `Download failed (exit ${code})`));
+      });
+    };
+
+    tryDownload();
   });
 
   void downloadResult;
@@ -458,7 +485,7 @@ export async function resolveYouTubeSource(
   }
 
   let artist = opts?.artist ? sanitizeSearchText(opts.artist) : '';
-  let title = opts?.title ? sanitizeSearchText(opts.title) : '';
+  let title = opts?.title ? cleanSearchTitle(opts.title) : '';
   let album = opts?.album;
   let targetDuration = opts?.duration;
 
@@ -466,22 +493,24 @@ export async function resolveYouTubeSource(
     const spotifyMeta = await fetchSpotifyTrackByUrl(opts.spotifyUrl);
     if (spotifyMeta) {
       artist = sanitizeSearchText(spotifyMeta.artist);
-      title = sanitizeSearchText(spotifyMeta.name);
+      title = cleanSearchTitle(spotifyMeta.name);
       targetDuration = spotifyMeta.duration || targetDuration;
       album = spotifyMeta.album || album;
     }
   } else if (!opts?.spotifyUrl) {
     const enriched = await enrichTargetFromSpotify(artist, title, targetDuration, album);
     artist = enriched.artist;
-    title = enriched.title;
+    title = cleanSearchTitle(enriched.title);
     targetDuration = enriched.duration;
     album = enriched.album;
   }
 
-  const searchQuery = artist && title ? `${artist} - ${title}` : trimmed;
+  // Prefer primary artist for search — long Spotify credit lists kill YouTube matches
+  const searchArtist = artist.split(/[,;&]| feat\.?| ft\.?| featuring /i)[0]?.trim() || artist;
+  const searchQuery = searchArtist && title ? `${searchArtist} - ${title}` : trimmed;
   const target = {
     title: title || searchQuery,
-    artist,
+    artist: searchArtist,
     duration: targetDuration,
     album,
   };
@@ -509,7 +538,7 @@ export async function resolveYouTubeSource(
   };
 
   if (title && artist) {
-    const queries = buildSearchQueries(artist, title, album);
+    const queries = buildSearchQueries(searchArtist || artist, title, album);
     for (const q of queries) {
       try {
         const batch = await searchYouTube(q, 10, minSearchDuration);

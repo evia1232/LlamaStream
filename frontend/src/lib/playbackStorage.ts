@@ -1,6 +1,8 @@
 const VOLUME_KEY = 'llamastream_volume';
 const AUTOPLAY_KEY = 'llamastream_autoplay';
 const STORAGE_KEY = 'llamastream_playback';
+const CROSSFADE_ENABLED_KEY = 'llamastream_crossfade';
+const CROSSFADE_DURATION_KEY = 'llamastream_crossfade_duration';
 
 export interface SavedPlayback {
   trackId: string;
@@ -62,4 +64,29 @@ export function loadAutoplayEnabled(): boolean {
 
 export function saveAutoplayEnabled(enabled: boolean): void {
   localStorage.setItem(AUTOPLAY_KEY, String(enabled));
+}
+
+export function loadCrossfadeEnabled(): boolean {
+  try {
+    return localStorage.getItem(CROSSFADE_ENABLED_KEY) === 'true';
+  } catch { return false; }
+}
+
+export function saveCrossfadeEnabled(enabled: boolean): void {
+  localStorage.setItem(CROSSFADE_ENABLED_KEY, String(enabled));
+}
+
+export function loadCrossfadeDuration(): number {
+  try {
+    const raw = localStorage.getItem(CROSSFADE_DURATION_KEY);
+    if (raw) {
+      const v = parseInt(raw, 10);
+      if (v >= 1 && v <= 12) return v;
+    }
+  } catch { /* ignore */ }
+  return 5;
+}
+
+export function saveCrossfadeDuration(seconds: number): void {
+  localStorage.setItem(CROSSFADE_DURATION_KEY, String(Math.max(1, Math.min(12, seconds))));
 }

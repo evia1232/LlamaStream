@@ -9,6 +9,8 @@ export interface User {
   language: string;
   searchSpotifyEnabled?: boolean;
   searchYoutubeEnabled?: boolean;
+  /** Cumulative bytes of tracks this user liked or put in playlists */
+  storageBytes?: number;
   spotify?: {
     connected: boolean;
     premium: boolean;

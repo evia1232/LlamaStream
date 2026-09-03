@@ -235,10 +235,10 @@ export async function processPlaylistImport(jobId: string) {
   for (let i = position; i < tracks.length; i++) {
     const item = tracks[i];
     const cleanArtist = sanitizeSearchText(item.artist);
-    const cleanTitle = sanitizeSearchText(item.name);
+    const cleanTitle = sanitizeSearchText(item.name).replace(/_/g, ' ');
     try {
       const track = await resolveAndDownload(
-        item.url || `${cleanArtist} - ${cleanTitle}`,
+        item.url || `${cleanArtist.split(/[,;&]/)[0].trim()} - ${cleanTitle}`,
         job.quality as 'LOW' | 'NORMAL' | 'HIGH',
         {
           title: cleanTitle,

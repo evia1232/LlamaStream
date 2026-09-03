@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Play, Download, Trash2 } from 'lucide-react';
+import { Play, Download, Trash2, Camera, X } from 'lucide-react';
 import api from '../api/client';
 import TrackRow from '../components/tracks/TrackRow';
 import { Track, Playlist } from '../types';
@@ -18,6 +18,7 @@ export default function PlaylistPage() {
   const playTracks = usePlayerStore((s) => s.playTracks);
 
   const [importJob, setImportJob] = useState<ImportJobStatus | null>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
 
   const loadPlaylist = useCallback(() => {
     if (!id) return;
@@ -55,6 +56,26 @@ export default function PlaylistPage() {
     window.location.href = '/library';
   };
 
+  const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !id) return;
+    const form = new FormData();
+    form.append('cover', file);
+    try {
+      const { data } = await api.post(`/playlists/${id}/cover`, form);
+      setPlaylist((prev) => prev ? { ...prev, coverUrl: data.playlist.coverUrl, coverImages: data.playlist.coverImages } : data.playlist);
+    } catch { /* ignore */ }
+    if (coverInputRef.current) coverInputRef.current.value = '';
+  };
+
+  const handleRemoveCover = async () => {
+    if (!id) return;
+    try {
+      const { data } = await api.delete(`/playlists/${id}/cover`);
+      setPlaylist((prev) => prev ? { ...prev, coverUrl: null, coverImages: data.playlist.coverImages } : data.playlist);
+    } catch { /* ignore */ }
+  };
+
   if (!playlist) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -66,12 +87,41 @@ export default function PlaylistPage() {
   return (
     <div>
       <div className="gradient-bg px-4 md:px-8 pt-8 md:pt-12 pb-8 flex flex-col sm:flex-row items-start sm:items-end gap-6">
-        <div className="w-36 h-36 md:w-48 md:h-48 rounded-spotify shadow-card bg-spotify-lightgray shrink-0 overflow-hidden">
-          <PlaylistCover
-            coverUrl={playlist.coverUrl}
-            coverImages={playlist.coverImages}
-            className="w-full h-full"
-            fallback={<span className="text-6xl">♪</span>}
+        <div className="shrink-0 space-y-3">
+          <div className="w-36 h-36 md:w-48 md:h-48 rounded-spotify shadow-card bg-spotify-lightgray overflow-hidden">
+            <PlaylistCover
+              coverUrl={playlist.coverUrl}
+              coverImages={playlist.coverImages}
+              className="w-full h-full"
+              fallback={<span className="text-6xl">♪</span>}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2 max-w-48">
+            <button
+              type="button"
+              onClick={() => coverInputRef.current?.click()}
+              className="icon-btn flex items-center gap-1.5 px-3 py-1.5 text-xs"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              {t('changePlaylistCover')}
+            </button>
+            {playlist.coverUrl && (
+              <button
+                type="button"
+                onClick={handleRemoveCover}
+                className="icon-btn flex items-center gap-1.5 px-3 py-1.5 text-xs"
+              >
+                <X className="w-3.5 h-3.5" />
+                {t('autoPlaylistCover')}
+              </button>
+            )}
+          </div>
+          <input
+            ref={coverInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleCoverUpload}
           />
         </div>
         <div className="min-w-0 pb-2 text-start">

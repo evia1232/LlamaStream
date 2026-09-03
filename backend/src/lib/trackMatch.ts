@@ -106,6 +106,16 @@ function primaryArtist(artist: string): string {
 export function sanitizeSearchText(s: string): string {
   return s
     .replace(/\u00a0/g, ' ')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Clean titles like "תנטוספליפ_79_בונוס" for search */
+export function cleanSearchTitle(title: string): string {
+  return sanitizeSearchText(title)
+    .replace(/\s*[\(\[\{].*?[\)\]\}]\s*/g, ' ')
+    .replace(/\b(bonus|בונוס|remaster(ed)?|radio\s*edit)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -369,15 +379,19 @@ export function pickBestAvailableResult(
 
 export function buildSearchQueries(artist: string, title: string, album?: string): string[] {
   const a = sanitizeSearchText(primaryArtist(artist));
-  const t = sanitizeSearchText(title);
+  const t = cleanSearchTitle(title);
+  const rawTitle = sanitizeSearchText(title);
   const queries: string[] = [];
 
   // Hebrew / Mizrahi tracks: title-first searches work better than "official audio"
-  if (containsHebrew(t) || containsHebrew(a)) {
+  if (containsHebrew(t) || containsHebrew(a) || containsHebrew(rawTitle)) {
     queries.push(t);
+    if (rawTitle !== t) queries.push(rawTitle);
     queries.push(`${a} ${t}`);
     queries.push(`${t} ${a}`);
     queries.push(`${a} - ${t}`);
+    // Multi-artist Spotify credits confuse YouTube — also try without artist
+    queries.push(`${t} audio`);
     if (album) queries.push(`${t} ${sanitizeSearchText(album)}`);
   }
 
@@ -388,6 +402,7 @@ export function buildSearchQueries(artist: string, title: string, album?: string
     `"${a}" "${t}" official audio`,
     `${a} - ${t}`,
     `${a} ${t}`,
+    t,
   );
   if (album) {
     queries.push(`${a} ${t} ${sanitizeSearchText(album)} official`);

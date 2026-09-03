@@ -11,6 +11,10 @@ import {
   saveVolume,
   loadAutoplayEnabled,
   saveAutoplayEnabled,
+  loadCrossfadeEnabled,
+  saveCrossfadeEnabled,
+  loadCrossfadeDuration,
+  saveCrossfadeDuration,
 } from '../lib/playbackStorage';
 import { normalizeTrack } from '../lib/trackUtils';
 import { ensureTrackDownloaded, prepareTrackForPlayback, prefetchTrack, prefetchDiscoverNext, registerTrackInLibrary, isLibraryId, canStreamTrackLocally } from '../lib/ensureDownload';
@@ -130,6 +134,10 @@ interface PlayerState {
   claimPlaybackHere: () => Promise<void>;
   sendRemoteCommand: (action: string, extra?: Record<string, unknown>) => void;
   setShowDevicePicker: (show: boolean) => void;
+  crossfadeEnabled: boolean;
+  crossfadeDuration: number;
+  toggleCrossfade: () => void;
+  setCrossfadeDuration: (seconds: number) => void;
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -165,6 +173,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   contextTracks: [] as Track[],
   contextIndex: -1,
   autoplay: loadAutoplayEnabled(),
+  crossfadeEnabled: loadCrossfadeEnabled(),
+  crossfadeDuration: loadCrossfadeDuration(),
   _discoverLoading: false,
   isPreparingPlayback: false,
   isBuffering: false,
@@ -179,6 +189,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setIsPlaying: (playing) => {
     const { playbackEngine, isRemoteActive, activeDeviceId, localDeviceId } = get();
     if (isRemoteActive && activeDeviceId && activeDeviceId !== localDeviceId) {
+      // Control the remote device — never claim this device by toggling play/pause
       sendPlaybackSync({ type: 'command', action: playing ? 'play' : 'pause', targetDeviceId: activeDeviceId });
       set({ isPlaying: playing });
       return;
@@ -513,6 +524,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ autoplay: next });
   },
 
+  toggleCrossfade: () => {
+    const next = !get().crossfadeEnabled;
+    saveCrossfadeEnabled(next);
+    set({ crossfadeEnabled: next });
+  },
+
+  setCrossfadeDuration: (seconds) => {
+    const clamped = Math.max(1, Math.min(12, seconds));
+    saveCrossfadeDuration(clamped);
+    set({ crossfadeDuration: clamped });
+  },
+
   prepareDiscoverAutoplay: async () => {
     const { currentTrack, autoplay, queue, contextTracks, _discoverLoading } = get();
     if (!autoplay || !currentTrack || _discoverLoading) return;
@@ -760,10 +783,22 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   setShowDevicePicker: (show) => set({ showDevicePicker: show }),
 
   setSyncDevices: (devices, activeId, activeName) => {
-    const { localDeviceId } = get();
+    const { localDeviceId, activeDeviceId: prevActive, isRemoteActive } = get();
     const activeOnline = activeId ? devices.some((d) => d.deviceId === activeId) : false;
-    const effectiveActiveId = activeOnline ? activeId : null;
-    const effectiveActiveName = activeOnline ? activeName : null;
+
+    // Never auto-claim this device when the remote briefly drops from the list —
+    // keep showing the last known remote player until the user explicitly claims.
+    let effectiveActiveId = activeId;
+    let effectiveActiveName = activeName;
+    if (activeId && activeId !== localDeviceId && !activeOnline) {
+      effectiveActiveId = prevActive && prevActive !== localDeviceId ? prevActive : activeId;
+      effectiveActiveName = activeName ?? get().activeDeviceName;
+    } else if (!activeId && isRemoteActive && prevActive && prevActive !== localDeviceId) {
+      // Active cleared in DB but we were following remote — don't steal playback
+      effectiveActiveId = prevActive;
+      effectiveActiveName = get().activeDeviceName;
+    }
+
     const isRemote = !!effectiveActiveId && effectiveActiveId !== localDeviceId;
     set({
       connectedDevices: devices,
@@ -775,8 +810,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   broadcastPlaybackSync: () => {
     if (get()._syncApplying) return;
-    const { currentTrack, currentTime, isPlaying, volume, localDeviceId, activeDeviceId } = get();
-    if (!currentTrack || (activeDeviceId && activeDeviceId !== localDeviceId)) return;
+    const { currentTrack, currentTime, isPlaying, volume, localDeviceId, activeDeviceId, isRemoteActive } = get();
+    // Only the active local player may broadcast — observers never claim via sync.
+    if (!currentTrack || isRemoteActive || (activeDeviceId && activeDeviceId !== localDeviceId)) return;
     sendPlaybackSync({
       type: 'playback',
       trackId: currentTrack.id,
@@ -786,56 +822,69 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     });
   },
 
-  applyRemoteSync: async (data, opts) => {
-    const { localDeviceId, connectedDevices } = get();
+  applyRemoteSync: async (data, _opts) => {
+    const { localDeviceId, currentTime: localTime, isRemoteActive: wasRemote } = get();
     const remoteId = data.activeDeviceId ?? null;
-    const remoteOnline = remoteId
-      ? (opts?.assumeOnline || connectedDevices.some((d) => d.deviceId === remoteId))
-      : false;
-    const isRemote = !!remoteId && remoteId !== localDeviceId && remoteOnline;
 
-    if (remoteId && remoteId !== localDeviceId && !remoteOnline) {
+    // Another device is the player — always treat as remote observer (never auto-claim).
+    if (remoteId && remoteId !== localDeviceId) {
+      set({
+        activeDeviceId: remoteId,
+        activeDeviceName: data.activeDeviceName ?? get().activeDeviceName,
+        isRemoteActive: true,
+      });
+
+      get()._syncApplying = true;
+      get().stopPlaybackImmediate();
+
+      let track = data.track ? normalizeTrack(data.track) : null;
+      if (!track && data.trackId) {
+        try {
+          const { data: res } = await api.get(`/tracks/${data.trackId}`);
+          track = normalizeTrack(res.track);
+        } catch {
+          get()._syncApplying = false;
+          return;
+        }
+      }
+
+      const serverPos = data.position ?? 0;
+      const playing = !!data.isPlaying;
+      // Smart progress: only snap if seek / track change / large drift; else let RAF keep counting
+      const trackChanged = !!(track && get().currentTrack?.id !== track.id);
+      const drift = Math.abs(serverPos - localTime);
+      const shouldSnap = trackChanged || !wasRemote || drift > 1.25 || !playing;
+
+      const nextTime = shouldSnap ? serverPos : localTime;
+      const duration = track?.duration || get().duration || 0;
+
+      if (track) {
+        set({
+          currentTrack: track,
+          currentTime: nextTime,
+          isPlaying: playing,
+          duration: duration || get().duration,
+        });
+      } else {
+        set({
+          isPlaying: playing,
+          ...(shouldSnap ? { currentTime: serverPos } : {}),
+        });
+      }
+
+      get()._syncApplying = false;
+      return;
+    }
+
+    // Server says this device is active (after explicit claim) or no active device.
+    // Never auto-start local audio just because we opened the app.
+    if (remoteId === localDeviceId) {
       set({
         activeDeviceId: localDeviceId,
         activeDeviceName: get().localDeviceName,
         isRemoteActive: false,
       });
-      return;
     }
-
-    set({
-      activeDeviceId: isRemote ? remoteId : localDeviceId,
-      activeDeviceName: isRemote ? (data.activeDeviceName ?? null) : get().localDeviceName,
-      isRemoteActive: isRemote,
-    });
-
-    if (!isRemote) return;
-
-    get()._syncApplying = true;
-    get().stopPlaybackImmediate();
-
-    let track = data.track ? normalizeTrack(data.track) : null;
-    if (!track && data.trackId) {
-      try {
-        const { data: res } = await api.get(`/tracks/${data.trackId}`);
-        track = normalizeTrack(res.track);
-      } catch {
-        get()._syncApplying = false;
-        return;
-      }
-    }
-
-    if (track) {
-      set({
-        currentTrack: track,
-        currentTime: data.position ?? 0,
-        isPlaying: !!data.isPlaying,
-      });
-    } else {
-      set({ isPlaying: !!data.isPlaying, currentTime: data.position ?? get().currentTime });
-    }
-
-    get()._syncApplying = false;
   },
 
   handleSyncCommand: (msg) => {
@@ -889,7 +938,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   claimPlaybackHere: async () => {
     const { currentTrack, currentTime, localDeviceId, localDeviceName } = get();
     if (!currentTrack) return;
-    set({ isRemoteActive: false, activeDeviceId: localDeviceId, activeDeviceName: localDeviceName, showDevicePicker: false });
+    set({
+      isRemoteActive: false,
+      activeDeviceId: localDeviceId,
+      activeDeviceName: localDeviceName,
+      showDevicePicker: false,
+      isPlaying: true,
+    });
     sendPlaybackSync({
       type: 'command',
       action: 'transfer',
@@ -952,9 +1007,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         isPlaying = !!data.isPlaying;
       }
       if (data.activeDeviceId) {
+        const localId = get().localDeviceId;
+        const isRemote = data.activeDeviceId !== localId;
         set({
           activeDeviceId: data.activeDeviceId,
           activeDeviceName: data.activeDeviceName ?? null,
+          isRemoteActive: isRemote,
         });
       }
     } catch { /* fall back to local */ }

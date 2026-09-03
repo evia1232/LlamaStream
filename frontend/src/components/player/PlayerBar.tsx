@@ -56,6 +56,55 @@ export default function PlayerBar() {
   const loadTokenRef = useRef(0);
   const activeBlobRef = useRef<string | null>(null);
   const endedHandledRef = useRef(false);
+  const crossfadeTriggeredRef = useRef(false);
+  const fadeCountRef = useRef(0);
+  const outgoingRef = useRef<HTMLAudioElement | null>(null);
+  const outgoingBlobRef = useRef<string | null>(null);
+
+  const isFading = () => fadeCountRef.current > 0;
+
+  const stopOutgoing = useCallback(() => {
+    const el = outgoingRef.current;
+    outgoingRef.current = null;
+    if (el) {
+      el.pause();
+      el.removeAttribute('src');
+      el.load();
+    }
+    revokeBlobUrl(outgoingBlobRef.current);
+    outgoingBlobRef.current = null;
+  }, []);
+
+  const fadeAudioVolume = useCallback((el: HTMLAudioElement, from: number, to: number, ms: number, onDone?: () => void) => {
+    fadeCountRef.current += 1;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const p = Math.min((now - start) / Math.max(ms, 50), 1);
+      el.volume = Math.max(0, Math.min(1, from + (to - from) * p));
+      if (p < 1) {
+        requestAnimationFrame(tick);
+        return;
+      }
+      fadeCountRef.current = Math.max(0, fadeCountRef.current - 1);
+      onDone?.();
+    };
+    requestAnimationFrame(tick);
+  }, []);
+
+  const startOutgoingCrossfade = useCallback((fromAudio: HTMLAudioElement, seconds: number) => {
+    stopOutgoing();
+    const outgoing = new Audio();
+    outgoing.crossOrigin = 'anonymous';
+    outgoing.src = fromAudio.src;
+    outgoing.currentTime = fromAudio.currentTime;
+    outgoing.volume = fromAudio.volume;
+    outgoingRef.current = outgoing;
+    outgoingBlobRef.current = fromAudio.src.startsWith('blob:') ? fromAudio.src : null;
+    void outgoing.play().catch(() => { /* ignore */ });
+    fadeAudioVolume(outgoing, outgoing.volume, 0, seconds * 1000, () => {
+      if (outgoingRef.current === outgoing) stopOutgoing();
+    });
+  }, [fadeAudioVolume, stopOutgoing]);
 
   useNetworkPlaybackRecovery(audioRef, activeBlobRef);
 
@@ -75,9 +124,24 @@ export default function PlayerBar() {
     const loadToken = ++loadTokenRef.current;
     let cancelled = false;
 
-    revokeBlobUrl(activeBlobRef.current);
+    const { crossfadeEnabled, crossfadeDuration } = usePlayerStore.getState();
+    const canOverlap = crossfadeEnabled
+      && !!audio.src
+      && !audio.paused
+      && audio.currentTime > 0.4
+      && !isSpotifyMode
+      && !isRemoteActive;
+
+    if (canOverlap) {
+      startOutgoingCrossfade(audio, crossfadeDuration);
+    } else {
+      stopOutgoing();
+      revokeBlobUrl(activeBlobRef.current);
+    }
+
     activeBlobRef.current = null;
     endedHandledRef.current = false;
+    crossfadeTriggeredRef.current = false;
 
     const applyPendingSeek = () => {
       const { pendingSeekTime: seek } = usePlayerStore.getState();
@@ -94,7 +158,15 @@ export default function PlayerBar() {
       setIsBuffering(false);
       applyPendingSeek();
       if (usePlayerStore.getState().isPlaying) {
-        safeAudioPlay(audio, undefined, { persistent: true });
+        const { crossfadeEnabled: cfEnabled, crossfadeDuration: cfDur } = usePlayerStore.getState();
+        if (cfEnabled && canOverlap) {
+          audio.volume = 0;
+          safeAudioPlay(audio, undefined, { persistent: true });
+          fadeAudioVolume(audio, 0, effectivePlaybackVolume(usePlayerStore.getState().volume), cfDur * 1000);
+        } else {
+          audio.volume = effectivePlaybackVolume(usePlayerStore.getState().volume);
+          safeAudioPlay(audio, undefined, { persistent: true });
+        }
       }
     };
 
@@ -159,6 +231,9 @@ export default function PlayerBar() {
       }
 
       if (usePlayerStore.getState().isPlaying) {
+        if (canOverlap) {
+          audio.volume = 0;
+        }
         safeAudioPlay(audio, undefined, { persistent: true });
       }
     })();
@@ -171,7 +246,7 @@ export default function PlayerBar() {
       audio.removeEventListener('playing', onPlaying);
       audio.removeEventListener('error', onError);
     };
-  }, [currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, canPlayLocal, isSpotifyMode, isRemoteActive, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering]);
+  }, [currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, canPlayLocal, isSpotifyMode, isRemoteActive, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering, fadeAudioVolume, startOutgoingCrossfade, stopOutgoing]);
 
   useEffect(() => {
     if (isSpotifyMode) return;
@@ -188,6 +263,7 @@ export default function PlayerBar() {
       const audio = audioRef.current;
       if (!audio) return;
       audio.pause();
+      outgoingRef.current?.pause();
     });
     return () => registerPause(null);
   }, [registerPause]);
@@ -199,12 +275,13 @@ export default function PlayerBar() {
       audio.pause();
       audio.removeAttribute('src');
       audio.load();
+      stopOutgoing();
       revokeBlobUrl(activeBlobRef.current);
       activeBlobRef.current = null;
       loadTokenRef.current += 1;
     });
     return () => registerStop(null);
-  }, [registerStop]);
+  }, [registerStop, stopOutgoing]);
 
   useEffect(() => {
     const onUnload = () => { persistPlayback(); };
@@ -233,11 +310,13 @@ export default function PlayerBar() {
       if (audio.paused) startPlayback();
     } else {
       audio.pause();
+      outgoingRef.current?.pause();
     }
   }, [isPlaying, isSpotifyMode, isRemoteActive, canPlayLocal, currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, setIsPlaying]);
 
   useEffect(() => {
-    if (!isSpotifyMode && audioRef.current) {
+    if (isSpotifyMode || isFading()) return;
+    if (audioRef.current) {
       audioRef.current.volume = effectivePlaybackVolume(volume);
     }
   }, [volume, isSpotifyMode]);
@@ -342,7 +421,7 @@ export default function PlayerBar() {
     return () => cancelAnimationFrame(raf);
   }, [isPlaying, isSpotifyMode, isRemoteActive, canPlayLocal, currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, setCurrentTime, setDuration]);
 
-  // Smooth progress while remote device plays (WS sync is every ~3s)
+  // Smooth progress while remote device plays (WS sync ~3s; interpolate between updates)
   useEffect(() => {
     if (!isRemoteActive || !isPlaying) return;
     let raf = 0;
@@ -351,17 +430,23 @@ export default function PlayerBar() {
     const tick = (now: number) => {
       const dt = (now - lastTs) / 1000;
       lastTs = now;
+      if (dt <= 0 || dt > 1) {
+        // Tab was backgrounded / huge gap — wait for next sync instead of jumping
+        raf = requestAnimationFrame(tick);
+        return;
+      }
       const s = usePlayerStore.getState();
-      const dur = s.duration;
+      if (!s.isRemoteActive || !s.isPlaying) return;
+      const dur = s.duration || s.currentTrack?.duration || 0;
       let next = s.currentTime + dt;
       if (dur > 0) next = Math.min(next, dur);
-      if (Math.abs(next - s.currentTime) >= 0.025) setCurrentTime(next);
+      if (Math.abs(next - s.currentTime) >= 0.05) setCurrentTime(next);
       raf = requestAnimationFrame(tick);
     };
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isRemoteActive, isPlaying, setCurrentTime]);
+  }, [isRemoteActive, isPlaying, currentTrack?.id, setCurrentTime]);
 
   const handleEnded = () => {
     if (isRemoteActive) return;
@@ -377,13 +462,28 @@ export default function PlayerBar() {
     setCurrentTime(time);
 
     const d = audio.duration;
+    const { crossfadeEnabled, crossfadeDuration } = usePlayerStore.getState();
+
+    if (crossfadeEnabled && Number.isFinite(d) && d > 0) {
+      const fadeStart = Math.max(0, d - crossfadeDuration);
+      if (time >= fadeStart && d > crossfadeDuration + 0.5 && !crossfadeTriggeredRef.current && !endedHandledRef.current) {
+        crossfadeTriggeredRef.current = true;
+        endedHandledRef.current = true;
+        setIsPlaying(true);
+        playNext();
+      } else if (time < fadeStart - 1) {
+        crossfadeTriggeredRef.current = false;
+      }
+    }
+
+    // Normal end detection (for non-crossfade or very short tracks)
     if (Number.isFinite(d) && d > 0 && time >= d - 0.35) {
       if (!endedHandledRef.current) {
         endedHandledRef.current = true;
         handleEnded();
       }
     } else if (!Number.isFinite(d) || time < d - 1) {
-      endedHandledRef.current = false;
+      if (!crossfadeTriggeredRef.current) endedHandledRef.current = false;
     }
 
     const now = Date.now();

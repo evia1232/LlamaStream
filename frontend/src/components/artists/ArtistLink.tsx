@@ -53,11 +53,13 @@ export function ArtistLinks({
   track,
   className,
   linkClassName,
+  onClick,
 }: {
   artist: { id?: string; name?: string } | string | null | undefined;
   track?: Track | null;
   className?: string;
   linkClassName?: string;
+  onClick?: (e: React.MouseEvent) => void;
 }) {
   const fullName = getArtistName(artist);
   if (!fullName) return null;
@@ -68,7 +70,7 @@ export function ArtistLinks({
   if (parts.length <= 1) {
     return (
       <span className={className}>
-        <ArtistLink name={fullName} {...hints} className={linkClassName} />
+        <ArtistLink name={fullName} {...hints} className={linkClassName} onClick={onClick} />
       </span>
     );
   }
@@ -78,7 +80,7 @@ export function ArtistLinks({
       {parts.map((part, i) => (
         <Fragment key={`${part}-${i}`}>
           {i > 0 && <span className="text-inherit">, </span>}
-          <ArtistLink name={part} {...(i === 0 ? hints : {})} className={linkClassName} />
+          <ArtistLink name={part} {...(i === 0 ? hints : {})} className={linkClassName} onClick={onClick} />
         </Fragment>
       ))}
     </span>

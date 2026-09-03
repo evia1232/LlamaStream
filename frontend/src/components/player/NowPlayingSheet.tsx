@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useRef, useState, useCallback, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { usePlayerStore } from '../../store';
 import { getArtistName, getTrackImageUrl, isTrackLiked } from '../../lib/trackUtils';
 import { ArtistLinks } from '../artists/ArtistLink';
@@ -43,6 +44,13 @@ export default function NowPlayingSheet() {
   const sheetRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [dragY, setDragY] = useState(0);
+  const location = useLocation();
+
+  // Collapse full player whenever we navigate away (e.g. artist page)
+  useEffect(() => {
+    if (showNowPlaying) setShowNowPlaying(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on route change
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     const el = sheetRef.current;
@@ -233,7 +241,13 @@ export default function NowPlayingSheet() {
 
         <div className="text-start mb-6 px-1">
           <h2 className="text-2xl font-bold truncate mb-1">{currentTrack.title}</h2>
-          <ArtistLinks artist={currentTrack.artist} track={currentTrack} className="text-body text-base truncate block" linkClassName="text-body" />
+          <ArtistLinks
+            artist={currentTrack.artist}
+            track={currentTrack}
+            className="text-body text-base truncate block"
+            linkClassName="text-body"
+            onClick={() => setShowNowPlaying(false)}
+          />
           {preparingHint && (
             <p className="text-sm text-spotify-green truncate mt-1">{preparingHint}</p>
           )}

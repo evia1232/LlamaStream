@@ -54,8 +54,12 @@ export default function DevicePicker() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (isLocal && isRemoteActive) void claimPlaybackHere();
-                    else if (!isLocal && isActive) setShowDevicePicker(false);
+                    if (isLocal) {
+                      if (isRemoteActive) void claimPlaybackHere();
+                      else setShowDevicePicker(false);
+                    } else {
+                      setShowDevicePicker(false);
+                    }
                   }}
                   className={clsx(
                     'w-full flex items-center gap-3 px-4 py-3 text-start hover:bg-white/10 transition-colors',

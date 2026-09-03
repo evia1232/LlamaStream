@@ -15,7 +15,6 @@ const BASE_ARGS = [
   '--retries', '5',
   '--fragment-retries', '5',
   '--socket-timeout', '30',
-  '--extractor-args', 'youtube:player_client=android,web',
 ];
 
 export function runYtDlp(args: string[], timeoutMs = 300000): Promise<YtDlpResult> {
@@ -56,15 +55,57 @@ export async function ytDlpVersion(): Promise<string> {
   return result.stdout.split('\n')[0];
 }
 
-export function ytDlpAudioExtractArgs(quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH'): string[] {
+/** Format/client combos — YouTube often breaks one client; try several. */
+export function ytDlpAudioExtractAttempts(quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH'): Array<{
+  label: string;
+  args: string[];
+}> {
   const audioQuality = qualityAudioScale[quality] || '0';
-  return [
-    '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+  const extract = [
     '-x', '--audio-format', 'mp3',
     '--audio-quality', audioQuality,
     '--postprocessor-args', 'ffmpeg:-ar 44100 -ac 2',
     '--concurrent-fragments', '1',
   ];
+
+  return [
+    {
+      label: 'android+web m4a',
+      args: [
+        '--extractor-args', 'youtube:player_client=android,web',
+        '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+        ...extract,
+      ],
+    },
+    {
+      label: 'ios+android best',
+      args: [
+        '--extractor-args', 'youtube:player_client=ios,android,web',
+        '-f', 'bestaudio/best',
+        ...extract,
+      ],
+    },
+    {
+      label: 'tv_embedded best',
+      args: [
+        '--extractor-args', 'youtube:player_client=tv_embedded,web',
+        '-f', 'bestaudio/best',
+        ...extract,
+      ],
+    },
+    {
+      label: 'default best',
+      args: [
+        '-f', 'ba/b',
+        ...extract,
+      ],
+    },
+  ];
+}
+
+/** @deprecated Prefer ytDlpAudioExtractAttempts for retries */
+export function ytDlpAudioExtractArgs(quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH'): string[] {
+  return ytDlpAudioExtractAttempts(quality)[0].args;
 }
 
 export function findFileByPrefix(dir: string, prefix: string): string | null {
@@ -83,4 +124,9 @@ export function findFileByPrefix(dir: string, prefix: string): string | null {
 
 export function lastLines(text: string, count = 5): string {
   return text.split('\n').filter(Boolean).slice(-count).join('\n');
+}
+
+export function isFormatUnavailableError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /Requested format is not available|format is not available|Only images are available/i.test(msg);
 }

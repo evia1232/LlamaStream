@@ -26,7 +26,14 @@ const coverStorage = multer.diskStorage({
   },
   filename: (_req, file, cb) => cb(null, `${uuidv4()}${path.extname(file.originalname)}`),
 });
-const upload = multer({ storage: coverStorage, limits: { fileSize: 5 * 1024 * 1024 } });
+const upload = multer({
+  storage: coverStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  },
+});
 
 function formatPlaylist(playlist: {
   id: string;
@@ -85,6 +92,37 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
     orderBy: { updatedAt: 'desc' },
   });
   res.json({ playlists: playlists.map((p) => formatPlaylist(p)) });
+});
+
+/** Playlist IDs that already contain this track (for add-to-playlist UI). */
+router.get('/membership/:trackId', authenticate, async (req: AuthRequest, res) => {
+  const trackId = req.params.trackId;
+  const userId = req.user!.userId;
+
+  const track = await prisma.track.findUnique({
+    where: { id: trackId },
+    select: { id: true, sourceId: true },
+  });
+
+  const trackIds = new Set<string>([trackId]);
+  if (track?.sourceId) {
+    const siblings = await prisma.track.findMany({
+      where: { sourceId: track.sourceId },
+      select: { id: true },
+    });
+    for (const s of siblings) trackIds.add(s.id);
+  }
+
+  const rows = await prisma.playlistTrack.findMany({
+    where: {
+      trackId: { in: [...trackIds] },
+      playlist: { userId },
+    },
+    select: { playlistId: true },
+    distinct: ['playlistId'],
+  });
+
+  res.json({ playlistIds: rows.map((r) => r.playlistId) });
 });
 
 router.get('/public', optionalAuth, async (_req, res) => {
@@ -213,6 +251,19 @@ router.post('/:id/cover', authenticate, upload.single('cover'), async (req: Auth
     where: { id: req.params.id },
     data: { coverUrl },
     include: { _count: { select: { tracks: true } } },
+  });
+  res.json({ playlist: formatPlaylist(updated) });
+});
+
+router.delete('/:id/cover', authenticate, async (req: AuthRequest, res) => {
+  const playlist = await prisma.playlist.findUnique({ where: { id: req.params.id } });
+  if (!playlist || playlist.userId !== req.user!.userId) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  const updated = await prisma.playlist.update({
+    where: { id: req.params.id },
+    data: { coverUrl: null },
+    include: { _count: { select: { tracks: true } }, tracks: { include: { track: { include: { album: true } } }, orderBy: { position: 'asc' }, take: 4 } },
   });
   res.json({ playlist: formatPlaylist(updated) });
 });

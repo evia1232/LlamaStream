@@ -50,7 +50,7 @@ function ToggleSwitch({
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { user, updateProfile, logout } = useAuthStore();
-  const { autoplay, toggleAutoplay } = usePlayerStore();
+  const { autoplay, toggleAutoplay, crossfadeEnabled, crossfadeDuration, toggleCrossfade, setCrossfadeDuration } = usePlayerStore();
   const isAdmin = user?.role === 'ADMIN';
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
@@ -395,6 +395,35 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          <div className="bg-spotify-lightgray rounded-xl p-4 space-y-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Music2 className="w-5 h-5 text-spotify-green shrink-0" />
+              <p className="font-bold">{t('crossfade')}</p>
+            </div>
+            <p className="text-sm text-spotify-text">{t('crossfadeHint')}</p>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">{t('crossfade')}</span>
+              <ToggleSwitch checked={crossfadeEnabled} onToggle={toggleCrossfade} />
+            </div>
+            {crossfadeEnabled && (
+              <div>
+                <label className="block text-sm text-spotify-text mb-1.5">{t('crossfadeDuration')}</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={1}
+                    max={12}
+                    step={1}
+                    value={crossfadeDuration}
+                    onChange={(e) => setCrossfadeDuration(Number(e.target.value))}
+                    className="flex-1 accent-spotify-green"
+                  />
+                  <span className="text-sm w-16 text-end">{t('crossfadeSeconds', { count: crossfadeDuration })}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="bg-spotify-lightgray rounded-xl p-4 space-y-3">
             <div className="flex items-center gap-2">
               <Music2 className="w-5 h-5 text-spotify-green shrink-0" />
@@ -598,6 +627,9 @@ export default function SettingsPage() {
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold truncate">{u.displayName || u.username}</p>
                     <p className="text-sm text-spotify-text truncate">{u.email}</p>
+                    <p className="text-2xs text-spotify-text mt-0.5">
+                      {t('userStorageUsed')}: {formatBytes(u.storageBytes ?? 0)}
+                    </p>
                   </div>
                   <span className={clsx(
                     'text-xs px-2 py-1 rounded-full shrink-0',
