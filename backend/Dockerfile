@@ -2,10 +2,10 @@ FROM node:22
 
 # Full node image already has ca-certificates + curl — no apt-get (BuildKit hangs on Debian mirrors here).
 
-# Official yt-dlp binary — bundles EJS solvers; Node 22 is the JS runtime
+# Standalone yt-dlp_linux (PyInstaller) — no system Python needed; bundles EJS
 RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
       -o /usr/local/bin/yt-dlp \
-      https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+      https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
     && chmod a+rx /usr/local/bin/yt-dlp \
     && yt-dlp --version
 
@@ -35,4 +35,4 @@ RUN mkdir -p /app/storage/music /app/storage/cache /app/storage/avatars /app/sto
 
 EXPOSE 3001
 
-CMD ["sh", "-c", "curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp; npx prisma migrate deploy && node dist/index.js"]
+CMD ["sh", "-c", "curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux && chmod a+rx /usr/local/bin/yt-dlp; npx prisma migrate deploy && node dist/index.js"]
