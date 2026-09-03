@@ -35,10 +35,21 @@ export function ytDlpAuthArgs(): string[] {
 }
 
 function resolveYtDlpBin(): string {
-  const fromEnv = (process.env.YTDLP_BIN || '').trim();
-  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
-  const storageBin = path.join(config.cachePath, '..', 'bin', 'yt-dlp');
-  if (fs.existsSync(storageBin)) return storageBin;
+  const candidates = [
+    (process.env.YTDLP_BIN || '').trim(),
+    '/usr/local/bin/yt-dlp',
+    path.join(config.cachePath, '..', 'bin', 'yt-dlp'),
+    'yt-dlp',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (candidate === 'yt-dlp' || fs.existsSync(candidate)) {
+      if (candidate !== 'yt-dlp') {
+        try { fs.chmodSync(candidate, 0o755); } catch { /* ignore */ }
+      }
+      return candidate;
+    }
+  }
   return 'yt-dlp';
 }
 

@@ -24,9 +24,10 @@ RUN npm run build \
     && mkdir -p /app/storage/music /app/storage/cache /app/storage/avatars /app/storage/cookies /app/storage/bin \
     && npm prune --omit=dev
 
-ENV PATH="/app/storage/bin:/usr/local/bin:${PATH}" \
-    YTDLP_BIN=/app/storage/bin/yt-dlp \
-    FFMPEG_BIN=/app/storage/bin/ffmpeg
+ENV PATH="/usr/local/bin:${PATH}" \
+    YTDLP_BIN=/usr/local/bin/yt-dlp \
+    FFMPEG_BIN=/usr/local/bin/ffmpeg \
+    BIN_CACHE_DIR=/app/storage/bin
 
 EXPOSE 3001
 
