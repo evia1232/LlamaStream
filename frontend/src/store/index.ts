@@ -102,6 +102,9 @@ interface PlayerState {
   registerSeek: (fn: ((time: number) => void) | null) => void;
   registerPause: (fn: (() => void) | null) => void;
   registerStop: (fn: (() => void) | null) => void;
+  /** Imperative audio load — needed when React is frozen in background/lock screen */
+  registerLoadLocalTrack: (fn: ((track: Track, startTime: number) => void) | null) => void;
+  _loadLocalTrackFn: ((track: Track, startTime: number) => void) | null;
   stopPlaybackImmediate: () => void;
   beginTrackTransition: () => void;
   seekTo: (time: number) => void;
@@ -162,6 +165,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   _seekFn: null,
   _pauseFn: null,
   _stopFn: null,
+  _loadLocalTrackFn: null,
   _playGeneration: 0,
   localDeviceId: getDeviceId(),
   localDeviceName: getDeviceName(),
@@ -290,6 +294,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       set({
         duration: track.duration || get().duration,
       });
+      // Load immediately — don't wait for React re-render (frozen on lock screen)
+      try {
+        get()._loadLocalTrackFn?.(streamableTrack, startTime);
+      } catch { /* ignore */ }
       saveLocalPlayback({
         trackId: track.id,
         position: startTime,
@@ -352,6 +360,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         pendingSeekTime: startTime,
         duration: ready.duration || track.duration || get().duration,
       });
+      try {
+        get()._loadLocalTrackFn?.(ready, startTime);
+      } catch { /* ignore */ }
       saveLocalPlayback({
         trackId: ready.id,
         position: startTime,
@@ -474,7 +485,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   playNext: (opts) => {
-    const wantCrossfade = !!opts?.crossfade && get().crossfadeEnabled;
+    // Never crossfade when backgrounded — timers/React freeze and playback dies mid-fade
+    const backgrounded = typeof document !== 'undefined' && document.hidden;
+    const wantCrossfade = !backgrounded && !!opts?.crossfade && get().crossfadeEnabled;
     set({ _pendingCrossfade: wantCrossfade });
 
     const { isRemoteActive, activeDeviceId, localDeviceId } = get();
@@ -769,6 +782,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   registerPause: (fn) => set({ _pauseFn: fn }),
 
   registerStop: (fn) => set({ _stopFn: fn }),
+
+  registerLoadLocalTrack: (fn) => set({ _loadLocalTrackFn: fn }),
 
   seekTo: (time) => {
     const t = Math.max(0, time);

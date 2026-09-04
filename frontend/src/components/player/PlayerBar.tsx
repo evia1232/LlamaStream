@@ -46,7 +46,7 @@ export default function PlayerBar() {
     toggleShuffle, cycleRepeat, playNext, playPrevious,
     toggleLike, setShowQueue, setShowLyrics, showLyrics,
     likedPendingTracks,
-    clearPendingSeek, persistPlayback, registerSeek, registerPause, registerStop, seekTo, setShowNowPlaying,
+    clearPendingSeek, persistPlayback, registerSeek, registerPause, registerStop, registerLoadLocalTrack, seekTo, setShowNowPlaying,
     autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback, isBuffering, playbackEngine,
     setIsBuffering, isRemoteActive, activeDeviceName, sendRemoteCommand, prefetchUpcoming, resolveNextTrack,
     isOffline, isReconnecting,
@@ -60,6 +60,7 @@ export default function PlayerBar() {
   const fadeCountRef = useRef(0);
   const outgoingRef = useRef<HTMLAudioElement | null>(null);
   const outgoingBlobRef = useRef<string | null>(null);
+  const lastImperativeTrackIdRef = useRef<string | null>(null);
 
   const isFading = () => fadeCountRef.current > 0;
 
@@ -115,11 +116,74 @@ export default function PlayerBar() {
   useMediaSession();
   useSpotifyPlaybackSync();
 
+  // Imperative loader for lock-screen / background advance (React may not re-render)
+  useEffect(() => {
+    registerLoadLocalTrack((track, startTime) => {
+      const audio = audioRef.current;
+      if (!audio || !isLibraryId(track.id) || !canStreamTrackLocally(track)) return;
+
+      lastImperativeTrackIdRef.current = track.id;
+      loadTokenRef.current += 1;
+      stopOutgoing();
+      fadeCountRef.current = 0;
+      endedHandledRef.current = false;
+      crossfadeTriggeredRef.current = false;
+      usePlayerStore.setState({ _pendingCrossfade: false });
+
+      revokeBlobUrl(activeBlobRef.current);
+      activeBlobRef.current = null;
+
+      const token = localStorage.getItem('token');
+      const networkSrc = streamUrl(track.id, token);
+      const preload = preloadRef.current;
+      const preloaded = preloadTrackIdRef.current === track.id
+        && !!preload?.src
+        && preload.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
+
+      if (preloaded && preload?.src) {
+        if (preload.src.startsWith('blob:')) activeBlobRef.current = preload.src;
+        audio.src = preload.src;
+        preload.removeAttribute('src');
+        preload.load();
+        preloadTrackIdRef.current = null;
+      } else {
+        audio.src = networkSrc;
+      }
+      audio.load();
+      audio.volume = effectivePlaybackVolume(usePlayerStore.getState().volume);
+
+      if (startTime > 0) {
+        const onMeta = () => {
+          if (Number.isFinite(audio.duration)) {
+            audio.currentTime = Math.min(startTime, audio.duration || startTime);
+          }
+        };
+        audio.addEventListener('loadedmetadata', onMeta, { once: true });
+      }
+
+      safeAudioPlay(audio, undefined, { persistent: true });
+    });
+    return () => registerLoadLocalTrack(null);
+  }, [registerLoadLocalTrack, stopOutgoing]);
+
   // Load audio — play immediately; buffer in browser + Cache API in background
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || isSpotifyMode || !currentTrack || !isLibraryId(currentTrack.id) || isRemoteActive) return;
     if (!canPlayLocal) return;
+
+    // Already started by imperative background loader — don't interrupt
+    if (lastImperativeTrackIdRef.current === currentTrack.id) {
+      lastImperativeTrackIdRef.current = null;
+      if (audio.src && !audio.ended) {
+        endedHandledRef.current = false;
+        crossfadeTriggeredRef.current = false;
+        if (audio.paused && usePlayerStore.getState().isPlaying) {
+          safeAudioPlay(audio, undefined, { persistent: true });
+        }
+        return;
+      }
+    }
 
     const loadToken = ++loadTokenRef.current;
     let cancelled = false;
@@ -128,6 +192,7 @@ export default function PlayerBar() {
     usePlayerStore.setState({ _pendingCrossfade: false });
     const canOverlap = _pendingCrossfade
       && crossfadeEnabled
+      && !document.hidden
       && !!audio.src
       && !audio.paused
       && audio.currentTime > 0.4
@@ -453,7 +518,8 @@ export default function PlayerBar() {
   const handleEnded = () => {
     if (isRemoteActive) return;
     setIsPlaying(true);
-    playNext({ crossfade: true });
+    // Background: hard cut only — crossfade freezes JS and kills continuity
+    playNext({ crossfade: !document.hidden });
   };
 
   const handleTimeUpdate = () => {
@@ -465,8 +531,9 @@ export default function PlayerBar() {
 
     const d = audio.duration;
     const { crossfadeEnabled, crossfadeDuration } = usePlayerStore.getState();
+    const allowCrossfade = crossfadeEnabled && !document.hidden;
 
-    if (crossfadeEnabled && Number.isFinite(d) && d > 0) {
+    if (allowCrossfade && Number.isFinite(d) && d > 0) {
       const fadeStart = Math.max(0, d - crossfadeDuration);
       if (time >= fadeStart && d > crossfadeDuration + 0.5 && !crossfadeTriggeredRef.current && !endedHandledRef.current) {
         crossfadeTriggeredRef.current = true;
@@ -478,7 +545,7 @@ export default function PlayerBar() {
       }
     }
 
-    // Normal end detection (for non-crossfade or very short tracks)
+    // Near-end / end detection (also works without crossfade; critical when timers throttle)
     if (Number.isFinite(d) && d > 0 && time >= d - 0.35) {
       if (!endedHandledRef.current) {
         endedHandledRef.current = true;
