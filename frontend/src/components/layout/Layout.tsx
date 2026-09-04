@@ -13,6 +13,7 @@ import { useAudioInterruptResume } from '../../hooks/useAudioInterruptResume';
 import { usePlaybackSync } from '../../hooks/usePlaybackSync';
 import DevicePicker from '../player/DevicePicker';
 import { startPlaybackKeeper } from '../../lib/backgroundPlayback';
+import AppToast from '../ui/AppToast';
 
 export default function Layout({ children }: { children: ReactNode }) {
   const hasTrack = usePlayerStore((s) => !!s.currentTrack);
@@ -42,6 +43,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <LyricsPanel />
       <InstallPrompt />
       <TrackMenuHost />
+      <AppToast />
     </div>
   );
 }
