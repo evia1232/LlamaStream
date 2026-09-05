@@ -878,54 +878,64 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   applyRemoteSync: async (data, _opts) => {
-    const { localDeviceId, isRemoteActive: wasRemote } = get();
+    const { localDeviceId, isRemoteActive: wasRemote, currentTrack: prevTrack } = get();
     const remoteId = data.activeDeviceId ?? null;
 
     // Another device is the player — always treat as remote observer (never auto-claim).
     if (remoteId && remoteId !== localDeviceId) {
+      const enteringRemote = !wasRemote;
+      get()._syncApplying = true;
+
+      // Stop local audio ONLY when first becoming an observer — never on every tick
+      if (enteringRemote) {
+        get()._stopFn?.();
+        void useSpotifyPlayerStore.getState().pause();
+      }
+
       set({
         activeDeviceId: remoteId,
         activeDeviceName: data.activeDeviceName ?? get().activeDeviceName,
         isRemoteActive: true,
       });
 
-      get()._syncApplying = true;
-      get().stopPlaybackImmediate();
-
       let track = data.track ? normalizeTrack(data.track) : null;
-      if (!track && data.trackId) {
+      const incomingId = track?.id || data.trackId || null;
+
+      // Reuse current track on weak networks — don't block progress updates on API
+      if (!track && incomingId && prevTrack?.id === incomingId) {
+        track = prevTrack;
+      }
+      if (!track && data.trackId && data.trackId !== prevTrack?.id) {
         try {
           const { data: res } = await api.get(`/tracks/${data.trackId}`);
           track = normalizeTrack(res.track);
         } catch {
-          get()._syncApplying = false;
-          return;
+          // Keep previous track; still apply position/playing below
+          track = prevTrack?.id === data.trackId ? prevTrack : prevTrack;
         }
       }
 
       const serverPos = data.position ?? 0;
       const playing = !!data.isPlaying;
-      const trackChanged = !!(track && get().currentTrack?.id !== track.id);
-      const duration = track?.duration || get().duration || 0;
+      const resolvedTrack = track || (incomingId && prevTrack?.id === incomingId ? prevTrack : null);
+      const trackChanged = !!(resolvedTrack && prevTrack?.id !== resolvedTrack.id);
+      const duration = resolvedTrack?.duration || get().duration || 0;
 
       const nextTime = applyRemoteProgressUpdate(serverPos, playing, {
-        forceSnap: trackChanged || !wasRemote || !playing,
+        forceSnap: trackChanged || enteringRemote || !playing,
         duration,
       });
 
-      if (track) {
-        set({
-          currentTrack: track,
-          currentTime: nextTime,
-          isPlaying: playing,
-          duration: duration || get().duration,
-        });
-      } else {
-        set({
-          isPlaying: playing,
-          currentTime: nextTime,
-        });
-      }
+      set({
+        ...(resolvedTrack ? { currentTrack: resolvedTrack, duration: duration || get().duration } : {}),
+        currentTime: nextTime,
+        isPlaying: playing,
+        isRemoteActive: true,
+        activeDeviceId: remoteId,
+        activeDeviceName: data.activeDeviceName ?? get().activeDeviceName,
+        isBuffering: false,
+        isPreparingPlayback: false,
+      });
 
       get()._syncApplying = false;
       return;

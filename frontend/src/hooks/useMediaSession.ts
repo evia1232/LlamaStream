@@ -24,6 +24,7 @@ export function useMediaSession() {
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const duration = usePlayerStore((s) => s.duration);
+  const isRemoteActive = usePlayerStore((s) => s.isRemoteActive);
   const likedTrackIds = usePlayerStore((s) => s.likedTrackIds);
   const likedPendingTracks = usePlayerStore((s) => s.likedPendingTracks);
   const native = isNativeShell();
@@ -32,22 +33,45 @@ export function useMediaSession() {
     ? isTrackLiked(currentTrack, likedTrackIds, likedPendingTracks)
     : false;
 
-  // Ask for notifications + battery unrestricted when playback starts (native only)
+  // Battery / notifications only when THIS device is actually playing
   useEffect(() => {
-    if (!native || !isPlaying) return;
+    if (!native || !isPlaying || isRemoteActive) return;
     void ensureBackgroundPlaybackPermissions();
-  }, [native, isPlaying]);
+  }, [native, isPlaying, isRemoteActive]);
 
   useEffect(() => {
     const onPlay = () => {
-      usePlayerStore.getState().setIsPlaying(true);
+      const s = usePlayerStore.getState();
+      if (s.isRemoteActive) {
+        s.sendRemoteCommand('play');
+        return;
+      }
+      s.setIsPlaying(true);
       resumePlayerAudio();
     };
-    const onPause = () => usePlayerStore.getState().setIsPlaying(false);
-    const onPrev = () => usePlayerStore.getState().playPrevious();
-    const onNext = () => usePlayerStore.getState().playNext();
+    const onPause = () => {
+      const s = usePlayerStore.getState();
+      if (s.isRemoteActive) {
+        s.sendRemoteCommand('pause');
+        return;
+      }
+      s.setIsPlaying(false);
+    };
+    const onPrev = () => {
+      const s = usePlayerStore.getState();
+      if (s.isRemoteActive) s.sendRemoteCommand('prev');
+      else s.playPrevious();
+    };
+    const onNext = () => {
+      const s = usePlayerStore.getState();
+      if (s.isRemoteActive) s.sendRemoteCommand('next');
+      else s.playNext();
+    };
     const onSeekTo = (details: { seekTime?: number | null }) => {
-      if (details.seekTime != null) usePlayerStore.getState().seekTo(details.seekTime);
+      if (details.seekTime == null) return;
+      const s = usePlayerStore.getState();
+      if (s.isRemoteActive) s.sendRemoteCommand('seek', { seekTime: details.seekTime });
+      else s.seekTo(details.seekTime);
     };
     const onLike = () => {
       const track = usePlayerStore.getState().currentTrack;
@@ -59,7 +83,9 @@ export function useMediaSession() {
       );
       usePlayerStore.getState().toggleLike(track.id, track);
       const nowLiked = !wasLiked;
-      if (native) void MediaSession.setLiked({ liked: nowLiked });
+      if (native && !usePlayerStore.getState().isRemoteActive) {
+        void MediaSession.setLiked({ liked: nowLiked });
+      }
       useToastStore
         .getState()
         .show(nowLiked ? i18n.t('addedToLiked') : i18n.t('removedFromLiked'));
@@ -67,7 +93,6 @@ export function useMediaSession() {
 
     if (native) {
       void MediaSession.requestNotificationPermission();
-      void ensureBackgroundPlaybackPermissions();
       void MediaSession.setActionHandler({ action: 'play' }, onPlay);
       void MediaSession.setActionHandler({ action: 'pause' }, onPause);
       void MediaSession.setActionHandler({ action: 'previoustrack' }, onPrev);
@@ -111,6 +136,8 @@ export function useMediaSession() {
 
   useEffect(() => {
     if (!currentTrack) return;
+    // Observer device: don't drive the system media notification as if we own audio
+    if (isRemoteActive) return;
 
     const artist = getArtistName(currentTrack.artist);
     const artworkUrl = absoluteMediaUrl(getTrackImageUrl(currentTrack));
@@ -143,6 +170,7 @@ export function useMediaSession() {
     });
   }, [
     native,
+    isRemoteActive,
     currentTrack?.id,
     currentTrack?.title,
     currentTrack?.thumbnailUrl,
@@ -151,6 +179,11 @@ export function useMediaSession() {
   ]);
 
   useEffect(() => {
+    // Clear native Now Playing while only observing another device
+    if (native && isRemoteActive) {
+      void MediaSession.setPlaybackState({ playbackState: 'none' });
+      return;
+    }
     const state = isPlaying ? 'playing' : currentTrack ? 'paused' : 'none';
     if (native) {
       void MediaSession.setPlaybackState({ playbackState: state });
@@ -158,12 +191,14 @@ export function useMediaSession() {
     }
     if (!('mediaSession' in navigator)) return;
     navigator.mediaSession.playbackState = state;
-  }, [native, isPlaying, currentTrack?.id]);
+  }, [native, isPlaying, isRemoteActive, currentTrack?.id]);
 
   useEffect(() => {
     if (!duration || duration <= 0) return;
+    if (isRemoteActive) return; // don't spam notification progress while observing
 
     const pushPosition = () => {
+      if (usePlayerStore.getState().isRemoteActive) return;
       const { currentTime: t, duration: d } = usePlayerStore.getState();
       if (!d || d <= 0) return;
       const payload = {
@@ -190,5 +225,5 @@ export function useMediaSession() {
     pushPosition();
     const id = window.setInterval(pushPosition, native ? 1000 : 1500);
     return () => window.clearInterval(id);
-  }, [native, duration, currentTrack?.id, isPlaying]);
+  }, [native, duration, currentTrack?.id, isPlaying, isRemoteActive]);
 }

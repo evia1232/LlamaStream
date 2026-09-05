@@ -360,7 +360,14 @@ export default function PlayerBar() {
   // Play/pause — keep audio src intact on pause so resume continues from same position
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || isSpotifyMode || !currentTrack || !canPlayLocal || isRemoteActive) return;
+    if (!audio || isSpotifyMode || !currentTrack || !canPlayLocal) return;
+
+    // Observing another device — never drive local <audio>
+    if (isRemoteActive) {
+      audio.pause();
+      outgoingRef.current?.pause();
+      return;
+    }
 
     if (isPlaying) {
       const startPlayback = () => {

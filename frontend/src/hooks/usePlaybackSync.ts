@@ -112,7 +112,7 @@ export function usePlaybackSync() {
       if (s.isPlaying && !s.isRemoteActive && s.currentTrack) {
         s.broadcastPlaybackSync();
       }
-    }, 1500);
+    }, 2000);
     return () => clearInterval(interval);
   }, []);
 }

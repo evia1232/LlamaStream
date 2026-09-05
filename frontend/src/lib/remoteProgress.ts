@@ -1,6 +1,7 @@
 /**
- * Smooth remote timeline: between WebSocket position updates (~1–3s),
+ * Smooth remote timeline: between WebSocket position updates,
  * advance locally at 1x so the scrubber looks live instead of jumping.
+ * Tolerant of weak networks / delayed packets.
  */
 
 type Anchor = {
@@ -52,14 +53,19 @@ export function applyRemoteProgressUpdate(
   const predicted = getRemoteProgressNow(duration);
   const drift = clampedServer - predicted;
 
-  // Hard seek / big desync — snap
-  if (Math.abs(drift) > 2.75) {
+  // Only hard-snap on clear seeks (weak networks often lag 2–4s)
+  if (Math.abs(drift) > 5) {
     setRemoteProgressAnchor(clampedServer, true);
     return clampedServer;
   }
 
-  // Soft pull toward server so we stay accurate without a visible jump
-  const blended = predicted + drift * 0.28;
+  // Tiny drift — keep predicting, barely nudge
+  if (Math.abs(drift) < 0.35) {
+    return predicted;
+  }
+
+  // Soft pull toward server
+  const blended = predicted + drift * 0.2;
   setRemoteProgressAnchor(blended, true);
   return blended;
 }
