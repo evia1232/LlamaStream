@@ -8,8 +8,11 @@ import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.support.v4.media.session.PlaybackStateCompat;
 import android.util.Base64;
 import android.util.Log;
@@ -257,6 +260,65 @@ public class MediaSessionPlugin extends Plugin {
     public void requestNotificationPermission(PluginCall call) {
         ensureNotificationPermission();
         call.resolve();
+    }
+
+    private boolean isIgnoringBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+        PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+        if (pm == null) return false;
+        return pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
+    }
+
+    @PluginMethod
+    public void getBatteryOptimizationStatus(PluginCall call) {
+        JSObject result = new JSObject();
+        boolean ignoring = isIgnoringBatteryOptimizations();
+        result.put("ignoring", ignoring);
+        result.put("needsRequest", !ignoring);
+        call.resolve(result);
+    }
+
+    /**
+     * Ask the user to exclude the app from battery optimizations so background
+     * playback is not killed. Shows the system dialog when possible.
+     */
+    @PluginMethod
+    public void requestIgnoreBatteryOptimizations(PluginCall call) {
+        ensureNotificationPermission();
+        JSObject result = new JSObject();
+        boolean ignoring = isIgnoringBatteryOptimizations();
+        result.put("ignoring", ignoring);
+
+        if (ignoring) {
+            result.put("prompted", false);
+            call.resolve(result);
+            return;
+        }
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || getActivity() == null) {
+            result.put("prompted", false);
+            call.resolve(result);
+            return;
+        }
+
+        try {
+            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            intent.setData(Uri.parse("package:" + getContext().getPackageName()));
+            getActivity().startActivity(intent);
+            result.put("prompted", true);
+        } catch (Exception e) {
+            Log.w(TAG, "Direct battery opt-out failed, opening settings list", e);
+            try {
+                Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                getActivity().startActivity(fallback);
+                result.put("prompted", true);
+                result.put("fallback", true);
+            } catch (Exception e2) {
+                Log.w(TAG, "Battery optimization settings unavailable", e2);
+                result.put("prompted", false);
+            }
+        }
+        call.resolve(result);
     }
 
     public void actionCallback(String action) {

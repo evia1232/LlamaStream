@@ -7,6 +7,7 @@ import {
   MediaSession,
   absoluteMediaUrl,
   isNativeShell,
+  ensureBackgroundPlaybackPermissions,
 } from '../lib/nativeMediaSession';
 import { useToastStore } from '../lib/toastStore';
 import i18n from '../i18n';
@@ -30,6 +31,12 @@ export function useMediaSession() {
   const liked = currentTrack
     ? isTrackLiked(currentTrack, likedTrackIds, likedPendingTracks)
     : false;
+
+  // Ask for notifications + battery unrestricted when playback starts (native only)
+  useEffect(() => {
+    if (!native || !isPlaying) return;
+    void ensureBackgroundPlaybackPermissions();
+  }, [native, isPlaying]);
 
   useEffect(() => {
     const onPlay = () => {
@@ -60,6 +67,7 @@ export function useMediaSession() {
 
     if (native) {
       void MediaSession.requestNotificationPermission();
+      void ensureBackgroundPlaybackPermissions();
       void MediaSession.setActionHandler({ action: 'play' }, onPlay);
       void MediaSession.setActionHandler({ action: 'pause' }, onPause);
       void MediaSession.setActionHandler({ action: 'previoustrack' }, onPrev);
@@ -180,7 +188,6 @@ export function useMediaSession() {
     };
 
     pushPosition();
-    // Native notification progress needs frequent updates while backgrounded
     const id = window.setInterval(pushPosition, native ? 1000 : 1500);
     return () => window.clearInterval(id);
   }, [native, duration, currentTrack?.id, isPlaying]);
