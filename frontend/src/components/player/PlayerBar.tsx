@@ -21,6 +21,7 @@ import { getCachedStreamBlobUrl, revokeBlobUrl } from '../../lib/audioStreamCach
 import { effectivePlaybackVolume, isMobileViewport } from '../../lib/volume';
 import { safeAudioPlay, resumeAudioIfNeeded } from '../../lib/audioPlay';
 import { useNetworkPlaybackRecovery } from '../../hooks/useNetworkPlaybackRecovery';
+import { getRemoteProgressNow } from '../../lib/remoteProgress';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -495,26 +496,20 @@ export default function PlayerBar() {
     return () => cancelAnimationFrame(raf);
   }, [isPlaying, isSpotifyMode, isRemoteActive, canPlayLocal, currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, setCurrentTime, setDuration]);
 
-  // Smooth progress while remote device plays (WS sync ~3s; interpolate between updates)
+  // Smooth progress while remote device plays — wall-clock guess between WS updates
   useEffect(() => {
     if (!isRemoteActive || !isPlaying) return;
     let raf = 0;
-    let lastTs = performance.now();
 
-    const tick = (now: number) => {
-      const dt = (now - lastTs) / 1000;
-      lastTs = now;
-      if (dt <= 0 || dt > 1) {
-        // Tab was backgrounded / huge gap — wait for next sync instead of jumping
-        raf = requestAnimationFrame(tick);
-        return;
-      }
+    const tick = () => {
       const s = usePlayerStore.getState();
       if (!s.isRemoteActive || !s.isPlaying) return;
       const dur = s.duration || s.currentTrack?.duration || 0;
-      let next = s.currentTime + dt;
-      if (dur > 0) next = Math.min(next, dur);
-      if (Math.abs(next - s.currentTime) >= 0.05) setCurrentTime(next);
+      const next = getRemoteProgressNow(dur);
+      // Update every frame so the scrubber/time don't stutter in ~3s steps
+      if (Math.abs(next - s.currentTime) >= 0.016) {
+        setCurrentTime(next);
+      }
       raf = requestAnimationFrame(tick);
     };
 

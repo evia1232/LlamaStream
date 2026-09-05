@@ -24,6 +24,10 @@ import { useSpotifyPlayerStore } from './spotifyPlayerStore';
 import { effectivePlaybackVolume } from '../lib/volume';
 import { getDeviceId, getDeviceName } from '../lib/deviceId';
 import { sendPlaybackSync } from '../lib/playbackSyncClient';
+import {
+  applyRemoteProgressUpdate,
+  clearRemoteProgressAnchor,
+} from '../lib/remoteProgress';
 
 /** In-memory lyrics by track — survives leave/return without full reload */
 const lyricsSessionCache = new Map<string, Lyrics>();
@@ -874,7 +878,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   applyRemoteSync: async (data, _opts) => {
-    const { localDeviceId, currentTime: localTime, isRemoteActive: wasRemote } = get();
+    const { localDeviceId, isRemoteActive: wasRemote } = get();
     const remoteId = data.activeDeviceId ?? null;
 
     // Another device is the player — always treat as remote observer (never auto-claim).
@@ -901,13 +905,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
       const serverPos = data.position ?? 0;
       const playing = !!data.isPlaying;
-      // Smart progress: only snap if seek / track change / large drift; else let RAF keep counting
       const trackChanged = !!(track && get().currentTrack?.id !== track.id);
-      const drift = Math.abs(serverPos - localTime);
-      const shouldSnap = trackChanged || !wasRemote || drift > 1.25 || !playing;
-
-      const nextTime = shouldSnap ? serverPos : localTime;
       const duration = track?.duration || get().duration || 0;
+
+      const nextTime = applyRemoteProgressUpdate(serverPos, playing, {
+        forceSnap: trackChanged || !wasRemote || !playing,
+        duration,
+      });
 
       if (track) {
         set({
@@ -919,7 +923,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       } else {
         set({
           isPlaying: playing,
-          ...(shouldSnap ? { currentTime: serverPos } : {}),
+          currentTime: nextTime,
         });
       }
 
@@ -930,6 +934,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // Server says this device is active (after explicit claim) or no active device.
     // Never auto-start local audio just because we opened the app.
     if (remoteId === localDeviceId) {
+      clearRemoteProgressAnchor();
       set({
         activeDeviceId: localDeviceId,
         activeDeviceName: get().localDeviceName,
@@ -989,6 +994,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   claimPlaybackHere: async () => {
     const { currentTrack, currentTime, localDeviceId, localDeviceName } = get();
     if (!currentTrack) return;
+    clearRemoteProgressAnchor();
     set({
       isRemoteActive: false,
       activeDeviceId: localDeviceId,
