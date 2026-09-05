@@ -25,6 +25,9 @@ import { effectivePlaybackVolume } from '../lib/volume';
 import { getDeviceId, getDeviceName } from '../lib/deviceId';
 import { sendPlaybackSync } from '../lib/playbackSyncClient';
 
+/** In-memory lyrics by track — survives leave/return without full reload */
+const lyricsSessionCache = new Map<string, Lyrics>();
+
 interface SyncDevice {
   deviceId: string;
   deviceName: string;
@@ -225,7 +228,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off',
   })),
   setShowQueue: (show) => set({ showQueue: show }),
-  setShowLyrics: (show) => set({ showLyrics: show }),
+  setShowLyrics: (show) => {
+    set({ showLyrics: show });
+    if (show) {
+      const trackId = get().currentTrack?.id;
+      if (trackId && !get().lyrics) void get().fetchLyrics(trackId);
+    }
+  },
   setShowNowPlaying: (show) => set({ showNowPlaying: show }),
   setLyrics: (lyrics) => set({ lyrics }),
   setQueue: (queue) => set({ queue }),
@@ -284,10 +293,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       isBuffering: false,
       currentTime: startTime,
       pendingSeekTime: startTime,
-      lyrics: null,
+      // Keep cached lyrics for this track; clear only when switching songs
+      lyrics: lyricsSessionCache.get(track.id) ?? null,
       playbackEngine: useSpotify ? 'spotify' : 'local',
     });
-
+    void get().fetchLyrics(track.id);
     // Fast path: stream from cache or pipe YouTube while downloading in background
     if (canPlayLocal && !useSpotify) {
       if (stale()) return;
@@ -332,6 +342,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           currentTime: startTime,
           duration: track.duration || 0,
         });
+        void get().fetchLyrics(track.id);
         get().broadcastPlaybackSync();
         return;
       } catch (err) {
@@ -767,11 +778,26 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   fetchLyrics: async (trackId) => {
+    if (!trackId) return;
+    // Serve from session cache immediately
+    const cached = lyricsSessionCache.get(trackId);
+    if (cached) {
+      if (get().currentTrack?.id === trackId) set({ lyrics: cached });
+    }
     try {
       const { data } = await api.get(`/tracks/${trackId}/lyrics`);
-      set({ lyrics: data.lyrics });
+      // Ignore stale responses after skipping tracks
+      if (get().currentTrack?.id !== trackId) return;
+      if (data.lyrics) {
+        lyricsSessionCache.set(trackId, data.lyrics);
+        set({ lyrics: data.lyrics });
+      } else if (!cached) {
+        set({ lyrics: null });
+      }
     } catch {
-      set({ lyrics: null });
+      if (get().currentTrack?.id !== trackId) return;
+      // Keep previous/cached lyrics on transient errors; only clear if we never had any
+      if (!cached && !get().lyrics) set({ lyrics: null });
     }
   },
 
@@ -1063,12 +1089,28 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     if (!track) return;
 
+    const normalized = normalizeTrack(track);
+    const cachedLyrics = lyricsSessionCache.get(normalized.id) ?? null;
+    // Resume if we were playing and the user is actively returning to a warm session.
+    // For cold start we still restore the track but leave play to user gesture / media session.
+    const shouldResume = isPlaying && typeof document !== 'undefined' && document.visibilityState === 'visible';
+
     set({
-      currentTrack: normalizeTrack(track),
+      currentTrack: normalized,
       currentTime: position,
       pendingSeekTime: position,
-      isPlaying: false,
+      isPlaying: shouldResume,
+      lyrics: cachedLyrics,
+      playbackEngine: 'local',
     });
+    void get().fetchLyrics(normalized.id);
+    if (shouldResume) {
+      window.setTimeout(() => {
+        try {
+          get()._loadLocalTrackFn?.(normalized, position);
+        } catch { /* ignore */ }
+      }, 50);
+    }
   },
 }));
 

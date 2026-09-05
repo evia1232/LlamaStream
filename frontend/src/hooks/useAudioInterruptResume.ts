@@ -19,8 +19,24 @@ export function useAudioInterruptResume() {
     const tryResume = () => {
       const audio = getAudio();
       if (!audio) return;
-      const { isPlaying: wantPlay, isPreparingPlayback: preparing } = usePlayerStore.getState();
+      const { isPlaying: wantPlay, isPreparingPlayback: preparing, currentTrack, currentTime } = usePlayerStore.getState();
+      if (!wantPlay || preparing) return;
+      if (!audio.src || audio.error) {
+        if (currentTrack) {
+          void import('../lib/appResume').then(({ forceResumeLocalPlayback }) => {
+            void forceResumeLocalPlayback();
+          });
+        }
+        return;
+      }
       resumeAudioIfNeeded(audio, wantPlay, preparing);
+      if (audio.paused && wantPlay) {
+        // Extra kick — WebView often leaves paused=true after background
+        audio.play().catch(() => {
+          resumeAudioIfNeeded(audio, true, false);
+        });
+      }
+      void currentTime;
     };
 
     document.addEventListener('visibilitychange', tryResume);

@@ -9,8 +9,14 @@ export default function LyricsPanel() {
   const { t } = useTranslation();
   const activeLineRef = useRef<HTMLDivElement>(null);
   const {
-    showLyrics, setShowLyrics, lyrics, currentTrack, currentTime,
+    showLyrics, setShowLyrics, lyrics, currentTrack, currentTime, fetchLyrics,
   } = usePlayerStore();
+
+  // Always try to load lyrics when panel opens / track changes
+  useEffect(() => {
+    if (!showLyrics || !currentTrack?.id) return;
+    void fetchLyrics(currentTrack.id);
+  }, [showLyrics, currentTrack?.id, fetchLyrics]);
 
   useEffect(() => {
     if (activeLineRef.current) {

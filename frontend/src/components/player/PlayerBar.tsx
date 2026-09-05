@@ -451,8 +451,12 @@ export default function PlayerBar() {
 
   useEffect(() => {
     const onVisibility = () => {
+      if (document.visibilityState === 'hidden' || isRemoteActive) return;
+      void import('../../lib/appResume').then(({ forceResumeLocalPlayback }) => {
+        void forceResumeLocalPlayback();
+      });
       const audio = audioRef.current;
-      if (!audio || isRemoteActive) return;
+      if (!audio) return;
       const { isPlaying: wantPlay, isPreparingPlayback: preparing } = usePlayerStore.getState();
       resumeAudioIfNeeded(audio, wantPlay, preparing);
     };

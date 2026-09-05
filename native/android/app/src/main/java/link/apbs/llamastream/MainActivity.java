@@ -21,26 +21,38 @@ public class MainActivity extends BridgeActivity {
     settings.setJavaScriptEnabled(true);
   }
 
+  private void keepWebViewAlive() {
+    WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+    if (webView == null) return;
+    webView.onResume();
+    webView.resumeTimers();
+  }
+
   @Override
   public void onPause() {
     super.onPause();
-    // Capacitor pauses WebView timers on pause — resume so audio + queue keep working
-    WebView webView = getBridge() != null ? getBridge().getWebView() : null;
-    if (webView != null) {
-      webView.onResume();
-      webView.resumeTimers();
-    }
+    // Capacitor pauses WebView timers/media — undo so audio keeps running
+    keepWebViewAlive();
   }
 
   @Override
   public void onStop() {
-    // Keep WebView alive while backgrounded / screen off
+    keepWebViewAlive();
+    super.onStop();
+  }
+
+  @Override
+  public void onResume() {
+    super.onResume();
+    keepWebViewAlive();
+    // Nudge JS to resume <audio> after WebView media pause
     WebView webView = getBridge() != null ? getBridge().getWebView() : null;
     if (webView != null) {
-      webView.onResume();
-      webView.resumeTimers();
+      webView.postDelayed(() -> webView.evaluateJavascript(
+          "(function(){try{window.dispatchEvent(new Event('focus'));document.dispatchEvent(new Event('visibilitychange'));}catch(e){}})();",
+          null
+      ), 80);
     }
-    super.onStop();
   }
 
   @Override

@@ -189,21 +189,21 @@ async function resolveFromLrcLib(target: { title: string; artist: string; durati
 
   for (const params of searchQueries) {
     const results = await searchLyrics(params);
-    const best = pickBest(results, scoredTarget, 35);
+    const best = pickBest(results, scoredTarget, 30);
     if (best) return best;
   }
 
   // Relaxed fallback — ignore duration mismatch (common for popular radio edits / live versions)
-  for (const params of searchQueries.slice(0, 6)) {
+  for (const params of searchQueries.slice(0, 8)) {
     const results = await searchLyrics(params);
-    const best = pickBest(results, scoredTarget, 28, { ignoreDuration: true });
+    const best = pickBest(results, scoredTarget, 22, { ignoreDuration: true });
     if (best) return best;
   }
 
   // Last resort: title-only with very loose match
   for (const title of titles) {
     const results = await searchLyrics({ q: title });
-    const best = pickBest(results, { ...scoredTarget, title }, 22, { ignoreDuration: true });
+    const best = pickBest(results, { ...scoredTarget, title }, 18, { ignoreDuration: true });
     if (best) return best;
   }
 

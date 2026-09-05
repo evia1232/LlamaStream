@@ -13,6 +13,7 @@ import { useAudioInterruptResume } from '../../hooks/useAudioInterruptResume';
 import { usePlaybackSync } from '../../hooks/usePlaybackSync';
 import DevicePicker from '../player/DevicePicker';
 import { startPlaybackKeeper } from '../../lib/backgroundPlayback';
+import { startAppResumeListeners } from '../../lib/appResume';
 import AppToast from '../ui/AppToast';
 import OfflineBadge from '../ui/OfflineBadge';
 
@@ -21,7 +22,14 @@ export default function Layout({ children }: { children: ReactNode }) {
   useAudioInterruptResume();
   usePlaybackSync();
 
-  useEffect(() => startPlaybackKeeper(), []);
+  useEffect(() => {
+    const stopKeeper = startPlaybackKeeper();
+    const stopResume = startAppResumeListeners();
+    return () => {
+      stopKeeper();
+      stopResume();
+    };
+  }, []);
 
   return (
     <div className="h-screen flex flex-col bg-spotify-black safe-area">
