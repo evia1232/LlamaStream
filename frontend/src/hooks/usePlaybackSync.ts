@@ -77,8 +77,17 @@ export function usePlaybackSync() {
       const ws = new WebSocket(getWsUrl(token));
       wsRef.current = ws;
 
+      const attachSender = () => {
+        setPlaybackSyncSender((payload) => {
+          if (ws.readyState !== WebSocket.OPEN) return false;
+          ws.send(JSON.stringify({ ...payload, deviceId, deviceName }));
+          return true;
+        });
+      };
+
       ws.onopen = () => {
         ws.send(JSON.stringify({ type: 'register', deviceId, deviceName }));
+        attachSender();
       };
 
       ws.onmessage = (ev) => handleMessage(ev.data as string);
@@ -90,11 +99,8 @@ export function usePlaybackSync() {
 
       ws.onerror = () => ws.close();
 
-      setPlaybackSyncSender((payload) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ ...payload, deviceId, deviceName }));
-        }
-      });
+      // Allow queuing commands before onopen; flush happens in attachSender
+      attachSender();
     };
 
     connect();

@@ -27,6 +27,7 @@ import { sendPlaybackSync } from '../lib/playbackSyncClient';
 import {
   applyRemoteProgressUpdate,
   clearRemoteProgressAnchor,
+  setRemoteProgressAnchor,
 } from '../lib/remoteProgress';
 
 /** In-memory lyrics by track — survives leave/return without full reload */
@@ -508,7 +509,29 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const { isRemoteActive, activeDeviceId, localDeviceId } = get();
     if (isRemoteActive && activeDeviceId && activeDeviceId !== localDeviceId) {
       set({ _pendingCrossfade: false });
+      const { currentTrack, repeat } = get();
+      if (repeat === 'one' && currentTrack) {
+        get().seekTo(0);
+        set({ isPlaying: true, isBuffering: false });
+        return;
+      }
       get().sendRemoteCommand('next');
+      // Optimistic UI so skip feels instant on weak mobile networks
+      const resolved = get().resolveNextTrack();
+      if (resolved) {
+        if (resolved.contextIndex !== undefined) {
+          set({ contextIndex: resolved.contextIndex });
+        }
+        setRemoteProgressAnchor(0, true);
+        set({
+          currentTrack: resolved.track,
+          currentTime: 0,
+          duration: resolved.track.duration || 0,
+          isPlaying: true,
+          isBuffering: false,
+          isPreparingPlayback: false,
+        });
+      }
       return;
     }
 
@@ -642,7 +665,32 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   playPrevious: () => {
     const { isRemoteActive, activeDeviceId, localDeviceId } = get();
     if (isRemoteActive && activeDeviceId && activeDeviceId !== localDeviceId) {
+      const { currentTime, contextTracks, contextIndex } = get();
+      set({ _pendingCrossfade: false });
+      if (currentTime > 3) {
+        get().seekTo(0);
+        return;
+      }
       get().sendRemoteCommand('prev');
+      if (contextTracks.length > 0 && contextIndex > 0) {
+        for (let i = contextIndex - 1; i >= 0; i--) {
+          const t = contextTracks[i];
+          if (t) {
+            setRemoteProgressAnchor(0, true);
+            set({
+              contextIndex: i,
+              currentTrack: t,
+              currentTime: 0,
+              duration: t.duration || 0,
+              isPlaying: true,
+              isBuffering: false,
+              isPreparingPlayback: false,
+            });
+            return;
+          }
+        }
+      }
+      get().seekTo(0);
       return;
     }
 
@@ -953,9 +1001,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
   },
 
+  // Host: apply remote commands without going through setIsPlaying's "claim device" path.
   handleSyncCommand: (msg) => {
     const { localDeviceId, activeDeviceId } = get();
     const isActive = !activeDeviceId || activeDeviceId === localDeviceId;
+    const targetedHere = !!msg.targetDeviceId && msg.targetDeviceId === localDeviceId;
 
     if (msg.action === 'transfer') {
       if (msg.fromDeviceId && msg.fromDeviceId !== localDeviceId) {
@@ -965,18 +1015,33 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
 
-    if (msg.targetDeviceId && msg.targetDeviceId !== localDeviceId) return;
-    if (!isActive) return;
+    // Explicit target to someone else → ignore. Explicit target to us → always handle.
+    if (msg.targetDeviceId && !targetedHere) return;
+    if (!targetedHere && !isActive) return;
 
     switch (msg.action) {
       case 'pause':
-        set({ isPlaying: false });
         if (get().playbackEngine === 'spotify') void useSpotifyPlayerStore.getState().pause();
         else get()._pauseFn?.();
+        set({ isPlaying: false });
+        void get().broadcastPlaybackSync();
         break;
       case 'play':
-        set({ isPlaying: true });
-        if (get().playbackEngine === 'spotify') void useSpotifyPlayerStore.getState().resume(get().currentTime * 1000);
+        set({ isPlaying: true, isRemoteActive: false, activeDeviceId: localDeviceId });
+        if (get().playbackEngine === 'spotify') {
+          void useSpotifyPlayerStore.getState().resume(get().currentTime * 1000);
+        } else {
+          try {
+            const audio = document.querySelector('footer.player-bar audio') as HTMLAudioElement | null;
+            if (audio) {
+              if (!audio.src && get().currentTrack) {
+                get()._loadLocalTrackFn?.(get().currentTrack!, get().currentTime);
+              }
+              void audio.play().catch(() => undefined);
+            }
+          } catch { /* ignore */ }
+        }
+        void get().broadcastPlaybackSync();
         break;
       case 'seek': {
         if (msg.seekTime == null) break;
@@ -984,6 +1049,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         set({ currentTime: t });
         if (get().playbackEngine === 'spotify') void useSpotifyPlayerStore.getState().seek(t * 1000);
         else get()._seekFn?.(t);
+        void get().broadcastPlaybackSync();
         break;
       }
       case 'next':
@@ -998,7 +1064,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   sendRemoteCommand: (action, extra) => {
-    sendPlaybackSync({ type: 'command', action, targetDeviceId: get().activeDeviceId, ...extra });
+    const target = get().activeDeviceId || undefined;
+    sendPlaybackSync({
+      type: 'command',
+      action,
+      ...(target ? { targetDeviceId: target } : {}),
+      ...extra,
+    });
   },
 
   claimPlaybackHere: async () => {

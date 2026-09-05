@@ -1,15 +1,29 @@
 package link.apbs.llamastream;
 
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+  private boolean batteryPromptShown = false;
+
   @Override
   public void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
     configureWebView();
+    // Ask early — JS bridge may load later; music apps need unrestricted battery
+    WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+    if (webView != null) {
+      webView.postDelayed(this::requestBatteryUnrestricted, 1500);
+    } else {
+      getWindow().getDecorView().postDelayed(this::requestBatteryUnrestricted, 1500);
+    }
   }
 
   private void configureWebView() {
@@ -19,6 +33,29 @@ public class MainActivity extends BridgeActivity {
     settings.setMediaPlaybackRequiresUserGesture(false);
     settings.setDomStorageEnabled(true);
     settings.setJavaScriptEnabled(true);
+  }
+
+  private void requestBatteryUnrestricted() {
+    if (batteryPromptShown) return;
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+    PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+    if (pm == null) return;
+    String pkg = getPackageName();
+    if (pm.isIgnoringBatteryOptimizations(pkg)) return;
+    batteryPromptShown = true;
+    try {
+      Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+      intent.setData(Uri.parse("package:" + pkg));
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      startActivity(intent);
+    } catch (Exception e) {
+      try {
+        Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+        fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(fallback);
+      } catch (Exception ignored) {
+      }
+    }
   }
 
   private void keepWebViewAlive() {
@@ -31,7 +68,6 @@ public class MainActivity extends BridgeActivity {
   @Override
   public void onPause() {
     super.onPause();
-    // Capacitor pauses WebView timers/media — undo so audio keeps running
     keepWebViewAlive();
   }
 
@@ -45,7 +81,7 @@ public class MainActivity extends BridgeActivity {
   public void onResume() {
     super.onResume();
     keepWebViewAlive();
-    // Nudge JS to resume <audio> after WebView media pause
+    requestBatteryUnrestricted();
     WebView webView = getBridge() != null ? getBridge().getWebView() : null;
     if (webView != null) {
       webView.postDelayed(() -> webView.evaluateJavascript(
@@ -57,7 +93,6 @@ public class MainActivity extends BridgeActivity {
 
   @Override
   public void onBackPressed() {
-    // Don't destroy the activity — send to background so playback continues
     moveTaskToBack(true);
   }
 }

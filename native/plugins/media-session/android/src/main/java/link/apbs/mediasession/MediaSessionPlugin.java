@@ -284,7 +284,8 @@ public class MediaSessionPlugin extends Plugin {
      */
     @PluginMethod
     public void requestIgnoreBatteryOptimizations(PluginCall call) {
-        ensureNotificationPermission();
+        // Do not request notification here — caller asks separately so the user
+        // sees two distinct system prompts (notifications, then battery).
         JSObject result = new JSObject();
         boolean ignoring = isIgnoringBatteryOptimizations();
         result.put("ignoring", ignoring);
@@ -304,12 +305,14 @@ public class MediaSessionPlugin extends Plugin {
         try {
             Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
             intent.setData(Uri.parse("package:" + getContext().getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             getActivity().startActivity(intent);
             result.put("prompted", true);
         } catch (Exception e) {
             Log.w(TAG, "Direct battery opt-out failed, opening settings list", e);
             try {
                 Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 getActivity().startActivity(fallback);
                 result.put("prompted", true);
                 result.put("fallback", true);

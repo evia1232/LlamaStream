@@ -49,7 +49,7 @@ export default function PlayerBar() {
     likedPendingTracks,
     clearPendingSeek, persistPlayback, registerSeek, registerPause, registerStop, registerLoadLocalTrack, seekTo, setShowNowPlaying,
     autoplay, toggleAutoplay, _discoverLoading, isPreparingPlayback, isBuffering, playbackEngine,
-    setIsBuffering, isRemoteActive, activeDeviceName, sendRemoteCommand, prefetchUpcoming, resolveNextTrack,
+    setIsBuffering, isRemoteActive, activeDeviceName, prefetchUpcoming, resolveNextTrack,
     isOffline, isReconnecting,
   } = usePlayerStore();
 
@@ -623,7 +623,7 @@ export default function PlayerBar() {
       <button type="button" onClick={toggleShuffle} className={clsx('icon-btn', shuffle && 'active text-spotify-green')}>
         <Shuffle className="w-4 h-4" />
       </button>
-      <button type="button" onClick={() => (isRemoteActive ? sendRemoteCommand('prev') : playPrevious())} className="icon-btn" aria-label={t('previous')}>
+      <button type="button" onClick={() => playPrevious()} className="icon-btn" aria-label={t('previous')}>
         <SkipBack className="w-5 h-5 fill-current" />
       </button>
       <button
@@ -641,7 +641,7 @@ export default function PlayerBar() {
           <PlayIcon className="w-4 h-4 text-black fill-black" />
         )}
       </button>
-      <button type="button" onClick={() => (isRemoteActive ? sendRemoteCommand('next') : playNext())} className="icon-btn" aria-label={t('next')}>
+      <button type="button" onClick={() => playNext()} className="icon-btn" aria-label={t('next')}>
         <SkipForward className="w-5 h-5 fill-current" />
       </button>
       <button type="button" onClick={cycleRepeat} className={clsx('icon-btn', repeat !== 'off' && 'active text-spotify-green')}>

@@ -30,30 +30,43 @@ export interface MediaSessionPlugin {
 
 const MediaSession = registerPlugin<MediaSessionPlugin>('MediaSession');
 
-const BATTERY_PROMPT_KEY = 'llamastream_battery_opt_prompted';
-
-/** Ask once (per install) to disable battery optimizations for background audio. */
-export async function ensureBackgroundPlaybackPermissions(): Promise<void> {
-  if (!isNativeShell()) return;
-  try {
-    await MediaSession.requestNotificationPermission();
-    const status = await MediaSession.getBatteryOptimizationStatus();
-    if (status.ignoring) return;
-    // Always re-prompt if still restricted — OEMs kill background audio otherwise
-    const last = Number(localStorage.getItem(BATTERY_PROMPT_KEY) || '0');
-    if (Date.now() - last < 12 * 60 * 60 * 1000) return; // at most every 12h
-    localStorage.setItem(BATTERY_PROMPT_KEY, String(Date.now()));
-    await MediaSession.requestIgnoreBatteryOptimizations();
-  } catch {
-    /* ignore */
-  }
-}
+const BATTERY_PROMPT_KEY = 'llamastream_battery_opt_prompted_v3';
 
 export function isNativeShell(): boolean {
   try {
     return Capacitor.isNativePlatform();
   } catch {
     return false;
+  }
+}
+
+/** Request notifications + unrestricted battery (native Android). */
+export async function ensureBackgroundPlaybackPermissions(force = false): Promise<void> {
+  if (!isNativeShell()) return;
+  try {
+    await MediaSession.requestNotificationPermission();
+  } catch {
+    /* notifications may already be decided */
+  }
+  try {
+    const status = await MediaSession.getBatteryOptimizationStatus();
+    if (status.ignoring) {
+      localStorage.setItem(BATTERY_PROMPT_KEY, 'granted');
+      return;
+    }
+    const prev = localStorage.getItem(BATTERY_PROMPT_KEY);
+    if (!force && prev === 'prompted') {
+      const at = Number(localStorage.getItem(`${BATTERY_PROMPT_KEY}_at`) || '0');
+      // Re-ask at most every 2 hours if still restricted
+      if (Date.now() - at < 2 * 60 * 60 * 1000) return;
+    }
+    localStorage.setItem(BATTERY_PROMPT_KEY, 'prompted');
+    localStorage.setItem(`${BATTERY_PROMPT_KEY}_at`, String(Date.now()));
+    // Let the notification dialog settle before opening battery prompt
+    await new Promise((r) => setTimeout(r, 600));
+    await MediaSession.requestIgnoreBatteryOptimizations();
+  } catch {
+    /* ignore */
   }
 }
 
