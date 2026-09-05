@@ -1,6 +1,7 @@
 import { streamUrl } from './apiUrl';
+import { rememberCachedTrack, touchCachedTrack, AUDIO_CACHE_NAME } from './offlineStore';
 
-export const AUDIO_STREAM_CACHE = 'audio-stream-cache';
+export const AUDIO_STREAM_CACHE = AUDIO_CACHE_NAME;
 
 function streamPath(trackId: string): string {
   return `/api/tracks/${trackId}/stream`;
@@ -22,7 +23,11 @@ export async function getCachedStreamBlobUrl(trackId: string): Promise<string | 
       const hit = await cache.match(url, { ignoreSearch: true });
       if (!hit?.ok) continue;
       const blob = await hit.blob();
-      if (blob.size > 0) return URL.createObjectURL(blob);
+      if (blob.size > 0) {
+        void touchCachedTrack(trackId);
+        void rememberCachedTrack(trackId, blob.size);
+        return URL.createObjectURL(blob);
+      }
     }
   } catch {
     /* ignore */

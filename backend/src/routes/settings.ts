@@ -6,6 +6,10 @@ import {
   isThemePreset,
   THEME_PRESETS,
 } from '../services/appSettings';
+import {
+  getYtdlpProfileStatus,
+  setMultiProfileEnabled,
+} from '../services/ytdlpProfiles';
 
 const router = Router();
 
@@ -39,6 +43,29 @@ router.put('/theme', authenticate, requireAdmin, async (req: AuthRequest, res) =
     await setThemePresetId(preset);
     const settings = await getPublicAppSettings();
     res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.get('/ytdlp', authenticate, requireAdmin, async (_req, res) => {
+  try {
+    const status = await getYtdlpProfileStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.put('/ytdlp', authenticate, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { multiProfile } = req.body as { multiProfile?: boolean };
+    if (typeof multiProfile !== 'boolean') {
+      return res.status(400).json({ error: 'multiProfile boolean required' });
+    }
+    await setMultiProfileEnabled(multiProfile);
+    const status = await getYtdlpProfileStatus();
+    res.json(status);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

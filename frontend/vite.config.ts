@@ -85,7 +85,7 @@ export default defineConfig({
             options: {
               cacheName: 'audio-stream-cache',
               networkTimeoutSeconds: 12,
-              expiration: { maxEntries: 40, maxAgeSeconds: 72 * 60 * 60 },
+              expiration: { maxEntries: 2000, maxAgeSeconds: 30 * 24 * 60 * 60 },
               cacheableResponse: { statuses: [0, 200, 206] },
               rangeRequests: true,
               matchOptions: { ignoreSearch: true },
@@ -96,8 +96,8 @@ export default defineConfig({
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
-              networkTimeoutSeconds: 10,
-              expiration: { maxEntries: 50, maxAgeSeconds: 300 },
+              networkTimeoutSeconds: 8,
+              expiration: { maxEntries: 120, maxAgeSeconds: 60 * 60 * 24 * 7 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },

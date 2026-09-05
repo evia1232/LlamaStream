@@ -7,8 +7,15 @@ import { applyDocumentDirection } from '../lib/direction';
 import { useAuthStore, usePlayerStore } from '../store';
 import api from '../api/client';
 import { User } from '../types';
-import { Trash2, UserPlus, HardDrive, Infinity, Music2, Palette, LogOut } from 'lucide-react';
+import { Trash2, UserPlus, HardDrive, Infinity, Music2, Palette, LogOut, Wifi } from 'lucide-react';
 import { fetchThemeSettings, updateThemePreset, type ThemePreset } from '../lib/theme';
+import {
+  clearAudioCache,
+  getAudioCacheStats,
+  isOfflineCacheEnabled,
+  MAX_AUDIO_CACHE_BYTES,
+  setOfflineCacheEnabled,
+} from '../lib/offlineStore';
 
 type SettingsTab = 'profile' | 'playback' | 'search' | 'storage' | 'admin';
 
@@ -86,6 +93,18 @@ export default function SettingsPage() {
   const [spotifyMsg, setSpotifyMsg] = useState('');
   const [spotifyLoading, setSpotifyLoading] = useState(false);
   const [spotifyRedirectUri, setSpotifyRedirectUri] = useState('');
+  const [ytdlpStatus, setYtdlpStatus] = useState<{
+    enabled: boolean;
+    rotateEvery: number;
+    activeProfileLabel: string;
+    profileCount: number;
+    profiles: { id: string; label: string; hasProxy: boolean; hasCookies: boolean }[];
+  } | null>(null);
+  const [ytdlpSaving, setYtdlpSaving] = useState(false);
+  const [ytdlpMsg, setYtdlpMsg] = useState('');
+  const [offlineCacheOn, setOfflineCacheOn] = useState(() => isOfflineCacheEnabled());
+  const [localCacheStats, setLocalCacheStats] = useState<{ bytes: number; count: number }>({ bytes: 0, count: 0 });
+  const [localCacheMsg, setLocalCacheMsg] = useState('');
 
   const tabs = useMemo(() => {
     const items: { id: SettingsTab; label: string }[] = [
@@ -168,8 +187,42 @@ export default function SettingsPage() {
           setThemePresets(data.presets);
         })
         .catch(console.error);
+      api.get('/settings/ytdlp').then(({ data }) => setYtdlpStatus(data)).catch(() => setYtdlpStatus(null));
     }
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (activeTab === 'storage') {
+      void getAudioCacheStats().then(setLocalCacheStats);
+    }
+  }, [activeTab]);
+
+  const toggleYtdlpMulti = async () => {
+    if (!ytdlpStatus) return;
+    setYtdlpSaving(true);
+    setYtdlpMsg('');
+    try {
+      const { data } = await api.put('/settings/ytdlp', { multiProfile: !ytdlpStatus.enabled });
+      setYtdlpStatus(data);
+      setYtdlpMsg(data.enabled ? t('ytdlpMultiEnabled') : t('ytdlpMultiDisabled'));
+    } catch {
+      setYtdlpMsg(t('error'));
+    } finally {
+      setYtdlpSaving(false);
+    }
+  };
+
+  const toggleOfflineCache = () => {
+    const next = !offlineCacheOn;
+    setOfflineCacheEnabled(next);
+    setOfflineCacheOn(next);
+  };
+
+  const handleClearLocalCache = async () => {
+    await clearAudioCache();
+    setLocalCacheStats({ bytes: 0, count: 0 });
+    setLocalCacheMsg(t('localCacheCleared'));
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -498,6 +551,32 @@ export default function SettingsPage() {
       {/* Storage */}
       {activeTab === 'storage' && (
         <section className="space-y-4">
+          <div className="bg-spotify-lightgray rounded-xl p-4 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="font-medium flex items-center gap-2">
+                <Wifi className="w-4 h-4 text-spotify-green" />
+                {t('offlineCacheTitle')}
+              </p>
+              <p className="text-sm text-spotify-text mt-1">{t('offlineCacheHint')}</p>
+            </div>
+            <ToggleSwitch checked={offlineCacheOn} onToggle={toggleOfflineCache} />
+          </div>
+
+          <div className="bg-spotify-lightgray rounded-xl p-4 space-y-2 text-sm">
+            <p>{t('localAudioCache')}: <span className="text-white font-medium">{formatBytes(localCacheStats.bytes)}</span>
+              <span className="text-spotify-text"> / {formatBytes(MAX_AUDIO_CACHE_BYTES)}</span>
+            </p>
+            <p>{t('localCachedTracks')}: <span className="text-white font-medium">{localCacheStats.count}</span></p>
+            <button
+              type="button"
+              onClick={() => void handleClearLocalCache()}
+              className="mt-2 bg-spotify-gray hover:bg-white/10 rounded-full py-2 px-4 text-sm font-bold"
+            >
+              {t('clearLocalCache')}
+            </button>
+            {localCacheMsg && <p className="text-spotify-green">{localCacheMsg}</p>}
+          </div>
+
           {libraryStats && (
             <div className="bg-spotify-lightgray rounded-xl p-4 space-y-1 text-sm">
               <p>{t('downloadedTracks')}: <span className="text-white font-medium">{libraryStats.downloadedCount}</span></p>
@@ -575,6 +654,45 @@ export default function SettingsPage() {
       {/* Admin */}
       {activeTab === 'admin' && isAdmin && (
         <section className="space-y-8">
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <HardDrive className="w-5 h-5 text-spotify-green" />
+              <h2 className="text-lg font-bold">{t('ytdlpMultiTitle')}</h2>
+            </div>
+            <p className="text-body mb-4">{t('ytdlpMultiHint')}</p>
+            <div className="bg-spotify-lightgray rounded-xl p-4 flex items-center justify-between gap-4 mb-3">
+              <div className="min-w-0">
+                <p className="font-medium">{t('ytdlpMultiToggle')}</p>
+                <p className="text-sm text-spotify-text mt-1">
+                  {ytdlpStatus
+                    ? t('ytdlpMultiStatus', {
+                        count: ytdlpStatus.profileCount,
+                        every: ytdlpStatus.rotateEvery,
+                        active: ytdlpStatus.activeProfileLabel,
+                      })
+                    : t('ytdlpMultiUnavailable')}
+                </p>
+              </div>
+              <ToggleSwitch
+                checked={!!ytdlpStatus?.enabled}
+                onToggle={() => { if (!ytdlpSaving) void toggleYtdlpMulti(); }}
+              />
+            </div>
+            {ytdlpStatus && ytdlpStatus.profiles.length > 0 && (
+              <ul className="space-y-2 text-sm">
+                {ytdlpStatus.profiles.map((p) => (
+                  <li key={p.id} className="bg-spotify-gray rounded-lg px-3 py-2 flex justify-between gap-2">
+                    <span className="font-medium truncate">{p.label}</span>
+                    <span className="text-spotify-text shrink-0">
+                      {p.hasProxy ? 'proxy' : '—'} · {p.hasCookies ? 'cookies' : 'no cookies'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {ytdlpMsg && <p className="text-sm text-spotify-green mt-3">{ytdlpMsg}</p>}
+          </div>
+
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Palette className="w-5 h-5 text-spotify-green" />

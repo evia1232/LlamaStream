@@ -42,8 +42,13 @@ export default function LikedPage() {
       const apiTracks = (data.tracks as Track[]).map((tr) => normalizeTrack(tr));
       setTracks(mergeLikedTracks(apiTracks, pending, ids));
       apiTracks.forEach((tr) => usePlayerStore.getState().addToLiked(tr.id));
-    }).catch(() => {
-      setTracks(mergeLikedTracks([], pending, ids));
+      void import('../lib/offlineStore').then(({ saveOfflineSnapshot }) => {
+        void saveOfflineSnapshot('liked', apiTracks);
+      });
+    }).catch(async () => {
+      const { loadOfflineSnapshot } = await import('../lib/offlineStore');
+      const cached = await loadOfflineSnapshot<Track[]>('liked');
+      setTracks(mergeLikedTracks(cached || [], pending, ids));
     });
   }, []);
 

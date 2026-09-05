@@ -136,6 +136,75 @@ function wordOverlap(a: string, b: string): number {
   return shared / Math.max(wordsA.size, wordsB.size);
 }
 
+/** "Artist - Title" / "Artist | Title" from YouTube upload titles */
+export function extractLeadingArtistFromYouTubeTitle(title: string): string | null {
+  const match = title.match(/^(.+?)\s[-–—|]\s(.+)$/);
+  if (!match) return null;
+  const leading = match[1].trim();
+  // Avoid treating "Official Audio" style prefixes as artists
+  if (/^(official|lyrics?|audio|video|hd|4k|mv)\b/i.test(leading)) return null;
+  if (leading.length < 2 || leading.length > 80) return null;
+  return leading;
+}
+
+/** How well does the YouTube result identify as the target artist? 0..1 */
+export function artistMatchStrength(
+  result: Pick<SearchResult, 'title' | 'artist'>,
+  targetArtistRaw: string,
+): number {
+  const targetArtist = normalizeForMatch(primaryArtist(targetArtistRaw));
+  if (!targetArtist || targetArtist.length < 2) return 1; // no artist to enforce
+
+  const ytChannel = normalizeForMatch(result.artist || '');
+  const ytTitle = normalizeForMatch(result.title || '');
+  const leading = extractLeadingArtistFromYouTubeTitle(result.title || '');
+  const leadingNorm = leading ? normalizeForMatch(leading) : '';
+
+  if (ytTitle.includes(targetArtist) || ytChannel.includes(targetArtist)) return 1;
+  if (leadingNorm && (leadingNorm.includes(targetArtist) || targetArtist.includes(leadingNorm))) return 1;
+
+  const channelOverlap = wordOverlap(targetArtistRaw, result.artist || '');
+  const leadingOverlap = leading ? wordOverlap(targetArtistRaw, leading) : 0;
+  const titleOverlap = wordOverlap(targetArtistRaw, result.title || '');
+  return Math.max(channelOverlap, leadingOverlap, titleOverlap * 0.5);
+}
+
+/** Clear wrong-artist case: title matches song, but YT names a different lead artist */
+export function isWrongArtistMatch(
+  result: Pick<SearchResult, 'title' | 'artist'>,
+  target: MatchTarget,
+): boolean {
+  const targetArtist = primaryArtist(target.artist);
+  if (!targetArtist || targetArtist.length < 2) return false;
+
+  const targetTitle = normalizeForMatch(cleanSearchTitle(target.title));
+  if (targetTitle.length < 2) return false;
+
+  const strength = artistMatchStrength(result, targetArtist);
+  if (strength >= 0.35) return false;
+
+  const ytTitle = normalizeForMatch(result.title);
+  const titleHit =
+    ytTitle.includes(targetTitle)
+    || targetTitle.includes(extractTrackTitleFromYouTube(result.title).toLowerCase().replace(/[^\w\s\u0590-\u05ff]/g, ' ').replace(/\s+/g, ' ').trim())
+    || wordOverlap(target.title, extractTrackTitleFromYouTube(result.title)) >= 0.6;
+
+  if (!titleHit) return false;
+
+  // Latin Spotify artist + Hebrew YouTube lead artist (or any distinct lead) → wrong song
+  const leading = extractLeadingArtistFromYouTubeTitle(result.title);
+  if (leading && wordOverlap(targetArtist, leading) < 0.25 && artistMatchStrength(result, targetArtist) < 0.35) {
+    return true;
+  }
+
+  // Channel/uploader clearly different and no artist tokens in title
+  if (result.artist && wordOverlap(targetArtist, result.artist) < 0.2 && strength < 0.2) {
+    return true;
+  }
+
+  return strength < 0.15;
+}
+
 /** Returns variant patterns found in text */
 export function findVariants(text: string): RegExp[] {
   return VARIANT_PATTERNS.filter((p) => p.test(text));
@@ -227,6 +296,9 @@ export function isRejectedYouTubeResult(
     return true;
   }
 
+  // Never accept a clear wrong-artist hit when we know who we want
+  if (!relaxed && isWrongArtistMatch(result, target)) return true;
+
   return false;
 }
 
@@ -241,7 +313,6 @@ export function filterYouTubeResults(
 export function isLikelyBadMatch(title: string): boolean {
   const lower = title.toLowerCase();
   if (BAD_KEYWORDS.some((kw) => lower.includes(kw))) return true;
-  // Channel-style karaoke labels
   if (/\bkaraoke\b/i.test(lower)) return true;
   if (/\bsing\s*along\b/i.test(lower)) return true;
   if (/\bקאבר\b/.test(title)) return true;
@@ -252,11 +323,15 @@ export function isLikelyBadMatch(title: string): boolean {
 export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, options?: RankOptions): number {
   const ytTitle = result.title;
   const ytCombined = `${result.artist} ${ytTitle}`.toLowerCase();
-  const targetTitle = normalizeForMatch(target.title);
+  const targetTitle = normalizeForMatch(cleanSearchTitle(target.title));
   const targetArtist = normalizeForMatch(primaryArtist(target.artist));
   const normYtTitle = normalizeForMatch(ytTitle);
-  const titleMatches = normYtTitle.includes(targetTitle) || targetTitle.includes(normYtTitle);
-  const hebrewTitleMatch = containsHebrew(target.title) && titleMatches;
+  const extractedYtTitle = normalizeForMatch(extractTrackTitleFromYouTube(ytTitle));
+  const titleMatches =
+    normYtTitle.includes(targetTitle)
+    || targetTitle.includes(normYtTitle)
+    || extractedYtTitle.includes(targetTitle)
+    || targetTitle.includes(extractedYtTitle);
 
   let score = 0;
 
@@ -264,16 +339,23 @@ export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, opt
   if (titleMatches) {
     score += 45;
   } else {
-    score += Math.round(wordOverlap(target.title, ytTitle) * 35);
+    score += Math.round(Math.max(
+      wordOverlap(target.title, ytTitle),
+      wordOverlap(target.title, extractTrackTitleFromYouTube(ytTitle)),
+    ) * 35);
   }
 
-  // Artist presence — Spotify often uses Latin transliteration while YouTube uses Hebrew
-  if (targetArtist && (normYtTitle.includes(targetArtist) || normalizeForMatch(result.artist).includes(targetArtist))) {
-    score += 30;
-  } else if (hebrewTitleMatch) {
-    score += 15;
-  } else {
-    score += Math.round(wordOverlap(target.artist, result.artist) * 20);
+  // Artist — required signal; never invent credit for Hebrew title-only hits
+  const artistStrength = artistMatchStrength(result, target.artist);
+  if (targetArtist) {
+    if (artistStrength >= 0.7) score += 40;
+    else if (artistStrength >= 0.35) score += 22;
+    else if (artistStrength >= 0.15) score += 5;
+    else score -= 55;
+
+    if (isWrongArtistMatch(result, target)) {
+      score -= 90;
+    }
   }
 
   // Duration match (Spotify gives seconds) — heavily weighted
@@ -293,12 +375,10 @@ export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, opt
 
   if (isYouTubeShortOrReel(result)) score -= 150;
 
-  // Keyword bonuses
   for (const kw of GOOD_KEYWORDS) {
     if (ytCombined.includes(kw)) score += 10;
   }
 
-  // Penalties
   if (isLikelyBadMatch(ytTitle)) score -= 80;
 
   const variants = findVariants(ytTitle);
@@ -306,14 +386,6 @@ export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, opt
   if (variants.length > 0 && !userWantsVariant) {
     const unwanted = variants.filter((p) => p.test(ytTitle) && !p.test(target.title));
     score -= unwanted.length * 45;
-  }
-
-  // Extra artist on YT not in target (often cover channels / remix artists)
-  if (target.artist && result.artist && !hebrewTitleMatch) {
-    const ytArtistNorm = normalizeForMatch(result.artist);
-    if (targetArtist && !ytArtistNorm.includes(targetArtist) && wordOverlap(target.artist, result.artist) < 0.3) {
-      score -= 25;
-    }
   }
 
   return score;
@@ -326,6 +398,7 @@ export function rankYouTubeResults(
 ): SearchResult[] {
   const minScore = options?.minScore ?? (options?.filterVariants ? 35 : 15);
   const filterVariants = options?.filterVariants ?? false;
+  const hasArtist = normalizeForMatch(primaryArtist(target.artist || '')).length >= 2;
 
   return [...results]
     .filter((r) => !isRejectedYouTubeResult(r, target, false))
@@ -334,6 +407,8 @@ export function rankYouTubeResults(
       if (score < minScore) return false;
       if (isLikelyBadMatch(result.title)) return false;
       if (isYouTubeShortOrReel(result)) return false;
+      if (hasArtist && isWrongArtistMatch(result, target)) return false;
+      if (hasArtist && artistMatchStrength(result, target.artist) < 0.15 && score < 70) return false;
       if (target.duration && target.duration > 0 && result.duration > 0
         && !isDurationCompatible(target.duration, result.duration, false)) {
         return false;
@@ -358,13 +433,16 @@ export function pickBestAvailableResult(
   const ranked = rankYouTubeResults(results, target, options);
   if (ranked.length > 0) return ranked[0];
 
-  const normTitle = normalizeForMatch(target.title);
+  const hasArtist = normalizeForMatch(primaryArtist(target.artist || '')).length >= 2;
+  const normTitle = normalizeForMatch(cleanSearchTitle(target.title));
   const safe = results.filter((r) => !isLikelyBadMatch(r.title) && !isYouTubeShortOrReel(r)
-    && !isRejectedYouTubeResult(r, target, !!options?.minScore && options.minScore <= 18));
+    && !isRejectedYouTubeResult(r, target, !!options?.minScore && options.minScore <= 18)
+    && !(hasArtist && isWrongArtistMatch(r, target)));
 
   for (const r of safe) {
     const ytNorm = normalizeForMatch(r.title);
     if (normTitle.length >= 3 && (ytNorm.includes(normTitle) || normTitle.includes(ytNorm))) {
+      if (hasArtist && artistMatchStrength(r, target.artist) < 0.2) continue;
       if (!hasUnwantedVariant(r.title, target.title, options?.rawQuery)) return r;
     }
   }
@@ -383,31 +461,39 @@ export function buildSearchQueries(artist: string, title: string, album?: string
   const rawTitle = sanitizeSearchText(title);
   const queries: string[] = [];
 
-  // Hebrew / Mizrahi tracks: title-first searches work better than "official audio"
-  if (containsHebrew(t) || containsHebrew(a) || containsHebrew(rawTitle)) {
-    queries.push(t);
-    if (rawTitle !== t) queries.push(rawTitle);
+  // Always prefer artist+title first — bare title finds the wrong popular song
+  // (e.g. מחילה → אבישי אשל instead of JASMIN MOALLEM)
+  if (a && t) {
     queries.push(`${a} ${t}`);
-    queries.push(`${t} ${a}`);
     queries.push(`${a} - ${t}`);
-    // Multi-artist Spotify credits confuse YouTube — also try without artist
-    queries.push(`${t} audio`);
-    if (album) queries.push(`${t} ${sanitizeSearchText(album)}`);
+    queries.push(`${t} ${a}`);
+    queries.push(`"${a}" "${t}"`);
+    queries.push(`${a} ${t} official audio`);
+    queries.push(`${a} - ${t} official audio`);
+  }
+
+  if (containsHebrew(t) || containsHebrew(a) || containsHebrew(rawTitle)) {
+    if (rawTitle !== t && a) queries.push(`${a} ${rawTitle}`);
+    if (album && t) queries.push(`${a} ${t} ${sanitizeSearchText(album)}`.trim());
+    // Title-only only as late fallback when artist searches fail
+    if (t) queries.push(`${t} audio`);
   }
 
   queries.push(
     `${a} ${t} official audio`,
-    `${a} - ${t} official audio`,
     `${a} - ${t} official`,
     `"${a}" "${t}" official audio`,
     `${a} - ${t}`,
     `${a} ${t}`,
-    t,
   );
   if (album) {
     queries.push(`${a} ${t} ${sanitizeSearchText(album)} official`);
   }
-  return [...new Set(queries.filter(Boolean))];
+  // Bare title last — never first
+  if (t) queries.push(t);
+  if (rawTitle && rawTitle !== t) queries.push(rawTitle);
+
+  return [...new Set(queries.filter((q) => q && q.replace(/["']/g, '').trim().length > 0))];
 }
 
 /** Whether to apply strict variant filtering for this download request */
@@ -416,6 +502,5 @@ export function shouldFilterVariants(
   opts?: { title?: string; artist?: string }
 ): boolean {
   if (userRequestedVariant(rawInput, opts?.title, opts?.artist)) return false;
-  // Always prefer studio/original versions unless user explicitly searched for remix/live/etc.
   return true;
 }

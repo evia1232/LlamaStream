@@ -2,6 +2,16 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { config, qualityAudioScale } from '../config';
+import {
+  buildProfileArgs,
+  getActiveProfile,
+  getActiveProfileSync,
+  getLegacyProfile,
+  isMultiProfileEnabled,
+  isMultiProfileEnabledCached,
+  noteSuccessfulSongFetch,
+  rotateProfileNow,
+} from './ytdlpProfiles';
 
 export interface YtDlpResult {
   stdout: string;
@@ -20,18 +30,25 @@ const BASE_ARGS = [
   '--remote-components', 'ejs:github',
 ];
 
-/** Shared auth / network args (cookies, proxy) for every yt-dlp invocation. */
+let multiEnabledCache = false;
+
+/** Shared auth / network args (cookies, proxy) — respects multi-profile when enabled. */
+export async function ytDlpAuthArgsAsync(): Promise<string[]> {
+  const enabled = await isMultiProfileEnabled();
+  multiEnabledCache = enabled;
+  if (!enabled) return buildProfileArgs(getLegacyProfile());
+  return buildProfileArgs(await getActiveProfile());
+}
+
+/** Sync auth args using cached multi-profile flag (refreshed by async calls). */
 export function ytDlpAuthArgs(): string[] {
-  const args: string[] = [];
-  const cookies = config.ytdlpCookiesFile;
-  if (cookies && fs.existsSync(cookies)) {
-    args.push('--cookies', cookies);
-  }
-  const proxy = config.ytdlpProxy;
-  if (proxy) {
-    args.push('--proxy', proxy);
-  }
-  return args;
+  const enabled = multiEnabledCache || isMultiProfileEnabledCached();
+  if (!enabled) return buildProfileArgs(getLegacyProfile());
+  return buildProfileArgs(getActiveProfileSync(true));
+}
+
+async function resolveAuthArgs(): Promise<string[]> {
+  return ytDlpAuthArgsAsync();
 }
 
 function resolveYtDlpBin(): string {
@@ -58,8 +75,15 @@ export function ytDlpCommand(): string {
 }
 
 export function runYtDlp(args: string[], timeoutMs = 300000): Promise<YtDlpResult> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(resolveYtDlpBin(), [...BASE_ARGS, ...ytDlpAuthArgs(), ...args], {
+  return new Promise(async (resolve, reject) => {
+    let authArgs: string[];
+    try {
+      authArgs = await resolveAuthArgs();
+    } catch {
+      authArgs = ytDlpAuthArgs();
+    }
+
+    const proc = spawn(resolveYtDlpBin(), [...BASE_ARGS, ...authArgs, ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -82,9 +106,14 @@ export function runYtDlp(args: string[], timeoutMs = 300000): Promise<YtDlpResul
       }
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', async (code) => {
       clearTimeout(timer);
-      resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1 });
+      const result = { stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1 };
+      const combined = `${result.stderr}\n${result.stdout}`;
+      if (result.code !== 0 && /403|Forbidden|Sign in to confirm|confirm you.?re not a bot/i.test(combined)) {
+        await rotateProfileNow('403').catch(() => null);
+      }
+      resolve(result);
     });
   });
 }
@@ -183,3 +212,5 @@ export function isYouTubeBlockedError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return /403|Forbidden|Sign in to confirm|confirm you.?re not a bot/i.test(msg);
 }
+
+export { noteSuccessfulSongFetch };

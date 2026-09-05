@@ -4,8 +4,9 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractAttempts, isFormatUnavailableError, ytDlpAuthArgs, ytDlpCommand } from './ytdlp';
-import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, cleanSearchTitle, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults } from '../lib/trackMatch';
+import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractAttempts, isFormatUnavailableError, ytDlpAuthArgsAsync, ytDlpCommand, noteSuccessfulSongFetch } from './ytdlp';
+import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, cleanSearchTitle, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults, artistMatchStrength } from '../lib/trackMatch';
+import { rotateProfileNow } from './ytdlpProfiles';
 import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
 import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress, waitForTrackDownload } from './trackDownload';
@@ -209,10 +210,11 @@ export async function downloadFromYouTube(
     throw new Error('Invalid metadata from yt-dlp');
   }
 
-  const downloadResult = await new Promise<YtDlpDownloadResult>((resolve, reject) => {
+  const downloadResult = await new Promise<YtDlpDownloadResult>(async (resolve, reject) => {
     const attempts = ytDlpAudioExtractAttempts(quality);
     let attemptIndex = 0;
     let lastStderr = '';
+    const authArgs = await ytDlpAuthArgsAsync();
 
     const tryDownload = () => {
       if (attemptIndex >= attempts.length) {
@@ -226,7 +228,7 @@ export async function downloadFromYouTube(
         '--socket-timeout', '30',
         '--js-runtimes', 'node',
         '--remote-components', 'ejs:github',
-        ...ytDlpAuthArgs(),
+        ...authArgs,
         ...attempt.args,
         '-o', outputTemplate,
         '--newline',
@@ -251,6 +253,9 @@ export async function downloadFromYouTube(
           return;
         }
         lastStderr = stderr;
+        if (/403|Forbidden|Sign in to confirm|confirm you.?re not a bot/i.test(stderr)) {
+          void rotateProfileNow('download-403');
+        }
         if (isFormatUnavailableError(stderr) && attemptIndex < attempts.length) {
           console.warn(`[Download] Format unavailable (${attempt.label}), retrying…`);
           tryDownload();
@@ -274,6 +279,8 @@ export async function downloadFromYouTube(
   if (!filePath || !fs.existsSync(filePath)) {
     throw new Error('Download completed but audio file was not found');
   }
+
+  await noteSuccessfulSongFetch();
 
   const rawTitle = String(meta.title || 'Unknown');
   const artist = String(meta.uploader || meta.channel || meta.artist || extractArtistFromTitle(rawTitle));
@@ -578,6 +585,15 @@ export async function resolveYouTubeSource(
         collectResults(batch);
         candidates.push(...batch.filter((r) => !candidates.some((c) => c.id === r.id)
           && !isRejectedYouTubeResult(r, target, !!opts?.relaxed) && !isExcluded(r)));
+        // Re-rank after each query; stop early on a strong artist+title hit
+        const rankedSoFar = rankYouTubeResults(candidates, target, rankOpts);
+        if (rankedSoFar.length > 0) {
+          candidates = rankedSoFar;
+          const top = rankedSoFar[0];
+          if (artistMatchStrength(top, target.artist) >= 0.35) {
+            break;
+          }
+        }
       } catch (err) {
         console.error(`YouTube search failed for "${q}":`, err);
       }
@@ -598,14 +614,15 @@ export async function resolveYouTubeSource(
     }
   }
 
-  if (candidates.length === 0 && title) {
+  // Title-only searches are last resort and still must pass artist filters
+  if (candidates.length === 0 && title && artist) {
     try {
-      const titleOnly = await searchYouTube(`${title} official audio`, 15, minSearchDuration);
+      const titleOnly = await searchYouTube(`${searchArtist} ${title}`, 15, minSearchDuration);
       collectResults(titleOnly);
       const pool = filterYouTubeResults(titleOnly, target, !!opts?.relaxed);
-      candidates = rankYouTubeResults(pool, target, { ...rankOpts, minScore: opts?.relaxed ? 18 : 25 });
+      candidates = rankYouTubeResults(pool, target, { ...rankOpts, minScore: opts?.relaxed ? 18 : 30 });
     } catch (err) {
-      console.error(`YouTube title search failed for "${title}":`, err);
+      console.error(`YouTube artist+title search failed for "${title}":`, err);
     }
   }
 

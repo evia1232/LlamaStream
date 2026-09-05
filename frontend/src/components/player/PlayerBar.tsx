@@ -420,6 +420,9 @@ export default function PlayerBar() {
 
     const token = localStorage.getItem('token');
     const src = streamUrl(next.track.id, token);
+    void import('../../lib/offlineStore').then(({ prefetchTrackStream }) => {
+      void prefetchTrackStream(next.track.id, src);
+    });
     const el = preloadRef.current ?? new Audio();
     preloadRef.current = el;
     el.preload = 'auto';

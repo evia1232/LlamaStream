@@ -27,7 +27,16 @@ export default function LibraryPage() {
   const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const fetchPlaylists = useCallback(() => {
-    api.get('/playlists').then(({ data }) => setPlaylists(data.playlists)).catch(console.error);
+    api.get('/playlists').then(({ data }) => {
+      setPlaylists(data.playlists);
+      void import('../lib/offlineStore').then(({ saveOfflineSnapshot }) => {
+        void saveOfflineSnapshot('playlists', data.playlists);
+      });
+    }).catch(async () => {
+      const { loadOfflineSnapshot } = await import('../lib/offlineStore');
+      const cached = await loadOfflineSnapshot<Playlist[]>('playlists');
+      if (cached) setPlaylists(cached);
+    });
   }, []);
 
   useEffect(() => { fetchPlaylists(); }, [fetchPlaylists]);

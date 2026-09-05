@@ -14,6 +14,7 @@ import { usePlaybackSync } from '../../hooks/usePlaybackSync';
 import DevicePicker from '../player/DevicePicker';
 import { startPlaybackKeeper } from '../../lib/backgroundPlayback';
 import AppToast from '../ui/AppToast';
+import OfflineBadge from '../ui/OfflineBadge';
 
 export default function Layout({ children }: { children: ReactNode }) {
   const hasTrack = usePlayerStore((s) => !!s.currentTrack);
@@ -44,6 +45,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <InstallPrompt />
       <TrackMenuHost />
       <AppToast />
+      <OfflineBadge />
     </div>
   );
 }

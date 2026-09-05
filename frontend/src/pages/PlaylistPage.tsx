@@ -25,7 +25,14 @@ export default function PlaylistPage() {
     api.get(`/playlists/${id}`).then(({ data }) => {
       setPlaylist(data.playlist);
       setImportJob(data.playlist.importJob ?? null);
-    }).catch(console.error);
+      void import('../lib/offlineStore').then(({ saveOfflineSnapshot }) => {
+        void saveOfflineSnapshot(`playlist:${id}`, data.playlist);
+      });
+    }).catch(async () => {
+      const { loadOfflineSnapshot } = await import('../lib/offlineStore');
+      const cached = await loadOfflineSnapshot<Playlist>(`playlist:${id}`);
+      if (cached) setPlaylist(cached);
+    });
   }, [id]);
 
   useEffect(() => { loadPlaylist(); }, [loadPlaylist]);
