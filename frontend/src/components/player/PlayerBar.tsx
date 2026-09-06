@@ -60,53 +60,105 @@ export default function PlayerBar() {
   const endedHandledRef = useRef(false);
   const crossfadeTriggeredRef = useRef(false);
   const fadeCountRef = useRef(0);
+  const fadeCancelRef = useRef<Array<() => void>>([]);
   const outgoingRef = useRef<HTMLAudioElement | null>(null);
   const outgoingBlobRef = useRef<string | null>(null);
   const lastImperativeTrackIdRef = useRef<string | null>(null);
 
   const isFading = () => fadeCountRef.current > 0;
 
+  const cancelAllFades = useCallback(() => {
+    const cancels = fadeCancelRef.current.splice(0);
+    for (const c of cancels) {
+      try { c(); } catch { /* ignore */ }
+    }
+    fadeCountRef.current = 0;
+  }, []);
+
   const stopOutgoing = useCallback(() => {
     const el = outgoingRef.current;
     outgoingRef.current = null;
     if (el) {
-      el.pause();
-      el.removeAttribute('src');
-      el.load();
+      try {
+        el.pause();
+        el.removeAttribute('src');
+        el.src = '';
+        // Never call el.load() after clearing src — crashes some WebViews (Capacitor/Android)
+      } catch { /* ignore */ }
     }
-    revokeBlobUrl(outgoingBlobRef.current);
+    const blob = outgoingBlobRef.current;
     outgoingBlobRef.current = null;
+    // Only revoke if main player is not using the same blob
+    if (blob && blob !== activeBlobRef.current && audioRef.current?.src !== blob) {
+      revokeBlobUrl(blob);
+    }
   }, []);
 
   const fadeAudioVolume = useCallback((el: HTMLAudioElement, from: number, to: number, ms: number, onDone?: () => void) => {
+    let cancelled = false;
     fadeCountRef.current += 1;
+    const cancel = () => { cancelled = true; };
+    fadeCancelRef.current.push(cancel);
+
     const start = performance.now();
     const tick = (now: number) => {
-      const p = Math.min((now - start) / Math.max(ms, 50), 1);
-      el.volume = Math.max(0, Math.min(1, from + (to - from) * p));
-      if (p < 1) {
-        requestAnimationFrame(tick);
+      if (cancelled) {
+        fadeCountRef.current = Math.max(0, fadeCountRef.current - 1);
+        return;
+      }
+      try {
+        const p = Math.min((now - start) / Math.max(ms, 50), 1);
+        el.volume = Math.max(0, Math.min(1, from + (to - from) * p));
+        if (p < 1) {
+          requestAnimationFrame(tick);
+          return;
+        }
+      } catch {
+        fadeCountRef.current = Math.max(0, fadeCountRef.current - 1);
         return;
       }
       fadeCountRef.current = Math.max(0, fadeCountRef.current - 1);
-      onDone?.();
+      try { onDone?.(); } catch { /* ignore */ }
     };
     requestAnimationFrame(tick);
   }, []);
 
   const startOutgoingCrossfade = useCallback((fromAudio: HTMLAudioElement, seconds: number) => {
     stopOutgoing();
-    const outgoing = new Audio();
-    outgoing.crossOrigin = 'anonymous';
-    outgoing.src = fromAudio.src;
-    outgoing.currentTime = fromAudio.currentTime;
-    outgoing.volume = fromAudio.volume;
-    outgoingRef.current = outgoing;
-    outgoingBlobRef.current = fromAudio.src.startsWith('blob:') ? fromAudio.src : null;
-    void outgoing.play().catch(() => { /* ignore */ });
-    fadeAudioVolume(outgoing, outgoing.volume, 0, seconds * 1000, () => {
-      if (outgoingRef.current === outgoing) stopOutgoing();
-    });
+    const src = fromAudio.currentSrc || fromAudio.src;
+    if (!src || src === window.location.href) return;
+
+    let outgoing: HTMLAudioElement;
+    try {
+      outgoing = new Audio();
+      outgoing.crossOrigin = 'anonymous';
+      outgoing.preload = 'auto';
+      const t = fromAudio.currentTime;
+      const vol = Math.max(0, Math.min(1, fromAudio.volume || 0));
+      outgoing.src = src;
+      outgoing.volume = vol;
+      outgoingRef.current = outgoing;
+      outgoingBlobRef.current = src.startsWith('blob:') ? src : null;
+
+      const beginFade = () => {
+        if (outgoingRef.current !== outgoing) return;
+        try {
+          if (Number.isFinite(t) && t > 0) outgoing.currentTime = t;
+        } catch { /* ignore */ }
+        void outgoing.play().catch(() => { /* ignore */ });
+        fadeAudioVolume(outgoing, vol, 0, seconds * 1000, () => {
+          if (outgoingRef.current === outgoing) stopOutgoing();
+        });
+      };
+
+      if (outgoing.readyState >= HTMLMediaElement.HAVE_METADATA) beginFade();
+      else outgoing.addEventListener('loadedmetadata', beginFade, { once: true });
+      outgoing.addEventListener('error', () => {
+        if (outgoingRef.current === outgoing) stopOutgoing();
+      }, { once: true });
+    } catch {
+      stopOutgoing();
+    }
   }, [fadeAudioVolume, stopOutgoing]);
 
   useNetworkPlaybackRecovery(audioRef, activeBlobRef);
@@ -118,7 +170,8 @@ export default function PlayerBar() {
   useMediaSession();
   useSpotifyPlaybackSync();
 
-  // Imperative loader for lock-screen / background advance (React may not re-render)
+  // Imperative loader for lock-screen / background advance (React may not re-render).
+  // Also owns crossfade: playTrack() calls this before React effects, so CF must live here.
   useEffect(() => {
     registerLoadLocalTrack((track, startTime) => {
       const s = usePlayerStore.getState();
@@ -129,35 +182,45 @@ export default function PlayerBar() {
       const audio = audioRef.current;
       if (!audio || !isLibraryId(track.id) || !canStreamTrackLocally(track)) return;
 
-      lastImperativeTrackIdRef.current = track.id;
-      loadTokenRef.current += 1;
-      stopOutgoing();
-      fadeCountRef.current = 0;
-      endedHandledRef.current = false;
-      crossfadeTriggeredRef.current = false;
+      const wantCf = !!s._pendingCrossfade && s.crossfadeEnabled && !document.hidden;
       usePlayerStore.setState({ _pendingCrossfade: false });
 
-      revokeBlobUrl(activeBlobRef.current);
-      activeBlobRef.current = null;
+      const canOverlap = wantCf
+        && !!audio.src
+        && !audio.paused
+        && audio.currentTime > 0.4
+        && s.playbackEngine !== 'spotify';
+
+      lastImperativeTrackIdRef.current = track.id;
+      loadTokenRef.current += 1;
+      endedHandledRef.current = false;
+      crossfadeTriggeredRef.current = false;
+
+      if (canOverlap) {
+        // Keep old media playing on a side element while main swaps to the next track
+        startOutgoingCrossfade(audio, s.crossfadeDuration);
+        // Old blob stays alive via outgoingBlobRef until fade completes
+        activeBlobRef.current = null;
+      } else {
+        cancelAllFades();
+        stopOutgoing();
+        revokeBlobUrl(activeBlobRef.current);
+        activeBlobRef.current = null;
+      }
 
       const token = localStorage.getItem('token');
+      // Always use network URL (HTTP/SW cache warmed by preload). Never steal preload.src —
+      // clearing the preload element aborts the shared media resource and freezes the next track.
       const networkSrc = streamUrl(track.id, token);
-      const preload = preloadRef.current;
-      const preloaded = preloadTrackIdRef.current === track.id
-        && !!preload?.src
-        && preload.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
-
-      if (preloaded && preload?.src) {
-        if (preload.src.startsWith('blob:')) activeBlobRef.current = preload.src;
-        audio.src = preload.src;
-        preload.removeAttribute('src');
-        preload.load();
-        preloadTrackIdRef.current = null;
-      } else {
-        audio.src = networkSrc;
-      }
+      audio.src = networkSrc;
       audio.load();
-      audio.volume = effectivePlaybackVolume(usePlayerStore.getState().volume);
+
+      const targetVol = effectivePlaybackVolume(usePlayerStore.getState().volume);
+      if (canOverlap) {
+        audio.volume = 0;
+      } else {
+        audio.volume = targetVol;
+      }
 
       if (startTime > 0) {
         const onMeta = () => {
@@ -169,9 +232,12 @@ export default function PlayerBar() {
       }
 
       safeAudioPlay(audio, undefined, { persistent: true });
+      if (canOverlap) {
+        fadeAudioVolume(audio, 0, targetVol, s.crossfadeDuration * 1000);
+      }
     });
     return () => registerLoadLocalTrack(null);
-  }, [registerLoadLocalTrack, stopOutgoing]);
+  }, [registerLoadLocalTrack, stopOutgoing, startOutgoingCrossfade, fadeAudioVolume, cancelAllFades]);
 
   // Load audio — play immediately; buffer in browser + Cache API in background
   useEffect(() => {
@@ -179,7 +245,9 @@ export default function PlayerBar() {
     if (!audio || isSpotifyMode || !currentTrack || !isLibraryId(currentTrack.id) || isRemoteActive) return;
     if (!canPlayLocal) return;
 
-    // Already started by imperative background loader — don't interrupt
+    const srcHasTrack = (src: string) => src.includes(`/tracks/${currentTrack.id}/stream`);
+
+    // Already started by imperative loader — don't interrupt (esp. mid-crossfade)
     if (lastImperativeTrackIdRef.current === currentTrack.id) {
       lastImperativeTrackIdRef.current = null;
       if (audio.src && !audio.ended) {
@@ -190,6 +258,11 @@ export default function PlayerBar() {
         }
         return;
       }
+    }
+
+    // Same track already loaded/playing (e.g. streamUrl metadata refresh) — skip reload
+    if (audio.src && srcHasTrack(audio.src) && !audio.ended && audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      return;
     }
 
     const loadToken = ++loadTokenRef.current;
@@ -209,6 +282,7 @@ export default function PlayerBar() {
     if (canOverlap) {
       startOutgoingCrossfade(audio, crossfadeDuration);
     } else {
+      cancelAllFades();
       stopOutgoing();
       revokeBlobUrl(activeBlobRef.current);
     }
@@ -227,20 +301,23 @@ export default function PlayerBar() {
       }
     };
 
+    let fadedIn = false;
     const tryStartPlayback = () => {
       if (loadToken !== loadTokenRef.current || cancelled) return;
       setIsBuffering(false);
       applyPendingSeek();
-      if (usePlayerStore.getState().isPlaying) {
-        const { crossfadeEnabled: cfEnabled, crossfadeDuration: cfDur } = usePlayerStore.getState();
-        if (cfEnabled && canOverlap) {
-          audio.volume = 0;
-          safeAudioPlay(audio, undefined, { persistent: true });
-          fadeAudioVolume(audio, 0, effectivePlaybackVolume(usePlayerStore.getState().volume), cfDur * 1000);
-        } else {
-          audio.volume = effectivePlaybackVolume(usePlayerStore.getState().volume);
-          safeAudioPlay(audio, undefined, { persistent: true });
-        }
+      if (!usePlayerStore.getState().isPlaying) return;
+      const targetVol = effectivePlaybackVolume(usePlayerStore.getState().volume);
+      if (canOverlap && !fadedIn) {
+        fadedIn = true;
+        audio.volume = 0;
+        safeAudioPlay(audio, undefined, { persistent: true });
+        fadeAudioVolume(audio, 0, targetVol, crossfadeDuration * 1000);
+      } else if (!canOverlap) {
+        audio.volume = targetVol;
+        safeAudioPlay(audio, undefined, { persistent: true });
+      } else {
+        safeAudioPlay(audio, undefined, { persistent: true });
       }
     };
 
@@ -281,28 +358,14 @@ export default function PlayerBar() {
         return;
       }
 
-      const preload = preloadRef.current;
-      const preloaded = preloadTrackIdRef.current === currentTrack.id
-        && preload?.src
-        && preload.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
-
-      if (preloaded && preload?.src) {
-        if (preload.src.startsWith('blob:')) {
-          activeBlobRef.current = preload.src;
-        }
-        audio.src = preload.src;
-        audio.load();
-        preload.removeAttribute('src');
-        preload.load();
-        preloadTrackIdRef.current = null;
-      } else if (cachedBlob) {
+      // Prefer Cache API blob when available; otherwise network (warmed by preload / SW)
+      if (cachedBlob) {
         activeBlobRef.current = cachedBlob;
         audio.src = cachedBlob;
-        audio.load();
       } else {
         audio.src = networkSrc;
-        audio.load();
       }
+      audio.load();
 
       if (usePlayerStore.getState().isPlaying) {
         if (canOverlap) {
@@ -320,14 +383,19 @@ export default function PlayerBar() {
       audio.removeEventListener('playing', onPlaying);
       audio.removeEventListener('error', onError);
     };
-  }, [currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, canPlayLocal, isSpotifyMode, isRemoteActive, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering, fadeAudioVolume, startOutgoingCrossfade, stopOutgoing]);
-
+  }, [currentTrack?.id, currentTrack?.streamUrl, currentTrack?.isDownloaded, canPlayLocal, isSpotifyMode, isRemoteActive, setIsPlaying, setCurrentTime, clearPendingSeek, setIsBuffering, fadeAudioVolume, startOutgoingCrossfade, stopOutgoing, cancelAllFades]);
   useEffect(() => {
     if (isSpotifyMode) return;
     registerSeek((time) => {
       const audio = audioRef.current;
       if (!audio) return;
       audio.currentTime = time;
+      // Unstick silent/paused next-track after a failed crossfade handoff
+      if (!isFading() && usePlayerStore.getState().isPlaying) {
+        const target = effectivePlaybackVolume(usePlayerStore.getState().volume);
+        if (audio.volume < target * 0.05) audio.volume = target;
+        if (audio.paused) safeAudioPlay(audio, undefined, { persistent: true });
+      }
     });
     return () => registerSeek(null);
   }, [registerSeek, isSpotifyMode]);
@@ -346,16 +414,19 @@ export default function PlayerBar() {
     registerStop(() => {
       const audio = audioRef.current;
       if (!audio) return;
-      audio.pause();
-      audio.removeAttribute('src');
-      audio.load();
+      try {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.src = '';
+      } catch { /* ignore */ }
+      cancelAllFades();
       stopOutgoing();
       revokeBlobUrl(activeBlobRef.current);
       activeBlobRef.current = null;
       loadTokenRef.current += 1;
     });
     return () => registerStop(null);
-  }, [registerStop, stopOutgoing]);
+  }, [registerStop, stopOutgoing, cancelAllFades]);
 
   useEffect(() => {
     const onUnload = () => { persistPlayback(); };
@@ -370,12 +441,14 @@ export default function PlayerBar() {
 
     // Observing another device — never drive local <audio>
     if (isRemoteActive) {
-      audio.pause();
-      outgoingRef.current?.pause();
-      if (audio.src) {
-        audio.removeAttribute('src');
-        audio.load();
-      }
+      try {
+        audio.pause();
+        outgoingRef.current?.pause();
+        if (audio.src) {
+          audio.removeAttribute('src');
+          audio.src = '';
+        }
+      } catch { /* ignore */ }
       return;
     }
 
@@ -427,7 +500,7 @@ export default function PlayerBar() {
     return () => el.removeEventListener('wheel', onWheel);
   }, [currentTrack, adjustVolumeByWheel]);
 
-  // Preload next local track stream for instant skip
+  // Warm HTTP/SW cache for the next track (do not hand off element.src — that aborts media)
   useEffect(() => {
     if (isSpotifyMode || isRemoteActive) return;
     const next = resolveNextTrack();
@@ -454,11 +527,9 @@ export default function PlayerBar() {
       if (preloadTrackIdRef.current === next.track.id) {
         preloadTrackIdRef.current = null;
       }
-      el.removeAttribute('src');
-      el.load();
+      // Keep buffered data in browser cache; only detach when switching targets
     };
   }, [currentTrack?.id, isSpotifyMode, isRemoteActive, resolveNextTrack]);
-
   // Keep next track download ready while playing
   useEffect(() => {
     if (!isPlaying || isRemoteActive) return;

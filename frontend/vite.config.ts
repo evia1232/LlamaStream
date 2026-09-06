@@ -102,11 +102,22 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: /\.(?:png|jpg|jpeg|webp|gif)$/i,
-            handler: 'StaleWhileRevalidate',
+            // Cover art: extensions + common CDNs (Spotify paths often have no extension)
+            urlPattern: /^https?:\/\/(?:[^/]+\.)?(?:ytimg\.com|scdn\.co|mzstatic\.com|ggpht\.com|googleusercontent\.com)\//i,
+            handler: 'CacheFirst',
             options: {
-              cacheName: 'image-cache',
-              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
+              cacheName: 'cover-art-cache',
+              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
+            urlPattern: /\.(?:png|jpe?g|webp|gif|svg)(?:\?.*)?$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'cover-art-cache',
+              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              cacheableResponse: { statuses: [0, 200] },
             },
           },
         ],

@@ -24,6 +24,54 @@ let tokenCache: { token: string; expiresAt: number } | null = null;
 /** Spotify /search limit max (API tightened from 50 → 10; values >10 return 400 Invalid limit). */
 const SPOTIFY_SEARCH_MAX_LIMIT = 10;
 
+/** In-memory search cache — typing + album-art lookups spam /search otherwise. */
+const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
+const SEARCH_CACHE_MAX = 200;
+const searchCache = new Map<string, { expiresAt: number; value: SpotifySearchResponse }>();
+
+/** Global cooldown after 429 QUOTA_EXCEEDED (shared across all Spotify GETs). */
+let spotifyRateLimitedUntil = 0;
+
+function noteSpotifyRateLimit(res: Response): void {
+  if (res.status !== 429) return;
+  const retryAfter = parseInt(res.headers.get('Retry-After') || '30', 10);
+  const waitMs = Math.min(15 * 60 * 1000, Math.max(5, retryAfter) * 1000);
+  spotifyRateLimitedUntil = Math.max(spotifyRateLimitedUntil, Date.now() + waitMs);
+  console.warn(`[Spotify] Rate limited — cooling down ${Math.ceil(waitMs / 1000)}s`);
+}
+
+function spotifyRateLimitError(): string {
+  const secs = Math.max(1, Math.ceil((spotifyRateLimitedUntil - Date.now()) / 1000));
+  return `Spotify search rate-limited (429). Try again in ~${secs}s. Downloads can continue without Spotify search.`;
+}
+
+function isSpotifyRateLimited(): boolean {
+  return Date.now() < spotifyRateLimitedUntil;
+}
+
+function getCachedSearch(key: string): SpotifySearchResponse | null {
+  const hit = searchCache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expiresAt) {
+    searchCache.delete(key);
+    return null;
+  }
+  // LRU touch
+  searchCache.delete(key);
+  searchCache.set(key, hit);
+  return hit.value;
+}
+
+function setCachedSearch(key: string, value: SpotifySearchResponse): void {
+  if (value.error && !value.tracks.length) return;
+  searchCache.set(key, { expiresAt: Date.now() + SEARCH_CACHE_TTL_MS, value });
+  while (searchCache.size > SEARCH_CACHE_MAX) {
+    const oldest = searchCache.keys().next().value;
+    if (oldest === undefined) break;
+    searchCache.delete(oldest);
+  }
+}
+
 function normalizeSpotifySearchLimit(limit: unknown): number {
   const n = typeof limit === 'number' ? limit : parseInt(String(limit ?? ''), 10);
   if (!Number.isFinite(n)) return SPOTIFY_SEARCH_MAX_LIMIT;
@@ -157,24 +205,51 @@ export async function searchSpotifyTracks(query: string, limit = SPOTIFY_SEARCH_
     return { tracks: [], configured: true };
   }
 
+  const safeLimit = normalizeSpotifySearchLimit(limit);
+  const cacheKey = `${cleaned.toLowerCase()}|${safeLimit}|${config.spotifyMarket}`;
+  const cached = getCachedSearch(cacheKey);
+  if (cached) return cached;
+
+  if (isSpotifyRateLimited()) {
+    return { tracks: [], configured: true, error: spotifyRateLimitError() };
+  }
+
   const { token, error: tokenError } = await fetchSpotifyToken();
   if (!token) {
     return { tracks: [], configured: true, error: tokenError || 'Spotify authentication failed' };
   }
 
-  const primaryMarket = normalizeMarket(config.spotifyMarket);
-  const fallbacks = [
-    primaryMarket,
-    primaryMarket && primaryMarket !== 'US' ? 'US' : null,
-    null, // no market — last resort
-  ].filter((m, i, arr) => m !== undefined && arr.indexOf(m) === i) as (string | null)[];
+  // Prefer configured market only — US/no-market fallbacks burned quota on every typo/400.
+  const markets: (string | undefined)[] = [];
+  const primary = normalizeMarket(config.spotifyMarket);
+  if (primary) markets.push(primary);
+  markets.push(undefined);
 
   try {
     let lastStatus = 0;
     let lastDetail: string | undefined;
 
-    for (const market of fallbacks) {
-      const res = await requestSpotifySearch(token, cleaned, limit, market || undefined);
+    for (const market of markets) {
+      if (isSpotifyRateLimited()) {
+        return { tracks: [], configured: true, error: spotifyRateLimitError() };
+      }
+
+      let res = await requestSpotifySearch(token, cleaned, safeLimit, market);
+      if (res.status === 429) {
+        noteSpotifyRateLimit(res);
+        const retryAfter = parseInt(res.headers.get('Retry-After') || '2', 10);
+        await sleep(Math.min(20, Math.max(1, retryAfter)) * 1000);
+        if (isSpotifyRateLimited() && Date.now() < spotifyRateLimitedUntil - 1000) {
+          // Still in long cooldown — don't keep hammering
+          return { tracks: [], configured: true, error: spotifyRateLimitError() };
+        }
+        res = await requestSpotifySearch(token, cleaned, safeLimit, market);
+        if (res.status === 429) {
+          noteSpotifyRateLimit(res);
+          return { tracks: [], configured: true, error: spotifyRateLimitError() };
+        }
+      }
+
       if (res.ok) {
         const data = await res.json() as {
           tracks?: { items: Array<{
@@ -197,7 +272,9 @@ export async function searchSpotifyTracks(query: string, limit = SPOTIFY_SEARCH_
           source: 'spotify' as const,
         }));
 
-        return { tracks, configured: true };
+        const ok: SpotifySearchResponse = { tracks, configured: true };
+        setCachedSearch(cacheKey, ok);
+        return ok;
       }
 
       const body = await res.text();
@@ -205,7 +282,7 @@ export async function searchSpotifyTracks(query: string, limit = SPOTIFY_SEARCH_
       lastDetail = parseSpotifyErrorBody(body);
       console.error('[Spotify] Search error:', res.status, market ? `market=${market}` : 'no market', body);
 
-      // Only retry on client/request errors
+      // Retry next market only for bad-request / not-found — never on 429/5xx/auth
       if (res.status !== 400 && res.status !== 404) break;
     }
 
@@ -217,7 +294,12 @@ export async function searchSpotifyTracks(query: string, limit = SPOTIFY_SEARCH_
         : `Spotify search failed (${lastStatus})`,
     };
   } catch (err) {
-    return { tracks: [], configured: true, error: (err as Error).message };
+    console.error('[Spotify] Search exception:', err);
+    return {
+      tracks: [],
+      configured: true,
+      error: (err as Error).message || 'Spotify search failed',
+    };
   }
 }
 
@@ -242,6 +324,7 @@ export async function lookupSpotifyTrack(
   let bestScore = 0;
 
   for (const q of queries) {
+    if (isSpotifyRateLimited()) break;
     const { tracks } = await searchSpotifyTracks(q, 5);
     for (const t of tracks) {
       const tNorm = normalizeForSpotifyMatch(t.name);
@@ -352,8 +435,12 @@ async function fetchSpotifyApiWithRetry(
   maxRetries = 4,
 ): Promise<Response> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (isSpotifyRateLimited()) {
+      await sleep(Math.min(5000, Math.max(200, spotifyRateLimitedUntil - Date.now())));
+    }
     const res = await fetch(url, { headers });
     if (res.status === 429) {
+      noteSpotifyRateLimit(res);
       const retryAfter = parseInt(res.headers.get('Retry-After') || '2', 10);
       await sleep(Math.max(1, retryAfter) * 1000);
       continue;

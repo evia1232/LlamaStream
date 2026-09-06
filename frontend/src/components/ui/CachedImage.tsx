@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import clsx from 'clsx';
 import { resolveCachedImageSrc } from '../../lib/offlineStore';
 import { normalizeCoverUrl } from '../../lib/trackUtils';
 
 /**
- * Image with offline cache support.
- * Online: always use the real URL (never opaque Cache API blobs — those break display).
- * Offline: try Cache API, fall back to original URL, then placeholder on error.
+ * Cover image. Online uses the URL directly; offline may use a Cache API blob.
+ * On error: remove the <img> (avoids repeated onError storms that freeze the UI).
  */
 export default function CachedImage({
   src,
@@ -19,41 +19,53 @@ export default function CachedImage({
   const normalized = normalizeCoverUrl((src || '').trim()) || null;
   const [display, setDisplay] = useState<string | null>(normalized);
   const [failed, setFailed] = useState(false);
+  const blobRef = useRef<string | null>(null);
+  const failOnceRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    let blobUrl: string | null = null;
+    failOnceRef.current = false;
     setFailed(false);
     setDisplay(normalized);
 
-    if (!normalized) return;
-
-    // Online: keep network URL; optionally warm the cache in the background
-    if (typeof navigator === 'undefined' || navigator.onLine) {
-      void resolveCachedImageSrc(normalized);
-      return () => { cancelled = true; };
+    if (blobRef.current) {
+      try { URL.revokeObjectURL(blobRef.current); } catch { /* ignore */ }
+      blobRef.current = null;
     }
 
-    void resolveCachedImageSrc(normalized).then((resolved) => {
-      if (cancelled || !resolved) return;
-      if (resolved.startsWith('blob:')) {
-        blobUrl = resolved;
-      }
-      setDisplay(resolved);
-    });
+    if (!normalized) return;
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      void resolveCachedImageSrc(normalized).then((resolved) => {
+        if (cancelled || !resolved) return;
+        if (resolved.startsWith('blob:')) {
+          blobRef.current = resolved;
+          setDisplay(resolved);
+        }
+      });
+    } else {
+      void resolveCachedImageSrc(normalized);
+    }
 
     return () => {
       cancelled = true;
-      if (blobUrl) {
-        try { URL.revokeObjectURL(blobUrl); } catch { /* ignore */ }
-      }
     };
   }, [normalized]);
 
-  if (!display || failed) {
+  useEffect(() => () => {
+    if (blobRef.current) {
+      try { URL.revokeObjectURL(blobRef.current); } catch { /* ignore */ }
+      blobRef.current = null;
+    }
+  }, []);
+
+  if (!normalized || failed || !display) {
     return (
-      <div className={className} aria-hidden>
-        <div className="w-full h-full flex items-center justify-center bg-spotify-lightgray text-spotify-text text-sm">♪</div>
+      <div
+        className={clsx(className, 'flex items-center justify-center bg-spotify-lightgray text-spotify-text text-sm')}
+        aria-hidden
+      >
+        ♪
       </div>
     );
   }
@@ -67,18 +79,14 @@ export default function CachedImage({
       decoding="async"
       referrerPolicy="no-referrer"
       onError={() => {
-        // Offline blob failed → try original URL once; then placeholder
-        if (normalized && display !== normalized) {
-          setDisplay(normalized);
+        if (failOnceRef.current) return;
+        failOnceRef.current = true;
+
+        // One YouTube quality fallback, then give up (unmount img — no error loop)
+        if (normalized && display === normalized && /\/hqdefault\.jpg$/i.test(normalized)) {
+          failOnceRef.current = false;
+          setDisplay(normalized.replace(/\/hqdefault\.jpg$/i, '/mqdefault.jpg'));
           return;
-        }
-        // hqdefault failed → try mqdefault
-        if (normalized && /\/hqdefault\.jpg$/i.test(normalized)) {
-          const fallback = normalized.replace(/\/hqdefault\.jpg$/i, '/mqdefault.jpg');
-          if (display !== fallback) {
-            setDisplay(fallback);
-            return;
-          }
         }
         setFailed(true);
       }}

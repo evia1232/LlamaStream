@@ -11,7 +11,11 @@ const ENABLED_KEY = 'llamastream_offline_cache_enabled';
 
 // Drop poisoned v1 entries (opaque no-cors responses that broke <img>)
 if (typeof caches !== 'undefined') {
-  void caches.delete('image-cache');
+  try {
+    void caches.delete('image-cache');
+  } catch {
+    /* ignore */
+  }
 }
 
 export type OfflineSnapshotKey = 'playlists' | 'liked' | 'library' | 'recent' | 'home' | `playlist:${string}`;
