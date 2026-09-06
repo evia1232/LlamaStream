@@ -55,12 +55,6 @@ public class MediaSessionService extends Service {
         }
     }
 
-    public final class LocalBinder extends Binder {
-        MediaSessionService getService() {
-            return MediaSessionService.this;
-        }
-    }
-
     @Override
     public IBinder onBind(Intent intent) {
         return binder;
