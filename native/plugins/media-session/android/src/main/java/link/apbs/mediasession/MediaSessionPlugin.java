@@ -71,8 +71,11 @@ public class MediaSessionPlugin extends Plugin {
             service = binder.getService();
             Intent intent = getContext().getPackageManager()
                     .getLaunchIntentForPackage(getContext().getPackageName());
-            if (intent == null) {
+            if (intent == null && getActivity() != null) {
                 intent = new Intent(getActivity(), getActivity().getClass());
+            }
+            if (intent == null) {
+                intent = new Intent();
             }
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             service.connectAndInitialize(MediaSessionPlugin.this, intent);
@@ -102,9 +105,10 @@ public class MediaSessionPlugin extends Plugin {
 
     public void startMediaService() {
         ensureNotificationPermission();
-        Intent intent = new Intent(getActivity(), MediaSessionService.class);
-        ContextCompat.startForegroundService(getContext(), intent);
-        getContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
+        Context ctx = getContext();
+        Intent intent = new Intent(ctx, MediaSessionService.class);
+        ContextCompat.startForegroundService(ctx, intent);
+        ctx.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
     }
 
     private void pushAllToService() {
@@ -196,11 +200,12 @@ public class MediaSessionPlugin extends Plugin {
             artworkUrl = loadUrl;
             artworkExecutor.execute(() -> {
                 Bitmap bmp = decodeArtwork(loadUrl);
-                if (getActivity() == null) {
+                android.app.Activity act = getActivity();
+                if (act == null) {
                     artwork = bmp;
                     return;
                 }
-                getActivity().runOnUiThread(() -> {
+                act.runOnUiThread(() -> {
                     artwork = bmp;
                     if (service != null) pushAllToService();
                 });

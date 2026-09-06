@@ -20,6 +20,7 @@ export {
   searchSpotifyArtist,
   getSpotifyStatus,
   isSpotifyConfigured,
+  isSpotifyRateLimited,
   fetchSpotifyTrackByUrl,
   fetchSpotifyUrlTracks,
   fetchSpotifyUserPlaylists,

@@ -96,17 +96,20 @@ async function fetchItunesArtwork(title: string, artist: string, album?: string)
 
 async function fetchSpotifyArtwork(title: string, artist: string, spotifyUrl?: string): Promise<string | null> {
   try {
-    const { isSpotifyConfigured, fetchSpotifyTrackByUrl, lookupSpotifyTrack } = await import('./spotifyApi');
-    if (!(await isSpotifyConfigured())) return null;
+    const { isSpotifyConfigured, isSpotifyRateLimited, fetchSpotifyTrackByUrl, lookupSpotifyTrack } = await import('./spotifyApi');
+    if (!isSpotifyConfigured()) return null;
+    if (isSpotifyRateLimited()) return null;
 
     if (spotifyUrl) {
       const byUrl = await fetchSpotifyTrackByUrl(spotifyUrl);
       if (byUrl?.thumbnailUrl && !isYouTubeThumbnail(byUrl.thumbnailUrl)) {
         return byUrl.thumbnailUrl;
       }
+      return null; // have URL — don't burn search quota
     }
 
-    const hit = await lookupSpotifyTrack(title, artist);
+    // lookupSpotifyTrack(artist, title) — artist first
+    const hit = await lookupSpotifyTrack(artist, title);
     if (hit?.thumbnailUrl && !isYouTubeThumbnail(hit.thumbnailUrl)) {
       return hit.thumbnailUrl;
     }
@@ -139,9 +142,13 @@ export async function resolveAlbumArt(input: AlbumArtInput): Promise<string | nu
   }
 
   if (title && artist) {
+    // Prefer iTunes when Spotify is rate-limited (or always try iTunes first under quota pressure)
     try {
-      const fromSpotify = await fetchSpotifyArtwork(title, artist, input.spotifyUrl || undefined);
-      if (fromSpotify) return fromSpotify;
+      const { isSpotifyRateLimited } = await import('./spotifyApi');
+      if (!isSpotifyRateLimited()) {
+        const fromSpotify = await fetchSpotifyArtwork(title, artist, input.spotifyUrl || undefined);
+        if (fromSpotify) return fromSpotify;
+      }
     } catch { /* fall through */ }
 
     try {

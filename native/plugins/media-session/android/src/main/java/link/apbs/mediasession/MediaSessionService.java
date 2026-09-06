@@ -209,6 +209,10 @@ public class MediaSessionService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Must promote to foreground immediately — otherwise Android kills the process
+        // (ForegroundServiceDidNotStartInTimeException) on notification skip/like.
+        ensureForegroundPlaceholder();
+
         if (intent != null && ACTION_LIKE.equals(intent.getAction())) {
             if (plugin != null) plugin.actionCallback("like");
             return START_STICKY;
@@ -217,6 +221,40 @@ public class MediaSessionService extends Service {
             MediaButtonReceiver.handleIntent(mediaSession, intent);
         }
         return START_STICKY;
+    }
+
+    private void ensureForegroundPlaceholder() {
+        try {
+            if (notificationManager == null) {
+                notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && notificationManager != null) {
+                NotificationChannel channel = new NotificationChannel(
+                        CHANNEL_ID,
+                        "Now Playing",
+                        NotificationManager.IMPORTANCE_LOW
+                );
+                channel.setDescription("Music playback controls");
+                channel.setShowBadge(false);
+                notificationManager.createNotificationChannel(channel);
+            }
+            NotificationCompat.Builder builder = notificationBuilder != null
+                    ? notificationBuilder
+                    : new NotificationCompat.Builder(this, CHANNEL_ID)
+                            .setSmallIcon(R.drawable.ic_media_note)
+                            .setContentTitle(title.isEmpty() ? "Music24" : title)
+                            .setContentText(artist.isEmpty() ? "Playing" : artist)
+                            .setOngoing(true)
+                            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+                            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                            .setShowWhen(false);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, builder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            } else {
+                startForeground(NOTIFICATION_ID, builder.build());
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     public void setPlaybackState(int playbackState) {
@@ -305,6 +343,9 @@ public class MediaSessionService extends Service {
         if (mediaSession == null || playbackStateBuilder == null || mediaMetadataBuilder == null) {
             return;
         }
+        if (notificationBuilder == null || notificationManager == null) {
+            return;
+        }
 
         playbackStateBuilder = new PlaybackStateCompat.Builder()
                 .setActions(baseActions())
@@ -329,6 +370,9 @@ public class MediaSessionService extends Service {
                 .setLargeIcon(artwork)
                 .setOngoing(playbackState == PlaybackStateCompat.STATE_PLAYING);
 
-        notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
+        try {
+            notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
+        } catch (Exception ignored) {
+        }
     }
 }

@@ -156,7 +156,9 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
     imageUrl: a.imageUrl,
   }));
 
-  if (searchSpotify && isSpotifyConfigured() && !isSpotifyUrl(trimmed) && !isYouTubeUrl(trimmed)) {
+  // Skip artist search when track search already hit 429 — that fan-out re-arms the quota ban
+  const spotifyBlocked = !!(spotifyError && /429|rate-?limit|QUOTA/i.test(spotifyError));
+  if (searchSpotify && isSpotifyConfigured() && !spotifyBlocked && !isSpotifyUrl(trimmed) && !isYouTubeUrl(trimmed)) {
     try {
       const spArtist = await searchSpotifyArtist(trimmed);
       if (spArtist) {

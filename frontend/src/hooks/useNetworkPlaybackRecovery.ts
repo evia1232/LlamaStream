@@ -82,15 +82,22 @@ export function useNetworkPlaybackRecovery(
     audio.addEventListener('stalled', onStalled);
     audio.addEventListener('playing', onPlaying);
 
+    // Only recover on real media errors — NOT mere paused (skip/src swap looks paused briefly and
+    // re-calling load() mid-swap crashes Android WebView).
     const interval = window.setInterval(() => {
-      const { isPlaying, playbackEngine } = usePlayerStore.getState();
+      const { isPlaying, playbackEngine, isBuffering } = usePlayerStore.getState();
       if (!isPlaying || playbackEngine !== 'local') return;
       const el = audioRef.current;
       if (!el) return;
-      if (el.error || el.paused) {
+      if (el.error) {
         void tryRecover();
+        return;
       }
-    }, 2500);
+      // Stuck buffering with no progress for a long time
+      if (isBuffering && el.paused && el.readyState < HTMLMediaElement.HAVE_CURRENT_DATA && !el.error) {
+        /* wait for canplay — don't force load */
+      }
+    }, 4000);
 
     return () => {
       window.removeEventListener('online', onOnline);

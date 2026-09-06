@@ -23,6 +23,7 @@ import { safeAudioPlay, resumeAudioIfNeeded } from '../../lib/audioPlay';
 import { useNetworkPlaybackRecovery } from '../../hooks/useNetworkPlaybackRecovery';
 import { getRemoteProgressNow } from '../../lib/remoteProgress';
 import CachedImage from '../ui/CachedImage';
+import { isNativeShell } from '../../lib/nativeMediaSession';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -182,7 +183,10 @@ export default function PlayerBar() {
       const audio = audioRef.current;
       if (!audio || !isLibraryId(track.id) || !canStreamTrackLocally(track)) return;
 
-      const wantCf = !!s._pendingCrossfade && s.crossfadeEnabled && !document.hidden;
+      const wantCf = !!s._pendingCrossfade
+        && s.crossfadeEnabled
+        && !document.hidden
+        && !isNativeShell(); // Dual Audio + load() races crash Capacitor WebView
       usePlayerStore.setState({ _pendingCrossfade: false });
 
       const canOverlap = wantCf
@@ -273,6 +277,7 @@ export default function PlayerBar() {
     const canOverlap = _pendingCrossfade
       && crossfadeEnabled
       && !document.hidden
+      && !isNativeShell()
       && !!audio.src
       && !audio.paused
       && audio.currentTime > 0.4
@@ -621,7 +626,7 @@ export default function PlayerBar() {
 
     const d = audio.duration;
     const { crossfadeEnabled, crossfadeDuration } = usePlayerStore.getState();
-    const allowCrossfade = crossfadeEnabled && !document.hidden;
+    const allowCrossfade = crossfadeEnabled && !document.hidden && !isNativeShell();
 
     if (allowCrossfade && Number.isFinite(d) && d > 0) {
       const fadeStart = Math.max(0, d - crossfadeDuration);
