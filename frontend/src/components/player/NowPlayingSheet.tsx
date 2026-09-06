@@ -9,6 +9,7 @@ import { useLocation } from 'react-router-dom';
 import { usePlayerStore } from '../../store';
 import { getArtistName, getTrackImageUrl, isTrackLiked } from '../../lib/trackUtils';
 import { ArtistLinks } from '../artists/ArtistLink';
+import CachedImage from '../ui/CachedImage';
 import { progressGradient } from '../../lib/direction';
 import { DevicePickerButton } from './DevicePicker';
 import PlaybackMeta from './PlaybackMeta';
@@ -232,11 +233,7 @@ export default function NowPlayingSheet() {
       {/* Artwork */}
       <div ref={scrollRef} className="flex-1 flex flex-col justify-center px-6 min-h-0 overflow-y-auto pb-4">
         <div className="w-full max-w-sm mx-auto aspect-square rounded-lg shadow-card overflow-hidden bg-spotify-lightgray mb-8">
-          {imageUrl ? (
-            <img src={imageUrl} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-6xl text-spotify-text">♪</div>
-          )}
+          <CachedImage src={imageUrl} className="w-full h-full object-cover" />
         </div>
 
         <div className="text-start mb-6 px-1">

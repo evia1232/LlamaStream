@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { Play } from 'lucide-react';
 import PlaylistCover from '../playlists/PlaylistCover';
+import CachedImage from '../ui/CachedImage';
+import { normalizeCoverUrl } from '../../lib/trackUtils';
 
 interface CardGridProps {
   title: string;
@@ -30,7 +32,9 @@ export default function CardGrid({ title, items, onPlay, linkPrefix = '/playlist
       <h2 className="text-heading mb-5 px-4 md:px-6">{title}</h2>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-5 px-4 md:px-6">
         {items.map((item) => {
-          const image = item.type === 'playlist' ? null : (item.coverUrl || item.thumbnailUrl || item.imageUrl);
+          const image = item.type === 'playlist'
+            ? null
+            : normalizeCoverUrl(item.coverUrl || item.thumbnailUrl || item.imageUrl || '') || null;
           const label = item.name || item.title || '';
           const href = item.type === 'artist'
             ? (() => {
@@ -58,10 +62,8 @@ export default function CardGrid({ title, items, onPlay, linkPrefix = '/playlist
                       coverImages={item.coverImages}
                       className="w-full h-full"
                     />
-                  ) : image ? (
-                    <img src={image} alt={label} className="w-full h-full object-cover" />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-4xl text-spotify-text">♪</div>
+                    <CachedImage src={image} className="w-full h-full object-cover" />
                   )}
                 </div>
                 {onPlay && (

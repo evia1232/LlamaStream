@@ -5,9 +5,14 @@ const DB_VERSION = 1;
 const META_STORE = 'snapshots';
 const AUDIO_META_STORE = 'audioMeta';
 export const AUDIO_CACHE_NAME = 'audio-stream-cache';
-export const IMAGE_CACHE_NAME = 'image-cache';
+export const IMAGE_CACHE_NAME = 'image-cache-v2';
 export const MAX_AUDIO_CACHE_BYTES = 8 * 1024 * 1024 * 1024;
 const ENABLED_KEY = 'llamastream_offline_cache_enabled';
+
+// Drop poisoned v1 entries (opaque no-cors responses that broke <img>)
+if (typeof caches !== 'undefined') {
+  void caches.delete('image-cache');
+}
 
 export type OfflineSnapshotKey = 'playlists' | 'liked' | 'library' | 'recent' | 'home' | `playlist:${string}`;
 
@@ -255,7 +260,7 @@ function collectImageUrls(data: unknown, out: Set<string>, depth = 0): void {
   }
 }
 
-/** Best-effort cache of cover art for offline UI. */
+/** Best-effort cache of cover art for offline UI. Never store opaque no-cors responses. */
 export async function cacheImageUrl(url: string): Promise<void> {
   if (!isOfflineCacheEnabled() || !url || typeof caches === 'undefined') return;
   if (url.startsWith('blob:') || url.startsWith('data:')) return;
@@ -263,18 +268,22 @@ export async function cacheImageUrl(url: string): Promise<void> {
     const absolute = url.startsWith('http') ? url : new URL(url, window.location.origin).href;
     const cache = await caches.open(IMAGE_CACHE_NAME);
     const hit = await cache.match(absolute);
-    if (hit) return;
-    const res = await fetch(absolute, { mode: 'no-cors', credentials: 'omit', referrerPolicy: 'no-referrer' });
-    await cache.put(absolute, res);
-  } catch {
-    try {
-      const absolute = url.startsWith('http') ? url : new URL(url, window.location.origin).href;
-      const cache = await caches.open(IMAGE_CACHE_NAME);
-      const res = await fetch(absolute, { credentials: 'include' });
-      if (res.ok) await cache.put(absolute, res);
-    } catch {
-      /* ignore */
+    if (hit?.ok) {
+      const ct = hit.headers.get('content-type') || '';
+      if (ct.startsWith('image/') || !ct) return;
     }
+    const sameOrigin = absolute.startsWith(window.location.origin);
+    const res = await fetch(absolute, {
+      mode: 'cors',
+      credentials: sameOrigin ? 'include' : 'omit',
+      referrerPolicy: 'no-referrer',
+    });
+    if (!res.ok || res.type === 'opaque') return;
+    const ct = res.headers.get('content-type') || '';
+    if (ct && !ct.startsWith('image/')) return;
+    await cache.put(absolute, res.clone());
+  } catch {
+    /* Cross-origin CDNs without CORS — skip caching; display still uses original URL online */
   }
 }
 
@@ -301,9 +310,13 @@ export async function resolveCachedImageSrc(url: string | null | undefined): Pro
     const absolute = url.startsWith('http') ? url : new URL(url, window.location.origin).href;
     const cache = await caches.open(IMAGE_CACHE_NAME);
     const hit = await cache.match(absolute);
-    if (!hit) return url;
+    if (!hit || !hit.ok) return url;
     const blob = await hit.blob();
-    if (!blob || blob.size === 0) return url;
+    if (!blob || blob.size < 32) return url;
+    // Opaque / empty-type blobs often fail in <img>
+    if (blob.type && !blob.type.startsWith('image/') && blob.type !== 'application/octet-stream') {
+      return url;
+    }
     return URL.createObjectURL(blob);
   } catch {
     return url;

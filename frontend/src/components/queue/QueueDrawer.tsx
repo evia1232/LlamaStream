@@ -2,8 +2,9 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, GripVertical, Trash2 } from 'lucide-react';
 import { usePlayerStore } from '../../store';
-import { getArtistName } from '../../lib/trackUtils';
+import { getArtistName, getTrackImageUrl } from '../../lib/trackUtils';
 import TrackSurface from '../tracks/TrackSurface';
+import CachedImage from '../ui/CachedImage';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -50,9 +51,7 @@ export default function QueueDrawer() {
           <p className="text-xs text-spotify-text uppercase mb-2">{t('nowPlaying')}</p>
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded bg-spotify-lightgray overflow-hidden shrink-0">
-              {currentTrack.thumbnailUrl && (
-                <img src={currentTrack.thumbnailUrl} alt="" className="w-full h-full object-cover" />
-              )}
+              <CachedImage src={getTrackImageUrl(currentTrack)} className="w-full h-full object-cover" />
             </div>
             <div className="min-w-0 text-start">
               <p className="text-sm font-medium truncate">{currentTrack.title}</p>
@@ -80,9 +79,7 @@ export default function QueueDrawer() {
             >
               <GripVertical className="w-4 h-4 text-spotify-text opacity-0 group-hover:opacity-100 cursor-grab" />
               <div className="w-10 h-10 rounded bg-spotify-lightgray overflow-hidden shrink-0">
-                {item.track.thumbnailUrl && (
-                  <img src={item.track.thumbnailUrl} alt="" className="w-full h-full object-cover" />
-                )}
+                <CachedImage src={getTrackImageUrl(item.track)} className="w-full h-full object-cover" />
               </div>
               <div className="flex-1 min-w-0 text-start">
                 <p className="text-sm truncate">{item.track.title}</p>

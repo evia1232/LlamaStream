@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import api from '../api/client';
 import CardGrid from '../components/common/CardGrid';
 import { Track } from '../types';
-import { normalizeTrack } from '../lib/trackUtils';
+import { normalizeTrack, getTrackImageUrl } from '../lib/trackUtils';
 import TrackRow from '../components/tracks/TrackRow';
 import TrackSurface from '../components/tracks/TrackSurface';
 import { usePlayerStore } from '../store';
@@ -107,11 +107,7 @@ export default function HomePage() {
                   className="flex items-center gap-0 bg-white/10 hover:bg-white/20 rounded-spotify overflow-hidden transition-all duration-200 group text-start cursor-pointer"
                 >
                   <div className="w-16 h-16 md:w-[4.5rem] md:h-[4.5rem] shrink-0 shadow-card bg-spotify-lightgray">
-                    {track.thumbnailUrl ? (
-                      <CachedImage src={track.thumbnailUrl} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">♪</div>
-                    )}
+                    <CachedImage src={getTrackImageUrl(normalized)} className="w-full h-full object-cover" />
                   </div>
                   <span className="text-sm font-bold truncate px-4 group-hover:text-white">{track.title}</span>
                 </TrackSurface>

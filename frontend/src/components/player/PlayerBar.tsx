@@ -22,6 +22,7 @@ import { effectivePlaybackVolume, isMobileViewport } from '../../lib/volume';
 import { safeAudioPlay, resumeAudioIfNeeded } from '../../lib/audioPlay';
 import { useNetworkPlaybackRecovery } from '../../hooks/useNetworkPlaybackRecovery';
 import { getRemoteProgressNow } from '../../lib/remoteProgress';
+import CachedImage from '../ui/CachedImage';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -703,11 +704,7 @@ export default function PlayerBar() {
           className="flex items-center gap-3 flex-1 min-w-0 text-start active:opacity-80"
         >
           <div className="w-11 h-11 rounded bg-spotify-gray shrink-0 overflow-hidden shadow-sm">
-            {imageUrl ? (
-              <img src={imageUrl} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-spotify-text text-sm">♪</div>
-            )}
+            <CachedImage src={imageUrl} className="w-full h-full object-cover" />
           </div>
           <div className="flex-1 min-w-0 text-start" dir="auto">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>
@@ -761,11 +758,7 @@ export default function PlayerBar() {
           onContextMenu={(e) => openTrackContextMenu(e, currentTrack)}
         >
           <div className="w-14 h-14 rounded bg-spotify-gray shrink-0 overflow-hidden">
-            {currentTrack.thumbnailUrl ? (
-              <img src={currentTrack.thumbnailUrl} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-spotify-text">♪</div>
-            )}
+            <CachedImage src={imageUrl} className="w-full h-full object-cover" />
           </div>
           <div className="min-w-0">
             <p className="text-sm font-normal truncate">{currentTrack.title}</p>

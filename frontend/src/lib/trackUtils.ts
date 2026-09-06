@@ -20,7 +20,29 @@ export function getTrackImageUrl(track: {
   thumbnailUrl?: string | null;
   album?: { coverUrl?: string | null } | null;
 }): string | null {
-  return track.thumbnailUrl || track.album?.coverUrl || null;
+  const raw = (track.thumbnailUrl || track.album?.coverUrl || '').trim();
+  if (!raw) return null;
+  return normalizeCoverUrl(raw) || null;
+}
+
+/** Fix common broken / low-quality cover URL patterns. */
+export function normalizeCoverUrl(url: string): string {
+  let u = url.trim();
+  if (!u) return u;
+
+  // Protocol-relative
+  if (u.startsWith('//')) u = `https:${u}`;
+
+  // YouTube: prefer hqdefault (maxresdefault often 404s)
+  const yt = u.match(/^(https?:\/\/i\.ytimg\.com\/vi\/([^/]+))\/(maxresdefault|sddefault|hq720)(\.jpg)?/i);
+  if (yt) {
+    return `${yt[1]}/hqdefault.jpg`;
+  }
+
+  // Dead / placeholder-ish empty spotify
+  if (/scdn\.co\/.*null/i.test(u)) return '';
+
+  return u;
 }
 
 /** Extract Spotify track id from open.spotify.com/track/... URL */
@@ -88,7 +110,7 @@ export function normalizeTrack(track: {
     ? { id: track.artist.id, name: track.artist.name || artistName }
     : { name: artistName };
 
-  const thumbnailUrl = track.thumbnailUrl || track.album?.coverUrl || null;
+  const thumbnailUrl = normalizeCoverUrl(track.thumbnailUrl || track.album?.coverUrl || '') || null;
 
   return {
     id: track.id,
