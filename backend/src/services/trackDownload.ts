@@ -122,6 +122,17 @@ async function finalizeTrackDownload(
   const { filePath, storageTier } = await finalizeFileStorage(trackId, download.filePath);
   const downloadedAt = new Date();
 
+  const { needsBetterAlbumArt, resolveAlbumArt, upgradeTrackAlbumArtInBackground } = await import('./albumArt');
+  let thumbnailUrl = track.thumbnailUrl;
+  if (needsBetterAlbumArt(thumbnailUrl)) {
+    thumbnailUrl = await resolveAlbumArt({
+      title: trackTitle,
+      artist: artistName,
+      album: meta.album || track.album?.title,
+      preferredUrl: track.thumbnailUrl || download.thumbnailUrl,
+    }) || download.thumbnailUrl || track.thumbnailUrl;
+  }
+
   await prisma.track.update({
     where: { id: trackId },
     data: {
@@ -130,7 +141,7 @@ async function finalizeTrackDownload(
       filePath,
       sourceUrl: download.sourceUrl,
       sourceId: download.sourceId,
-      thumbnailUrl: download.thumbnailUrl || track.thumbnailUrl,
+      thumbnailUrl,
       quality,
       isDownloaded: true,
       downloadedAt,
@@ -149,10 +160,19 @@ async function finalizeTrackDownload(
         storageTier,
         quality,
         duration: download.duration || track.duration,
-        thumbnailUrl: download.thumbnailUrl || track.thumbnailUrl,
+        thumbnailUrl: thumbnailUrl || download.thumbnailUrl || track.thumbnailUrl,
       },
       trackId,
     );
+  }
+
+  if (needsBetterAlbumArt(thumbnailUrl)) {
+    upgradeTrackAlbumArtInBackground(trackId, {
+      title: trackTitle,
+      artist: artistName,
+      album: meta.album || track.album?.title,
+      preferredUrl: thumbnailUrl,
+    });
   }
 
   fetchLyricsForTrack({

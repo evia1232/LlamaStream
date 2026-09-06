@@ -5,12 +5,15 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.Binder;
+import android.os.PowerManager;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
@@ -43,6 +46,14 @@ public class MediaSessionService extends Service {
 
     private MediaSessionPlugin plugin;
     private final IBinder binder = new LocalBinder();
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
+
+    public final class LocalBinder extends Binder {
+        MediaSessionService getService() {
+            return MediaSessionService.this;
+        }
+    }
 
     public final class LocalBinder extends Binder {
         MediaSessionService getService() {
@@ -189,6 +200,7 @@ public class MediaSessionService extends Service {
     }
 
     public void destroy() {
+        releaseLocks();
         try {
             stopForeground(true);
         } catch (Exception ignored) {
@@ -215,6 +227,52 @@ public class MediaSessionService extends Service {
 
     public void setPlaybackState(int playbackState) {
         this.playbackState = playbackState;
+        if (playbackState == PlaybackStateCompat.STATE_PLAYING) {
+            acquireLocks();
+        } else {
+            releaseLocks();
+        }
+    }
+
+    @SuppressLint("WakelockTimeout")
+    private void acquireLocks() {
+        try {
+            if (wakeLock == null) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Music24:Playback");
+                    wakeLock.setReferenceCounted(false);
+                }
+            }
+            if (wakeLock != null && !wakeLock.isHeld()) {
+                wakeLock.acquire();
+            }
+        } catch (Exception ignored) {
+        }
+        try {
+            if (wifiLock == null) {
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Music24:Playback");
+                    wifiLock.setReferenceCounted(false);
+                }
+            }
+            if (wifiLock != null && !wifiLock.isHeld()) {
+                wifiLock.acquire();
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void releaseLocks() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        } catch (Exception ignored) {
+        }
+        try {
+            if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
+        } catch (Exception ignored) {
+        }
     }
 
     public void setTitle(String title) {

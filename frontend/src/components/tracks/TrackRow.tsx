@@ -1,14 +1,16 @@
 import { Track } from '../../types';
-import { Play, Heart, ListPlus, MoreHorizontal, Download } from 'lucide-react';
+import { Play, Heart, ListPlus, MoreHorizontal, Download, HardDrive } from 'lucide-react';
 import clsx from 'clsx';
 import { usePlayerStore } from '../../store';
 import { useTrackMenuStore } from '../../store/trackMenuStore';
 import { getArtistName, getTrackImageUrl, isTrackLiked } from '../../lib/trackUtils';
 import { useTranslation } from 'react-i18next';
 import api from '../../api/client';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import TrackSurface from './TrackSurface';
 import PlaybackMeta from '../player/PlaybackMeta';
+import CachedImage from '../ui/CachedImage';
+import { isTrackCachedLocally } from '../../lib/offlineStore';
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -31,11 +33,15 @@ function TrackArtwork({
   isCurrent,
   isPlaying,
   onPlay,
+  cachedLocally,
+  cachedTitle,
 }: {
   imageUrl: string | null;
   isCurrent: boolean;
   isPlaying: boolean;
   onPlay: () => void;
+  cachedLocally?: boolean;
+  cachedTitle?: string;
 }) {
   return (
     <button
@@ -45,9 +51,18 @@ function TrackArtwork({
       aria-label="Play"
     >
       {imageUrl ? (
-        <img src={imageUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+        <CachedImage src={imageUrl} className="w-full h-full object-cover" />
       ) : (
         <div className="w-full h-full flex items-center justify-center text-spotify-text text-sm">♪</div>
+      )}
+
+      {cachedLocally && (
+        <span
+          className="absolute bottom-0 end-0 m-0.5 rounded-sm bg-black/75 p-0.5 text-spotify-green"
+          title={cachedTitle}
+        >
+          <HardDrive className="w-2.5 h-2.5" />
+        </span>
       )}
 
       {isCurrent && isPlaying ? (
@@ -81,6 +96,7 @@ export default function TrackRow({
   const { openMenuFromElement, openPlaylistForTrack, menuOpen: globalMenuOpen, track: menuTrack } = useTrackMenuStore();
   const menuOpen = globalMenuOpen && menuTrack?.id === track.id;
   const [downloading, setDownloading] = useState(false);
+  const [cachedLocally, setCachedLocally] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
 
   const menuOptions = { playlistId, onDeleted, onRefresh: onDeleted ?? onRemovedFromPlaylist };
@@ -89,6 +105,21 @@ export default function TrackRow({
   const isLiked = isTrackLiked(track, likedTrackIds, likedPendingTracks);
   const artistName = getArtistName(track.artist);
   const imageUrl = getTrackImageUrl(track);
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = () => {
+      void isTrackCachedLocally(track.id).then((v) => {
+        if (!cancelled) setCachedLocally(v);
+      });
+    };
+    check();
+    window.addEventListener('ls-audio-cache-changed', check);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('ls-audio-cache-changed', check);
+    };
+  }, [track.id]);
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
@@ -175,6 +206,8 @@ export default function TrackRow({
             isCurrent={isCurrent}
             isPlaying={isPlaying}
             onPlay={handlePlay}
+            cachedLocally={cachedLocally || !!track.isDownloaded}
+            cachedTitle={t('cachedOnDevice')}
           />
           <div className="min-w-0 text-start">
             <p className={clsx('text-base truncate', isCurrent ? 'text-spotify-green' : 'text-white font-normal')}>

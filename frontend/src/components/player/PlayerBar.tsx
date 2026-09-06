@@ -120,6 +120,11 @@ export default function PlayerBar() {
   // Imperative loader for lock-screen / background advance (React may not re-render)
   useEffect(() => {
     registerLoadLocalTrack((track, startTime) => {
+      const s = usePlayerStore.getState();
+      if (s.isRemoteActive && s.activeDeviceId && s.activeDeviceId !== s.localDeviceId) {
+        return;
+      }
+
       const audio = audioRef.current;
       if (!audio || !isLibraryId(track.id) || !canStreamTrackLocally(track)) return;
 
@@ -366,6 +371,10 @@ export default function PlayerBar() {
     if (isRemoteActive) {
       audio.pause();
       outgoingRef.current?.pause();
+      if (audio.src) {
+        audio.removeAttribute('src');
+        audio.load();
+      }
       return;
     }
 

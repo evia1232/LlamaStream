@@ -107,7 +107,7 @@ function scoreRecord(
     else if (diff <= 20) score -= 5;
     else score -= 15;
   }
-  if (record.syncedLyrics) score += 5;
+  if (record.syncedLyrics) score += 12;
   if (record.plainLyrics || record.syncedLyrics) score += 3;
   return score;
 }
@@ -172,7 +172,21 @@ async function resolveFromLrcLib(target: { title: string; artist: string; durati
 
   for (const params of getAttempts) {
     const hit = await tryGetLyrics(params);
-    if (hit && (hit.plainLyrics || hit.syncedLyrics)) return hit;
+    if (hit && (hit.plainLyrics || hit.syncedLyrics)) {
+      // Prefer exact get hits that include synced lyrics when available
+      if (hit.syncedLyrics || !hit.plainLyrics) return hit;
+      // Keep looking briefly for a synced variant via search below if only plain
+      const syncedAlt = await searchLyrics({
+        track_name: params.track_name || '',
+        artist_name: params.artist_name || '',
+      });
+      const bestSynced = pickBest(
+        syncedAlt.filter((r) => !!r.syncedLyrics),
+        { title: params.track_name || target.title, artist: params.artist_name || target.artist, duration, album },
+        28,
+      );
+      return bestSynced || hit;
+    }
   }
 
   const searchQueries: Record<string, string>[] = [];
@@ -212,18 +226,42 @@ async function resolveFromLrcLib(target: { title: string; artist: string; durati
 
 function parseLrc(lrc: string): { time: number; text: string }[] {
   const lines: { time: number; text: string }[] = [];
-  for (const line of lrc.split('\n')) {
-    const match = line.match(/\[(\d+):(\d+\.?\d*)\](.*)/);
-    if (match) {
-      lines.push({ time: parseInt(match[1], 10) * 60 + parseFloat(match[2]), text: match[3].trim() });
+  let fileOffsetSec = 0;
+
+  for (const raw of lrc.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+
+    const offsetMatch = line.match(/^\[offset:\s*(-?\d+)\]$/i);
+    if (offsetMatch) {
+      const ms = parseInt(offsetMatch[1], 10);
+      if (Number.isFinite(ms)) fileOffsetSec = ms / 1000;
+      continue;
+    }
+
+    if (/^\[(ti|ar|al|by|id|length|re|ve|tool):/i.test(line)) continue;
+
+    const tags = [...line.matchAll(/\[(\d{1,3}):(\d{1,2}(?:\.\d+)?)\]/g)];
+    if (tags.length === 0) continue;
+    const text = line.replace(/\[\d{1,3}:\d{1,2}(?:\.\d+)?\]/g, '').trim();
+    for (const tag of tags) {
+      const minutes = parseInt(tag[1], 10);
+      const seconds = parseFloat(tag[2]);
+      if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) continue;
+      lines.push({ time: minutes * 60 + seconds, text });
     }
   }
-  return lines.sort((a, b) => a.time - b.time);
+
+  const adjusted = fileOffsetSec
+    ? lines.map((l) => ({ ...l, time: Math.max(0, l.time + fileOffsetSec) }))
+    : lines;
+
+  return adjusted.sort((a, b) => a.time - b.time);
 }
 
 export { parseLrc };
 
-async function saveLyricsRecord(trackId: string, data: LrcRecord) {
+async function saveLyricsRecord(trackId: string, data: LrcRecord, trackDuration?: number) {
   let synced = false;
   let lines: { time: number; text: string }[] | null = null;
   let content = data.plainLyrics || '';
@@ -232,6 +270,14 @@ async function saveLyricsRecord(trackId: string, data: LrcRecord) {
     synced = true;
     content = data.syncedLyrics;
     lines = parseLrc(data.syncedLyrics);
+
+    // Align LRC to our audio when lengths differ (YouTube intros / radio edits)
+    if (lines.length > 0 && trackDuration && data.duration) {
+      const delta = trackDuration - data.duration;
+      if (Math.abs(delta) >= 0.35 && Math.abs(delta) <= 18) {
+        lines = lines.map((l) => ({ ...l, time: Math.max(0, l.time + delta) }));
+      }
+    }
   }
 
   if (!content) return null;
@@ -291,7 +337,7 @@ export async function fetchLyricsForTrack(input: LyricsFetchInput | string, titl
     const record = await resolveFromLrcLib(meta);
     if (!record) return null;
 
-    return saveLyricsRecord(trackId, record);
+    return saveLyricsRecord(trackId, record, meta.duration);
   } catch (err) {
     console.error('Lyrics fetch failed:', err);
     return null;

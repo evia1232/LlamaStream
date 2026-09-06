@@ -2,14 +2,15 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useAuthStore, usePlayerStore } from '../store';
 import { getWsUrl } from '../lib/apiUrl';
 import { getDeviceId, getDeviceName } from '../lib/deviceId';
-import { normalizeTrack } from '../lib/trackUtils';
 import { Track } from '../types';
 
 import { setPlaybackSyncSender } from '../lib/playbackSyncClient';
+
 export function usePlaybackSync() {
   const token = useAuthStore((s) => s.token);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>();
+  const connectRef = useRef<() => void>(() => undefined);
 
   const handleMessage = useCallback((raw: string) => {
     try {
@@ -73,7 +74,17 @@ export function usePlaybackSync() {
     const deviceName = getDeviceName();
     usePlayerStore.getState().initLocalDevice(deviceId, deviceName);
 
+    let closedOnPurpose = false;
+
     const connect = () => {
+      if (closedOnPurpose) return;
+      clearTimeout(reconnectRef.current);
+
+      const prev = wsRef.current;
+      if (prev && (prev.readyState === WebSocket.OPEN || prev.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
       const ws = new WebSocket(getWsUrl(token));
       wsRef.current = ws;
 
@@ -94,21 +105,59 @@ export function usePlaybackSync() {
 
       ws.onclose = () => {
         setPlaybackSyncSender(null);
-        reconnectRef.current = setTimeout(connect, 3000);
+        if (closedOnPurpose) return;
+        const hostPlaying = (() => {
+          const s = usePlayerStore.getState();
+          return s.isPlaying && !s.isRemoteActive;
+        })();
+        // Reconnect fast while this device is the player (screen-off Doze)
+        reconnectRef.current = setTimeout(connect, hostPlaying ? 800 : 2500);
       };
 
-      ws.onerror = () => ws.close();
+      ws.onerror = () => {
+        try { ws.close(); } catch { /* ignore */ }
+      };
 
-      // Allow queuing commands before onopen; flush happens in attachSender
       attachSender();
     };
 
+    connectRef.current = connect;
     connect();
 
+    const ensureConnected = () => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        connect();
+      }
+    };
+
+    const onKeepAlive = () => {
+      ensureConnected();
+      const s = usePlayerStore.getState();
+      // Host with frozen timers: still try to advance if a command already mutated state
+      if (s.isPlaying && !s.isRemoteActive && s.currentTrack) {
+        // Soft re-register keeps server mapping fresh after Doze
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ type: 'register', deviceId, deviceName }));
+          } catch { /* ignore */ }
+        }
+      }
+    };
+
+    window.addEventListener('ls-keepalive', onKeepAlive);
+    document.addEventListener('visibilitychange', ensureConnected);
+    window.addEventListener('focus', ensureConnected);
+
     return () => {
+      closedOnPurpose = true;
       clearTimeout(reconnectRef.current);
       setPlaybackSyncSender(null);
-      wsRef.current?.close();
+      window.removeEventListener('ls-keepalive', onKeepAlive);
+      document.removeEventListener('visibilitychange', ensureConnected);
+      window.removeEventListener('focus', ensureConnected);
+      try { wsRef.current?.close(); } catch { /* ignore */ }
     };
   }, [token, handleMessage]);
 

@@ -15,6 +15,14 @@ interface DeviceClient {
 
 const clientsByUser = new Map<string, Map<string, DeviceClient>>();
 
+/** Remote transport commands waiting for a device whose WS briefly dropped (screen off / Doze). */
+const pendingCommandsByDevice = new Map<string, object[]>();
+const MAX_PENDING_COMMANDS = 25;
+
+/** Don't clear "active player" on a blip — phone lock often drops WS for a few seconds. */
+const DISCONNECT_GRACE_MS = 60_000;
+const disconnectGraceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 function userClients(userId: string): Map<string, DeviceClient> {
   let map = clientsByUser.get(userId);
   if (!map) {
@@ -22,6 +30,10 @@ function userClients(userId: string): Map<string, DeviceClient> {
     clientsByUser.set(userId, map);
   }
   return map;
+}
+
+function graceKey(userId: string, deviceId: string) {
+  return `${userId}:${deviceId}`;
 }
 
 export function listDevices(userId: string): ConnectedDevice[] {
@@ -48,6 +60,10 @@ export async function getValidatedActiveDevice(userId: string): Promise<{
   if (isDeviceConnected(userId, activeId)) {
     return { activeDeviceId: activeId, activeDeviceName: state?.activeDeviceName ?? null };
   }
+  // Still within grace — keep reporting the last active player
+  if (disconnectGraceTimers.has(graceKey(userId, activeId))) {
+    return { activeDeviceId: activeId, activeDeviceName: state?.activeDeviceName ?? null };
+  }
   await updateSharedPlayback(userId, {
     activeDeviceId: null,
     activeDeviceName: null,
@@ -56,24 +72,132 @@ export async function getValidatedActiveDevice(userId: string): Promise<{
   return { activeDeviceId: null, activeDeviceName: null };
 }
 
+/**
+ * Soft-disconnect: keep active player for a grace period so lock-screen Doze
+ * does not wipe host status / drop remote skip commands.
+ * Returns current validated active device immediately (may still be the old host).
+ */
 export async function onDeviceDisconnected(userId: string, deviceId: string): Promise<{
   activeDeviceId: string | null;
   activeDeviceName: string | null;
 }> {
   const state = await getSharedPlaybackState(userId);
-  if (state?.activeDeviceId === deviceId) {
-    await updateSharedPlayback(userId, {
-      activeDeviceId: null,
-      activeDeviceName: null,
-      isPlaying: false,
-    });
-    return { activeDeviceId: null, activeDeviceName: null };
+  if (state?.activeDeviceId !== deviceId) {
+    return getValidatedActiveDevice(userId);
   }
-  return getValidatedActiveDevice(userId);
+
+  const key = graceKey(userId, deviceId);
+  const existing = disconnectGraceTimers.get(key);
+  if (existing) clearTimeout(existing);
+
+  disconnectGraceTimers.set(
+    key,
+    setTimeout(() => {
+      void (async () => {
+        disconnectGraceTimers.delete(key);
+        if (isDeviceConnected(userId, deviceId)) return;
+        const latest = await getSharedPlaybackState(userId);
+        if (latest?.activeDeviceId === deviceId) {
+          await updateSharedPlayback(userId, {
+            activeDeviceId: null,
+            activeDeviceName: null,
+            isPlaying: false,
+          });
+          broadcastToUser(userId, {
+            type: 'devices',
+            devices: listDevices(userId),
+            activeDeviceId: null,
+            activeDeviceName: null,
+          });
+        }
+      })();
+    }, DISCONNECT_GRACE_MS),
+  );
+
+  return {
+    activeDeviceId: deviceId,
+    activeDeviceName: state.activeDeviceName ?? null,
+  };
+}
+
+/** Cancel grace period when the device comes back. */
+export function cancelDisconnectGrace(userId: string, deviceId: string) {
+  const key = graceKey(userId, deviceId);
+  const timer = disconnectGraceTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    disconnectGraceTimers.delete(key);
+  }
+}
+
+export function enqueuePendingCommand(deviceId: string, message: object) {
+  const list = pendingCommandsByDevice.get(deviceId) ?? [];
+  list.push(message);
+  while (list.length > MAX_PENDING_COMMANDS) list.shift();
+  pendingCommandsByDevice.set(deviceId, list);
+}
+
+export function flushPendingCommands(deviceId: string, ws: WebSocket) {
+  const list = pendingCommandsByDevice.get(deviceId);
+  if (!list?.length) return;
+  pendingCommandsByDevice.delete(deviceId);
+  for (const message of list) {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify(message));
+      } catch {
+        enqueuePendingCommand(deviceId, message);
+        break;
+      }
+    } else {
+      enqueuePendingCommand(deviceId, message);
+      break;
+    }
+  }
+}
+
+/**
+ * Deliver a command to all other devices. If a specific target is offline,
+ * queue it until that device re-registers (common when phone screen is off).
+ */
+export function deliverCommand(
+  userId: string,
+  message: {
+    type: 'command';
+    fromDeviceId?: string;
+    targetDeviceId?: string;
+    action?: string;
+    seekTime?: number;
+    trackId?: string;
+    position?: number;
+    isPlaying?: boolean;
+  },
+  exceptDeviceId?: string,
+) {
+  const target = message.targetDeviceId;
+  let deliveredToTarget = false;
+
+  const payload = JSON.stringify(message);
+  for (const client of userClients(userId).values()) {
+    if (exceptDeviceId && client.deviceId === exceptDeviceId) continue;
+    if (client.ws.readyState !== WebSocket.OPEN) continue;
+    try {
+      client.ws.send(payload);
+      if (target && client.deviceId === target) deliveredToTarget = true;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (target && !deliveredToTarget) {
+    enqueuePendingCommand(target, message);
+  }
 }
 
 export function registerDevice(userId: string, deviceId: string, deviceName: string, ws: WebSocket) {
+  cancelDisconnectGrace(userId, deviceId);
   userClients(userId).set(deviceId, { ws, deviceId, deviceName, userId });
+  flushPendingCommands(deviceId, ws);
 }
 
 export function unregisterDevice(userId: string, deviceId: string) {

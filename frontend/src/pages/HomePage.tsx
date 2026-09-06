@@ -7,6 +7,8 @@ import { normalizeTrack } from '../lib/trackUtils';
 import TrackRow from '../components/tracks/TrackRow';
 import TrackSurface from '../components/tracks/TrackSurface';
 import { usePlayerStore } from '../store';
+import CachedImage from '../components/ui/CachedImage';
+import { loadOfflineSnapshot, saveOfflineSnapshot } from '../lib/offlineStore';
 
 interface HomeData {
   greeting: string;
@@ -27,20 +29,55 @@ export default function HomePage() {
   const { t } = useTranslation();
   const [data, setData] = useState<HomeData | null>(null);
   const [discover, setDiscover] = useState<DiscoverData | null>(null);
+  const [fromCache, setFromCache] = useState(false);
   const playTrack = usePlayerStore((s) => s.playTrack);
 
   useEffect(() => {
-    api.get('/home').then(({ data: d }) => setData(d)).catch(console.error);
-    api.get('/discover/recommendations', { params: { limit: 10 } })
-      .then(({ data: d }) => setDiscover(d))
-      .catch(console.error);
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const { data: d } = await api.get('/home');
+        if (cancelled) return;
+        setData(d);
+        setFromCache(false);
+        void saveOfflineSnapshot('home', d);
+      } catch {
+        const cached = await loadOfflineSnapshot<HomeData>('home');
+        if (cancelled) return;
+        if (cached) {
+          setData(cached);
+          setFromCache(true);
+        }
+      }
+
+      try {
+        const { data: d } = await api.get('/discover/recommendations', { params: { limit: 10 } });
+        if (!cancelled) setDiscover(d);
+      } catch {
+        /* discover needs network */
+      }
+    };
+
+    void load();
+    return () => { cancelled = true; };
   }, []);
 
   const refresh = () => {
-    api.get('/home').then(({ data: d }) => setData(d)).catch(console.error);
+    api.get('/home').then(({ data: d }) => {
+      setData(d);
+      setFromCache(false);
+      void saveOfflineSnapshot('home', d);
+    }).catch(async () => {
+      const cached = await loadOfflineSnapshot<HomeData>('home');
+      if (cached) {
+        setData(cached);
+        setFromCache(true);
+      }
+    });
     api.get('/discover/recommendations', { params: { limit: 10 } })
       .then(({ data: d }) => setDiscover(d))
-      .catch(console.error);
+      .catch(() => undefined);
   };
 
   if (!data) {
@@ -53,9 +90,11 @@ export default function HomePage() {
 
   return (
     <div className="pb-8">
-      {/* Hero */}
       <div className="gradient-bg px-4 md:px-8 pt-6 md:pt-10 pb-8">
         <h1 className="text-display mb-6 md:mb-8">{t(data.greeting)}</h1>
+        {fromCache && (
+          <p className="text-xs text-spotify-text mb-4 -mt-4">{t('showingCachedLibrary')}</p>
+        )}
         {data.recentlyPlayed.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 md:gap-3">
             {data.recentlyPlayed.slice(0, 6).map((track) => {
@@ -67,11 +106,11 @@ export default function HomePage() {
                   onClick={() => playTrack(normalized)}
                   className="flex items-center gap-0 bg-white/10 hover:bg-white/20 rounded-spotify overflow-hidden transition-all duration-200 group text-start cursor-pointer"
                 >
-                  <div className="w-16 h-16 md:w-[4.5rem] md:h-[4.5rem] shrink-0 shadow-card">
+                  <div className="w-16 h-16 md:w-[4.5rem] md:h-[4.5rem] shrink-0 shadow-card bg-spotify-lightgray">
                     {track.thumbnailUrl ? (
-                      <img src={track.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+                      <CachedImage src={track.thumbnailUrl} className="w-full h-full object-cover" />
                     ) : (
-                      <div className="w-full h-full bg-spotify-lightgray flex items-center justify-center">♪</div>
+                      <div className="w-full h-full flex items-center justify-center">♪</div>
                     )}
                   </div>
                   <span className="text-sm font-bold truncate px-4 group-hover:text-white">{track.title}</span>

@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
+import CachedImage from '../ui/CachedImage';
 
 interface PlaylistCoverProps {
   coverUrl?: string | null;
@@ -10,7 +11,7 @@ interface PlaylistCoverProps {
 }
 
 function CoverImage({ src, className }: { src: string; className?: string }) {
-  return <img src={src} alt="" className={clsx('w-full h-full object-cover', className)} loading="lazy" />;
+  return <CachedImage src={src} className={clsx('w-full h-full object-cover', className)} />;
 }
 
 export default function PlaylistCover({

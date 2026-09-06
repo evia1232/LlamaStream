@@ -12,6 +12,7 @@ import { fetchLyricsForTrack } from './lyrics';
 import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress, waitForTrackDownload } from './trackDownload';
 import { getCacheAudioDir, getDownloadDirForTrack, finalizeFileStorage, promoteTrackToLibrary, isTrackPinned } from './trackStorage';
 import { findCanonicalDownloadedTrack, linkTrackToCanonical, propagateDownloadToSourceId } from './trackDedup';
+import { resolveAlbumArt, needsBetterAlbumArt, upgradeTrackAlbumArtInBackground } from './albumArt';
 
 export interface SearchResult {
   id: string;
@@ -343,6 +344,13 @@ export async function saveTrackRecord(
     ? await finalizeFileStorage(trackId, download.filePath)
     : { filePath: download.filePath, storageTier: 'CACHE' as const };
 
+  const albumArt = await resolveAlbumArt({
+    title: trackTitle,
+    artist: artistName,
+    album: preferredAlbum,
+    preferredUrl: spotifyMeta?.imageUrl || download.thumbnailUrl,
+  });
+
   const data = {
     title: trackTitle,
     artistId: artist.id,
@@ -350,7 +358,7 @@ export async function saveTrackRecord(
     filePath,
     sourceUrl: download.sourceUrl,
     sourceId: download.sourceId,
-    thumbnailUrl: download.thumbnailUrl,
+    thumbnailUrl: albumArt || download.thumbnailUrl,
     quality,
     isDownloaded: true,
     downloadedAt: new Date(),
@@ -379,7 +387,7 @@ export async function saveTrackRecord(
         storageTier,
         quality,
         duration: download.duration,
-        thumbnailUrl: download.thumbnailUrl,
+        thumbnailUrl: albumArt || download.thumbnailUrl,
       },
       track.id,
     );
@@ -403,7 +411,8 @@ export async function upsertPendingTrack(
   source: ResolvedSource,
   quality: 'LOW' | 'NORMAL' | 'HIGH',
   preferredTitle?: string,
-  preferredArtist?: string
+  preferredArtist?: string,
+  opts?: { album?: string; preferredThumbnail?: string; spotifyUrl?: string },
 ) {
   const artistName = preferredArtist || source.artist;
   const trackTitle = preferredTitle || source.title;
@@ -430,13 +439,25 @@ export async function upsertPendingTrack(
     }
   }
 
+  const keepExistingArt = existing?.thumbnailUrl && !needsBetterAlbumArt(existing.thumbnailUrl)
+    ? existing.thumbnailUrl
+    : null;
+
+  const albumArt = keepExistingArt || await resolveAlbumArt({
+    title: trackTitle,
+    artist: artistName,
+    album: opts?.album,
+    preferredUrl: opts?.preferredThumbnail || source.thumbnailUrl,
+    spotifyUrl: opts?.spotifyUrl,
+  });
+
   const data = {
     title: trackTitle,
     artistId: artist.id,
     duration: source.duration,
     sourceUrl: source.url,
     sourceId: source.sourceId,
-    thumbnailUrl: source.thumbnailUrl,
+    thumbnailUrl: albumArt || source.thumbnailUrl,
     quality,
     isDownloaded: false,
     filePath: null as string | null,
@@ -731,7 +752,7 @@ export function resolveAndAttachSourceInBackground(
   trackId: string,
   input: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH',
-  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string },
+  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string; thumbnailUrl?: string },
 ) {
   void (async () => {
     try {
@@ -745,10 +766,23 @@ export function resolveAndAttachSourceInBackground(
         data: {
           sourceUrl: source.url,
           sourceId: source.sourceId,
-          thumbnailUrl: source.thumbnailUrl || track.thumbnailUrl,
+          // Never replace Spotify/iTunes art with a YouTube frame
+          ...(needsBetterAlbumArt(track.thumbnailUrl)
+            ? { thumbnailUrl: source.thumbnailUrl || track.thumbnailUrl }
+            : {}),
           duration: source.duration || track.duration,
         },
       });
+
+      if (needsBetterAlbumArt(track.thumbnailUrl)) {
+        upgradeTrackAlbumArtInBackground(trackId, {
+          title: opts?.title || track.title,
+          artist: opts?.artist || track.artist.name,
+          album: opts?.album,
+          preferredUrl: opts?.thumbnailUrl || source.thumbnailUrl || track.thumbnailUrl,
+          spotifyUrl: opts?.spotifyUrl,
+        });
+      }
 
       ensureBackgroundDownload(trackId, source.url, quality, {
         title: opts?.title || track.title,
@@ -793,7 +827,11 @@ export async function prepareTrackForPlayback(
       throw new Error('YouTube Shorts/Reels are not supported');
     }
     const source = sourceFromYouTubeUrl(url, opts);
-    const track = await upsertPendingTrack(source, quality, opts?.title || source.title, opts?.artist || source.artist);
+    const track = await upsertPendingTrack(source, quality, opts?.title || source.title, opts?.artist || source.artist, {
+      album: opts?.album,
+      preferredThumbnail: opts?.thumbnailUrl,
+      spotifyUrl: opts?.spotifyUrl,
+    });
     ensureBackgroundDownload(track.id, source.url, quality, {
       title: opts?.title || source.title,
       artist: opts?.artist || source.artist,
@@ -811,7 +849,11 @@ export async function prepareTrackForPlayback(
       duration: opts.duration || 0,
       thumbnailUrl: opts.thumbnailUrl || '',
     };
-    const track = await upsertPendingTrack(pendingSource, quality, opts.title, opts.artist);
+    const track = await upsertPendingTrack(pendingSource, quality, opts.title, opts.artist, {
+      album: opts.album,
+      preferredThumbnail: opts.thumbnailUrl,
+      spotifyUrl: opts.spotifyUrl,
+    });
     resolveAndAttachSourceInBackground(track.id, searchQuery, quality, opts);
     return track;
   }
@@ -822,6 +864,11 @@ export async function prepareTrackForPlayback(
     quality,
     opts?.title || source.title,
     opts?.artist || source.artist,
+    {
+      album: opts?.album,
+      preferredThumbnail: opts?.thumbnailUrl,
+      spotifyUrl: opts?.spotifyUrl,
+    },
   );
 
   ensureBackgroundDownload(track.id, source.url, quality, {
@@ -836,7 +883,7 @@ export async function prepareTrackForPlayback(
 export async function resolveAndDownload(
   input: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
-  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string; relaxed?: boolean }
+  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string; thumbnailUrl?: string; relaxed?: boolean }
 ) {
   const trimmed = input.trim();
 
@@ -924,6 +971,11 @@ export async function resolveAndDownload(
     quality,
     opts?.title || source.title,
     opts?.artist || source.artist,
+    {
+      album: opts?.album,
+      preferredThumbnail: opts?.thumbnailUrl || spotifyMeta?.imageUrl,
+      spotifyUrl: opts?.spotifyUrl,
+    },
   );
 
   if (track.isDownloaded && track.filePath && fs.existsSync(track.filePath)) {

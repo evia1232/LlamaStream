@@ -934,7 +934,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       const enteringRemote = !wasRemote;
       get()._syncApplying = true;
 
-      // Stop local audio ONLY when first becoming an observer — never on every tick
+      // Always silence local audio while observing (restorePlayback / races can restart it)
+      get()._pauseFn?.();
       if (enteringRemote) {
         get()._stopFn?.();
         void useSpotifyPlayerStore.getState().pause();
@@ -1053,7 +1054,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         break;
       }
       case 'next':
-        get().playNext();
+        get().playNext({ crossfade: false });
         break;
       case 'prev':
         get().playPrevious();
@@ -1147,7 +1148,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       }
       if (data.activeDeviceId) {
         const localId = get().localDeviceId;
-        const isRemote = data.activeDeviceId !== localId;
+        // Unknown local id yet → treat as observer so we never auto-steal from phone
+        const isRemote = !localId || data.activeDeviceId !== localId;
         set({
           activeDeviceId: data.activeDeviceId,
           activeDeviceName: data.activeDeviceName ?? null,
@@ -1179,23 +1181,46 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
     const normalized = normalizeTrack(track);
     const cachedLyrics = lyricsSessionCache.get(normalized.id) ?? null;
-    // Resume if we were playing and the user is actively returning to a warm session.
-    // For cold start we still restore the track but leave play to user gesture / media session.
-    const shouldResume = isPlaying && typeof document !== 'undefined' && document.visibilityState === 'visible';
+    const observingRemote = get().isRemoteActive
+      && !!get().activeDeviceId
+      && get().activeDeviceId !== get().localDeviceId;
+
+    // Mirror remote play state in the UI, but never start local <audio> while observing.
+    // Resume local audio only when THIS device owns playback.
+    const shouldResumeLocal = !observingRemote
+      && isPlaying
+      && typeof document !== 'undefined'
+      && document.visibilityState === 'visible';
 
     set({
       currentTrack: normalized,
       currentTime: position,
-      pendingSeekTime: position,
-      isPlaying: shouldResume,
+      pendingSeekTime: observingRemote ? 0 : position,
+      isPlaying: observingRemote ? isPlaying : shouldResumeLocal,
       lyrics: cachedLyrics,
       playbackEngine: 'local',
     });
+
+    if (observingRemote) {
+      get()._stopFn?.();
+      void useSpotifyPlayerStore.getState().pause();
+      if (isPlaying) {
+        setRemoteProgressAnchor(position, true);
+      } else {
+        clearRemoteProgressAnchor();
+      }
+    }
+
     void get().fetchLyrics(normalized.id);
-    if (shouldResume) {
+    if (shouldResumeLocal) {
       window.setTimeout(() => {
         try {
-          get()._loadLocalTrackFn?.(normalized, position);
+          const s = get();
+          if (s.isRemoteActive && s.activeDeviceId && s.activeDeviceId !== s.localDeviceId) {
+            s._stopFn?.();
+            return;
+          }
+          s._loadLocalTrackFn?.(normalized, position);
         } catch { /* ignore */ }
       }, 50);
     }

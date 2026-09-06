@@ -5,10 +5,11 @@ const DB_VERSION = 1;
 const META_STORE = 'snapshots';
 const AUDIO_META_STORE = 'audioMeta';
 export const AUDIO_CACHE_NAME = 'audio-stream-cache';
+export const IMAGE_CACHE_NAME = 'image-cache';
 export const MAX_AUDIO_CACHE_BYTES = 8 * 1024 * 1024 * 1024;
 const ENABLED_KEY = 'llamastream_offline_cache_enabled';
 
-export type OfflineSnapshotKey = 'playlists' | 'liked' | 'library' | 'recent' | `playlist:${string}`;
+export type OfflineSnapshotKey = 'playlists' | 'liked' | 'library' | 'recent' | 'home' | `playlist:${string}`;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -58,6 +59,7 @@ export async function saveOfflineSnapshot(key: OfflineSnapshotKey | string, data
     const tx = db.transaction(META_STORE, 'readwrite');
     await idbReq(tx.objectStore(META_STORE).put({ data, savedAt: Date.now() }, key));
     db.close();
+    void cacheImagesFromSnapshot(data);
   } catch {
     /* ignore */
   }
@@ -94,6 +96,30 @@ export async function getAudioCacheStats(): Promise<{ bytes: number; count: numb
     };
   } catch {
     return { bytes: 0, count: 0 };
+  }
+}
+
+export async function listCachedTrackIds(): Promise<Set<string>> {
+  try {
+    const db = await openDb();
+    const metas = await listAudioMeta(db);
+    db.close();
+    return new Set(metas.map((m) => m.trackId));
+  } catch {
+    return new Set();
+  }
+}
+
+export async function isTrackCachedLocally(trackId: string): Promise<boolean> {
+  if (!trackId) return false;
+  try {
+    const db = await openDb();
+    const tx = db.transaction(AUDIO_META_STORE, 'readonly');
+    const row = await idbReq(tx.objectStore(AUDIO_META_STORE).get(trackId));
+    db.close();
+    return !!row;
+  } catch {
+    return false;
   }
 }
 
@@ -134,6 +160,9 @@ export async function rememberCachedTrack(trackId: string, sizeBytes: number): P
       lastAccess: Date.now(),
     }));
     db.close();
+    try {
+      window.dispatchEvent(new CustomEvent('ls-audio-cache-changed'));
+    } catch { /* ignore */ }
   } catch {
     /* ignore */
   }
@@ -159,11 +188,15 @@ export async function clearAudioCache(): Promise<void> {
   try {
     if (typeof caches !== 'undefined') {
       await caches.delete(AUDIO_CACHE_NAME);
+      await caches.delete(IMAGE_CACHE_NAME);
     }
     const db = await openDb();
     const tx = db.transaction(AUDIO_META_STORE, 'readwrite');
     await idbReq(tx.objectStore(AUDIO_META_STORE).clear());
     db.close();
+    try {
+      window.dispatchEvent(new CustomEvent('ls-audio-cache-changed'));
+    } catch { /* ignore */ }
   } catch {
     /* ignore */
   }
@@ -195,4 +228,91 @@ async function evictThenPut(trackId: string, url: string, res: Response, size: n
   const cache = await caches.open(AUDIO_CACHE_NAME);
   await cache.put(url, res);
   await rememberCachedTrack(trackId, size);
+}
+
+function collectImageUrls(data: unknown, out: Set<string>, depth = 0): void {
+  if (!data || depth > 6) return;
+  if (typeof data === 'string') {
+    if (/^https?:\/\//i.test(data) || data.startsWith('/api/media/')) out.add(data);
+    return;
+  }
+  if (Array.isArray(data)) {
+    for (const item of data) collectImageUrls(item, out, depth + 1);
+    return;
+  }
+  if (typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    for (const key of ['thumbnailUrl', 'coverUrl', 'imageUrl', 'coverImages']) {
+      const v = obj[key];
+      if (typeof v === 'string') out.add(v);
+      else if (Array.isArray(v)) {
+        for (const u of v) if (typeof u === 'string') out.add(u);
+      }
+    }
+    for (const v of Object.values(obj)) {
+      if (v && typeof v === 'object') collectImageUrls(v, out, depth + 1);
+    }
+  }
+}
+
+/** Best-effort cache of cover art for offline UI. */
+export async function cacheImageUrl(url: string): Promise<void> {
+  if (!isOfflineCacheEnabled() || !url || typeof caches === 'undefined') return;
+  if (url.startsWith('blob:') || url.startsWith('data:')) return;
+  try {
+    const absolute = url.startsWith('http') ? url : new URL(url, window.location.origin).href;
+    const cache = await caches.open(IMAGE_CACHE_NAME);
+    const hit = await cache.match(absolute);
+    if (hit) return;
+    const res = await fetch(absolute, { mode: 'no-cors', credentials: 'omit', referrerPolicy: 'no-referrer' });
+    await cache.put(absolute, res);
+  } catch {
+    try {
+      const absolute = url.startsWith('http') ? url : new URL(url, window.location.origin).href;
+      const cache = await caches.open(IMAGE_CACHE_NAME);
+      const res = await fetch(absolute, { credentials: 'include' });
+      if (res.ok) await cache.put(absolute, res);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export async function cacheImagesFromSnapshot(data: unknown): Promise<void> {
+  const urls = new Set<string>();
+  collectImageUrls(data, urls);
+  let n = 0;
+  for (const url of urls) {
+    if (n++ > 80) break;
+    void cacheImageUrl(url);
+  }
+}
+
+/** Resolve a displayable URL for an image, preferring Cache API when offline. */
+export async function resolveCachedImageSrc(url: string | null | undefined): Promise<string | null> {
+  if (!url) return null;
+  if (url.startsWith('blob:') || url.startsWith('data:')) return url;
+  if (typeof navigator !== 'undefined' && navigator.onLine) {
+    void cacheImageUrl(url);
+    return url;
+  }
+  if (typeof caches === 'undefined') return url;
+  try {
+    const absolute = url.startsWith('http') ? url : new URL(url, window.location.origin).href;
+    const cache = await caches.open(IMAGE_CACHE_NAME);
+    const hit = await cache.match(absolute);
+    if (!hit) return url;
+    const blob = await hit.blob();
+    if (!blob || blob.size === 0) return url;
+    return URL.createObjectURL(blob);
+  } catch {
+    return url;
+  }
+}
+
+export function formatCacheBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }

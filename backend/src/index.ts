@@ -18,6 +18,7 @@ import {
   updateSharedPlayback,
   getValidatedActiveDevice,
   onDeviceDisconnected,
+  deliverCommand,
 } from './services/playbackSync';
 
 import authRoutes from './routes/auth';
@@ -43,6 +44,7 @@ interface WSClient extends WebSocket {
   userId?: string;
   deviceId?: string;
   isAlive?: boolean;
+  missedPongs?: number;
 }
 
 function formatTrackForSync(track: {
@@ -160,7 +162,7 @@ wss.on('connection', (ws: WSClient, req) => {
       }
 
       if (message.type === 'command' && message.deviceId && message.action) {
-        broadcastToUser(ws.userId, {
+        deliverCommand(ws.userId, {
           type: 'command',
           fromDeviceId: message.deviceId,
           targetDeviceId: message.targetDeviceId,
@@ -203,11 +205,19 @@ wss.on('connection', (ws: WSClient, req) => {
 const interval = setInterval(() => {
   wss.clients.forEach((ws) => {
     const client = ws as WSClient;
-    if (!client.isAlive) return client.terminate();
+    if (client.isAlive === false) {
+      client.missedPongs = (client.missedPongs || 0) + 1;
+      // Phone lock / Doze often delays pong — allow a few misses before kill
+      if (client.missedPongs >= 3) {
+        return client.terminate();
+      }
+    } else {
+      client.missedPongs = 0;
+    }
     client.isAlive = false;
     client.ping();
   });
-}, 30000);
+}, 25000);
 
 wss.on('close', () => clearInterval(interval));
 
