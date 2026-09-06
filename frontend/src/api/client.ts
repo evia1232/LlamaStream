@@ -18,8 +18,10 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    // Only force logout on a real auth rejection — never on offline/network failures
+    if (err.response?.status === 401 && typeof navigator !== 'undefined' && navigator.onLine) {
       localStorage.removeItem('token');
+      localStorage.removeItem('llamastream_user');
       if (!window.location.pathname.includes('/login')) {
         window.location.href = '/login';
       }

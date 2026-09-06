@@ -1237,14 +1237,49 @@ interface AuthState {
   updateProfile: (data: Partial<User>) => Promise<void>;
 }
 
+const CACHED_USER_KEY = 'llamastream_user';
+
+function loadCachedUser(): User | null {
+  try {
+    const raw = localStorage.getItem(CACHED_USER_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as User;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedUser(user: User | null): void {
+  try {
+    if (!user) localStorage.removeItem(CACHED_USER_KEY);
+    else localStorage.setItem(CACHED_USER_KEY, JSON.stringify(user));
+  } catch {
+    /* ignore */
+  }
+}
+
+function isAuthFailure(err: unknown): boolean {
+  const status = (err as { response?: { status?: number } })?.response?.status;
+  return status === 401 || status === 403;
+}
+
+function isNetworkFailure(err: unknown): boolean {
+  const e = err as { response?: unknown; code?: string; message?: string };
+  if (!e.response && typeof navigator !== 'undefined' && !navigator.onLine) return true;
+  if (!e.response && (e.code === 'ERR_NETWORK' || e.code === 'ECONNABORTED')) return true;
+  if (!e.response && /network|offline|failed to fetch/i.test(e.message || '')) return true;
+  return false;
+}
+
 export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
+  user: loadCachedUser(),
   token: localStorage.getItem('token'),
   isLoading: true,
 
   login: async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password });
     localStorage.setItem('token', data.token);
+    saveCachedUser(data.user);
     set({ user: data.user, token: data.token });
     if (data.user.language) {
       localStorage.setItem('language', data.user.language);
@@ -1255,6 +1290,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   logout: () => {
     localStorage.removeItem('token');
+    saveCachedUser(null);
     useSpotifyPlayerStore.getState().destroy();
     set({ user: null, token: null });
   },
@@ -1262,23 +1298,48 @@ export const useAuthStore = create<AuthState>((set) => ({
   fetchUser: async () => {
     const token = localStorage.getItem('token');
     if (!token) {
-      set({ isLoading: false });
+      saveCachedUser(null);
+      set({ user: null, token: null, isLoading: false });
       return;
     }
+
+    // Offline / flaky network: keep session from cache so the app stays usable
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const cached = loadCachedUser();
+      set({ user: cached, token, isLoading: false });
+      if (cached?.language) applyDocumentDirection(cached.language);
+      return;
+    }
+
     try {
       const { data } = await api.get('/auth/me');
+      saveCachedUser(data.user);
       set({ user: data.user, token, isLoading: false });
       if (data.user.language) {
         applyDocumentDirection(data.user.language);
       }
-    } catch {
-      localStorage.removeItem('token');
-      set({ user: null, token: null, isLoading: false });
+    } catch (err) {
+      if (isNetworkFailure(err)) {
+        const cached = loadCachedUser();
+        set({ user: cached, token, isLoading: false });
+        if (cached?.language) applyDocumentDirection(cached.language);
+        return;
+      }
+      if (isAuthFailure(err)) {
+        localStorage.removeItem('token');
+        saveCachedUser(null);
+        set({ user: null, token: null, isLoading: false });
+        return;
+      }
+      // Other server errors — keep token, use cache if any
+      const cached = loadCachedUser();
+      set({ user: cached, token, isLoading: false });
     }
   },
 
   updateProfile: async (profileData) => {
     const { data } = await api.put('/auth/profile', profileData);
+    saveCachedUser(data.user);
     set({ user: data.user });
     if (data.user.language) {
       localStorage.setItem('language', data.user.language);
