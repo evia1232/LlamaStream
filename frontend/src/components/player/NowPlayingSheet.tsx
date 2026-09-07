@@ -45,7 +45,7 @@ function LiveLyricsColumn({ className }: { className?: string }) {
   if (hasSynced) {
     return (
       <div className={clsx('overflow-y-auto scrollbar-spotify px-2', className)}>
-        <div className="py-[30%] space-y-1">
+        <div className="py-[28%] space-y-1">
           {lines.map((line, i) => (
             <div
               key={`${line.time}-${i}`}
@@ -212,11 +212,7 @@ export default function NowPlayingSheet() {
         });
       } catch {
         if (!cancelled) {
-          setArtistCard({
-            name: getArtistName(currentTrack.artist),
-            imageUrl: null,
-            bio: null,
-          });
+          setArtistCard({ name: getArtistName(currentTrack.artist), imageUrl: null, bio: null });
         }
       }
     };
@@ -246,11 +242,6 @@ export default function NowPlayingSheet() {
     }
   };
 
-  const handleRefreshLyrics = async () => {
-    if (!currentTrack?.id) return;
-    await fetchLyrics(currentTrack.id, true);
-  };
-
   if (!showNowPlaying || !currentTrack) return null;
 
   const artistName = getArtistName(currentTrack.artist);
@@ -273,31 +264,31 @@ export default function NowPlayingSheet() {
   const transportControls = (
     <>
       <button type="button" onClick={toggleShuffle} className={clsx('icon-btn p-3', shuffle && 'text-spotify-green')}>
-        <Shuffle className="w-5 h-5 md:w-6 md:h-6" />
+        <Shuffle className="w-6 h-6" />
       </button>
       <button type="button" onClick={() => playPrevious()} className="icon-btn p-3" aria-label={t('previous')}>
-        <SkipBack className="w-7 h-7 md:w-8 md:h-8 fill-current" />
+        <SkipBack className="w-8 h-8 fill-current" />
       </button>
       <button
         type="button"
         onClick={() => !showPreparing && setIsPlaying(!isPlaying)}
         disabled={showPreparing}
-        className="w-14 h-14 md:w-16 md:h-16 bg-white rounded-full flex items-center justify-center shadow-play-btn active:scale-95 transition-transform disabled:opacity-60"
+        className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-play-btn active:scale-95 transition-transform disabled:opacity-60"
         aria-label={isPlaying ? t('pause') : t('play')}
       >
         {showPreparing ? (
-          <div className="w-6 h-6 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+          <div className="w-7 h-7 border-2 border-black/30 border-t-black rounded-full animate-spin" />
         ) : isPlaying ? (
-          <Pause className="w-6 h-6 md:w-7 md:h-7 text-black fill-black" />
+          <Pause className="w-7 h-7 text-black fill-black" />
         ) : (
-          <PlayIcon className="w-6 h-6 md:w-7 md:h-7 text-black fill-black" />
+          <PlayIcon className="w-7 h-7 text-black fill-black" />
         )}
       </button>
       <button type="button" onClick={() => playNext()} className="icon-btn p-3" aria-label={t('next')}>
-        <SkipForward className="w-7 h-7 md:w-8 md:h-8 fill-current" />
+        <SkipForward className="w-8 h-8 fill-current" />
       </button>
       <button type="button" onClick={cycleRepeat} className={clsx('icon-btn p-3', repeat !== 'off' && 'text-spotify-green')}>
-        {repeat === 'one' ? <Repeat1 className="w-5 h-5 md:w-6 md:h-6" /> : <Repeat className="w-5 h-5 md:w-6 md:h-6" />}
+        {repeat === 'one' ? <Repeat1 className="w-6 h-6" /> : <Repeat className="w-6 h-6" />}
       </button>
     </>
   );
@@ -352,103 +343,132 @@ export default function NowPlayingSheet() {
       id: 'refreshLyrics',
       label: t('refreshLyrics'),
       icon: <Mic2 className="w-4 h-4" />,
-      onClick: () => { void handleRefreshLyrics(); },
+      onClick: () => { void fetchLyrics(currentTrack.id, true); },
     },
   ];
 
-  const relatedSection = (
-    <section className="mt-10 mb-6">
-      <h3 className="text-label mb-3 px-1">{t('relatedTracks')}</h3>
-      {related.length === 0 ? (
-        <p className="text-caption px-1">{t('noRelatedYet')}</p>
-      ) : (
-        <div className="space-y-1">
-          {related.map((tr) => (
-            <button
-              key={tr.id}
-              type="button"
-              onClick={() => void playTrack(tr)}
-              className="w-full flex items-center gap-3 p-2 rounded-md hover:bg-white/5 text-start"
-            >
-              <div className="w-12 h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
-                <CachedImage src={getTrackImageUrl(tr)} className="w-full h-full object-cover" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm truncate">{tr.title}</p>
-                <p className="text-caption truncate">{getArtistName(tr.artist)}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
-  );
+  const belowFold = (
+    <>
+      <section className="mt-4 mb-8">
+        <h3 className="text-sm font-bold mb-3">{t('relatedTracks')}</h3>
+        {related.length === 0 ? (
+          <p className="text-caption">{t('noRelatedYet')}</p>
+        ) : (
+          <div className="space-y-1">
+            {related.map((tr) => (
+              <button
+                key={tr.id}
+                type="button"
+                onClick={() => void playTrack(tr)}
+                className="w-full flex items-center gap-3 p-2 rounded-md hover:bg-white/5 text-start"
+              >
+                <div className="w-14 h-14 rounded overflow-hidden bg-spotify-lightgray shrink-0">
+                  <CachedImage src={getTrackImageUrl(tr)} className="w-full h-full object-cover" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{tr.title}</p>
+                  <p className="text-caption truncate">{getArtistName(tr.artist)}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
 
-  const artistSection = artistCard && (
-    <section className="mb-8">
-      <h3 className="text-label mb-3 px-1">{t('aboutArtist')}</h3>
-      <Link
-        to={`/artist/by-name/${encodeURIComponent(artistCard.name)}${artistCard.spotifyArtistId ? `?spotifyArtistId=${encodeURIComponent(artistCard.spotifyArtistId)}` : ''}`}
-        onClick={() => setShowNowPlaying(false)}
-        className="flex gap-4 p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
-      >
-        <div className="w-20 h-20 md:w-24 md:h-24 rounded-full overflow-hidden bg-spotify-lightgray shrink-0">
-          {artistCard.imageUrl ? (
-            <CachedImage src={artistCard.imageUrl} className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-2xl text-spotify-text">
-              {artistCard.name.slice(0, 1)}
+      {artistCard && (
+        <section className="mb-8">
+          <h3 className="text-sm font-bold mb-3">{t('aboutArtist')}</h3>
+          <Link
+            to={`/artist/by-name/${encodeURIComponent(artistCard.name)}${artistCard.spotifyArtistId ? `?spotifyArtistId=${encodeURIComponent(artistCard.spotifyArtistId)}` : ''}`}
+            onClick={() => setShowNowPlaying(false)}
+            className="flex gap-4 p-4 rounded-lg bg-white/[0.06] hover:bg-white/10 transition-colors"
+          >
+            <div className="w-24 h-24 rounded-full overflow-hidden bg-spotify-lightgray shrink-0">
+              {artistCard.imageUrl ? (
+                <CachedImage src={artistCard.imageUrl} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-2xl font-bold text-spotify-text">
+                  {artistCard.name.slice(0, 1)}
+                </div>
+              )}
             </div>
-          )}
+            <div className="min-w-0 flex-1 text-start">
+              <p className="text-xs uppercase tracking-wider text-spotify-text mb-1">{t('artist')}</p>
+              <p className="text-xl font-bold truncate">{artistCard.name}</p>
+              {!!artistCard.followers && (
+                <p className="text-caption mt-1">{artistCard.followers.toLocaleString()} {t('followersLabel')}</p>
+              )}
+              {!!artistCard.genres?.length && (
+                <p className="text-caption mt-1 truncate">{artistCard.genres.slice(0, 3).join(' · ')}</p>
+              )}
+              {artistCard.bio && (
+                <p className="text-sm text-spotify-text mt-2 line-clamp-3">{artistCard.bio}</p>
+              )}
+            </div>
+          </Link>
+        </section>
+      )}
+
+      <section className="mb-10">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold">{t('upNext')}</h3>
+          <button type="button" onClick={() => setShowQueue(true)} className="text-caption text-spotify-green">
+            {t('showQueue')}
+          </button>
         </div>
-        <div className="min-w-0 flex-1 text-start">
-          <p className="text-xs uppercase tracking-wider text-spotify-text mb-1">{t('artist')}</p>
-          <p className="text-lg font-bold truncate">{artistCard.name}</p>
-          {!!artistCard.followers && (
-            <p className="text-caption mt-1">{artistCard.followers.toLocaleString()} {t('followersLabel')}</p>
-          )}
-          {!!artistCard.genres?.length && (
-            <p className="text-caption mt-1 truncate">{artistCard.genres.slice(0, 3).join(' · ')}</p>
-          )}
-          {artistCard.bio && (
-            <p className="text-sm text-spotify-text mt-2 line-clamp-3">{artistCard.bio}</p>
-          )}
-        </div>
-      </Link>
-    </section>
+        {upcoming.length === 0 ? (
+          <p className="text-caption">{t('queueEmpty')}</p>
+        ) : (
+          <div className="space-y-1">
+            {upcoming.map((tr) => (
+              <button
+                key={tr.id}
+                type="button"
+                onClick={() => void playTrack(tr)}
+                className="w-full flex items-center gap-3 p-2 rounded-md hover:bg-white/5 text-start"
+              >
+                <div className="w-14 h-14 rounded overflow-hidden bg-spotify-lightgray shrink-0">
+                  <CachedImage src={getTrackImageUrl(tr)} className="w-full h-full object-cover" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{tr.title}</p>
+                  <p className="text-caption truncate">{getArtistName(tr.artist)}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+    </>
   );
 
-  const upNextSection = (
-    <section className="mb-10">
-      <div className="flex items-center justify-between mb-3 px-1">
-        <h3 className="text-label">{t('upNext')}</h3>
-        <button type="button" onClick={() => setShowQueue(true)} className="text-caption text-spotify-green">
-          {t('showQueue')}
-        </button>
-      </div>
-      {upcoming.length === 0 ? (
-        <p className="text-caption px-1">{t('queueEmpty')}</p>
-      ) : (
-        <div className="space-y-1">
-          {upcoming.map((tr) => (
-            <button
-              key={tr.id}
-              type="button"
-              onClick={() => void playTrack(tr)}
-              className="w-full flex items-center gap-3 p-2 rounded-md hover:bg-white/5 text-start"
-            >
-              <div className="w-12 h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
-                <CachedImage src={getTrackImageUrl(tr)} className="w-full h-full object-cover" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm truncate">{tr.title}</p>
-                <p className="text-caption truncate">{getArtistName(tr.artist)}</p>
-              </div>
-            </button>
-          ))}
-        </div>
+  const titleBlock = (
+    <div className="text-start mb-6 px-1">
+      {hasSynced && (
+        <p
+          className={clsx(
+            'min-h-[1.5rem] mb-3 text-[15px] md:text-base font-bold text-white tracking-wide leading-snug truncate transition-opacity duration-500',
+            activeText ? 'opacity-100' : 'opacity-0',
+          )}
+          dir="auto"
+        >
+          {activeText || '\u00a0'}
+        </p>
       )}
-    </section>
+      <h2 className="text-xl font-bold truncate mb-1 leading-snug">{currentTrack.title}</h2>
+      <ArtistLinks
+        artist={currentTrack.artist}
+        track={currentTrack}
+        className="text-body text-sm truncate block"
+        linkClassName="text-body"
+        onClick={() => setShowNowPlaying(false)}
+      />
+      {preparingHint && <p className="text-sm text-spotify-green truncate mt-1">{preparingHint}</p>}
+      {isRemoteActive && activeDeviceName && (
+        <p className="text-sm text-spotify-green truncate mt-1">{t('playingOnDevice', { device: activeDeviceName })}</p>
+      )}
+      <PlaybackMeta track={currentTrack} className="mt-1" />
+    </div>
   );
 
   return (
@@ -489,98 +509,67 @@ export default function NowPlayingSheet() {
         </div>
       </div>
 
-      {/* Mobile layout */}
-      <div ref={scrollRef} className="md:hidden flex-1 flex flex-col min-h-0 overflow-y-auto px-6 pb-4">
-        <div className="w-full max-w-sm mx-auto aspect-square rounded-lg shadow-card overflow-hidden bg-spotify-lightgray mb-6 mt-2">
-          <CachedImage src={imageUrl} className="w-full h-full object-cover" />
+      {/* Mobile: original clean player + scroll for more */}
+      <div ref={scrollRef} className="md:hidden flex-1 min-h-0 overflow-y-auto px-6 pb-4">
+        <div className="min-h-[calc(100dvh-5.5rem)] flex flex-col justify-center">
+          <div className="w-full max-w-sm mx-auto aspect-square rounded-lg shadow-card overflow-hidden bg-spotify-lightgray mb-8">
+            <CachedImage src={imageUrl} className="w-full h-full object-cover" />
+          </div>
+
+          {titleBlock}
+          {progressBlock}
+          <div dir="ltr" className="flex items-center justify-center gap-2 mb-8">{transportControls}</div>
+
+          <div className="flex items-center justify-around px-4 mb-6 pb-[env(safe-area-inset-bottom)]">
+            <button
+              onClick={() => toggleLike(currentTrack.id, currentTrack)}
+              className={clsx('icon-btn p-3', isLiked && 'text-spotify-green')}
+            >
+              <Heart className="w-6 h-6" fill={isLiked ? 'currentColor' : 'none'} />
+            </button>
+            <button onClick={() => setShowPlaylistModal(true)} className="icon-btn p-3" aria-label={t('addToPlaylist')}>
+              <ListPlus className="w-6 h-6" />
+            </button>
+            <button onClick={() => setShowLyrics(true)} className="icon-btn p-3">
+              <Mic2 className="w-6 h-6" />
+            </button>
+            <button onClick={() => setShowQueue(true)} className="icon-btn p-3">
+              <ListMusic className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
-        <div className="text-start mb-4 px-1">
-          {hasSynced && activeText && (
-            <p className="text-spotify-green text-sm font-medium truncate mb-2 transition-opacity">
-              {activeText}
-            </p>
-          )}
-          <h2 className="text-base sm:text-lg font-semibold truncate mb-0.5 leading-snug">{currentTrack.title}</h2>
-          <ArtistLinks
-            artist={currentTrack.artist}
-            track={currentTrack}
-            className="text-body text-sm truncate block"
-            linkClassName="text-body"
-            onClick={() => setShowNowPlaying(false)}
-          />
-          {preparingHint && <p className="text-sm text-spotify-green truncate mt-1">{preparingHint}</p>}
-          {isRemoteActive && activeDeviceName && (
-            <p className="text-sm text-spotify-green truncate mt-1">{t('playingOnDevice', { device: activeDeviceName })}</p>
-          )}
-          <PlaybackMeta track={currentTrack} className="mt-1" />
-        </div>
-
-        {progressBlock}
-        <div dir="ltr" className="flex items-center justify-center gap-2 mb-6">{transportControls}</div>
-
-        <div className="flex items-center justify-around px-2 mb-8">
-          <button onClick={() => toggleLike(currentTrack.id, currentTrack)} className={clsx('icon-btn p-3', isLiked && 'text-spotify-green')}>
-            <Heart className="w-6 h-6" fill={isLiked ? 'currentColor' : 'none'} />
-          </button>
-          <button onClick={() => setShowPlaylistModal(true)} className="icon-btn p-3" aria-label={t('addToPlaylist')}>
-            <ListPlus className="w-6 h-6" />
-          </button>
-          <button onClick={() => setShowLyrics(true)} className="icon-btn p-3">
-            <Mic2 className="w-6 h-6" />
-          </button>
-          <button onClick={() => setShowQueue(true)} className="icon-btn p-3">
-            <ListMusic className="w-6 h-6" />
-          </button>
-        </div>
-
-        {relatedSection}
-        {artistSection}
-        {upNextSection}
+        {belowFold}
       </div>
 
-      {/* Desktop layout: lyrics left, art right */}
-      <div className="hidden md:flex flex-1 min-h-0 flex-col overflow-y-auto">
-        <div dir="ltr" className="flex gap-10 px-10 pt-4 pb-8 max-w-6xl mx-auto w-full min-h-[min(70vh,560px)]">
-          <div className="flex-1 min-w-0 flex flex-col">
-            <LiveLyricsColumn className="flex-1 min-h-[320px] max-h-[560px]" />
-          </div>
-          <div className="w-[min(42%,420px)] shrink-0 flex flex-col">
-            <div className="w-full aspect-square rounded-lg shadow-card overflow-hidden bg-spotify-lightgray mb-5">
-              <CachedImage src={imageUrl} className="w-full h-full object-cover" />
+      {/* Desktop: lyrics + large art, then same below-fold sections */}
+      <div className="hidden md:flex flex-1 min-h-0 overflow-y-auto">
+        <div className="w-full max-w-6xl mx-auto px-10 py-6">
+          <div dir="ltr" className="flex gap-12 items-stretch min-h-[min(62vh,520px)] mb-4">
+            <div className="flex-1 min-w-0">
+              <LiveLyricsColumn className="h-full max-h-[520px]" />
             </div>
-            <div className="text-start mb-4" dir="auto">
-              <h2 className="text-xl font-bold truncate mb-1">{currentTrack.title}</h2>
-              <ArtistLinks
-                artist={currentTrack.artist}
-                track={currentTrack}
-                className="text-body text-base truncate block"
-                linkClassName="text-body"
-                onClick={() => setShowNowPlaying(false)}
-              />
-              {preparingHint && <p className="text-sm text-spotify-green truncate mt-1">{preparingHint}</p>}
-              <PlaybackMeta track={currentTrack} className="mt-1" />
-            </div>
-            {progressBlock}
-            <div dir="ltr" className="flex items-center justify-center gap-2 mb-4">{transportControls}</div>
-            <div className="flex items-center justify-center gap-4">
-              <button onClick={() => toggleLike(currentTrack.id, currentTrack)} className={clsx('icon-btn p-2', isLiked && 'text-spotify-green')}>
-                <Heart className="w-5 h-5" fill={isLiked ? 'currentColor' : 'none'} />
-              </button>
-              <button onClick={() => setShowPlaylistModal(true)} className="icon-btn p-2">
-                <ListPlus className="w-5 h-5" />
-              </button>
-              <button onClick={() => setShowQueue(true)} className="icon-btn p-2">
-                <ListMusic className="w-5 h-5" />
-              </button>
+            <div className="w-[min(40%,400px)] shrink-0 flex flex-col justify-center">
+              <div className="w-full aspect-square rounded-lg shadow-card overflow-hidden bg-spotify-lightgray mb-8">
+                <CachedImage src={imageUrl} className="w-full h-full object-cover" />
+              </div>
+              <div dir="auto">{titleBlock}</div>
+              {progressBlock}
+              <div dir="ltr" className="flex items-center justify-center gap-2 mb-6">{transportControls}</div>
+              <div className="flex items-center justify-center gap-5">
+                <button onClick={() => toggleLike(currentTrack.id, currentTrack)} className={clsx('icon-btn p-2', isLiked && 'text-spotify-green')}>
+                  <Heart className="w-5 h-5" fill={isLiked ? 'currentColor' : 'none'} />
+                </button>
+                <button onClick={() => setShowPlaylistModal(true)} className="icon-btn p-2">
+                  <ListPlus className="w-5 h-5" />
+                </button>
+                <button onClick={() => setShowQueue(true)} className="icon-btn p-2">
+                  <ListMusic className="w-5 h-5" />
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-
-        <div className="px-10 max-w-6xl mx-auto w-full">
-          {relatedSection}
-          {artistSection}
-          {upNextSection}
+          {belowFold}
         </div>
       </div>
 

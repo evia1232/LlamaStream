@@ -4,7 +4,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractAttempts, isFormatUnavailableError, ytDlpAuthArgsAsync, ytDlpCommand, noteSuccessfulSongFetch } from './ytdlp';
+import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractAttempts, isFormatUnavailableError, ytDlpAuthArgsAsync, ytDlpCommand, noteSuccessfulSongFetch, waitForYtDlpSlot, isYouTubeRateLimitError, noteYouTubeRateLimit, isYouTubeRateLimited, clearYouTubeRateLimit } from './ytdlp';
 import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, cleanSearchTitle, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults, artistMatchStrength } from '../lib/trackMatch';
 import { rotateProfileNow } from './ytdlpProfiles';
 import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
@@ -175,6 +175,10 @@ export async function searchYouTube(query: string, limit = 15, minDuration?: num
     }
 
     lastError = lastLines(result.stderr) || 'YouTube search failed';
+    if (isYouTubeRateLimitError(lastError)) {
+      noteYouTubeRateLimit('search');
+      throw new Error(lastError);
+    }
     const blocked = /403|Forbidden|Sign in to confirm|confirm you.?re not a bot|confirm your age|age.?restrict/i.test(result.stderr);
     if (!blocked) break;
   }
@@ -198,6 +202,12 @@ export async function downloadFromYouTube(
     if (err instanceof Error && /Disk almost full/i.test(err.message)) throw err;
   }
 
+  if (isYouTubeRateLimited()) {
+    const { youtubeRateLimitRemainingMs } = await import('./ytdlp');
+    const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
+    throw new Error(`YouTube rate-limited (~${mins} min left). Wait or rotate proxy/cookies, then retry download.`);
+  }
+
   const fileId = uuidv4();
   const outputTemplate = path.join(dir, `${fileId}.%(ext)s`);
 
@@ -209,6 +219,10 @@ export async function downloadFromYouTube(
   ], 60000);
   if (metaResult.code !== 0) {
     const tip = lastLines(metaResult.stderr) || 'Failed to fetch video metadata';
+    if (isYouTubeRateLimitError(tip)) {
+      noteYouTubeRateLimit('meta');
+      throw new Error(tip);
+    }
     if (/confirm your age|Sign in to confirm|age.?restrict/i.test(tip)) {
       throw new Error(
         `${tip}\n\nAge-restricted video — set YTDLP_COOKIES_FILE (logged-in Netscape cookies) and YTDLP_PROXY, then use Retry download.`,
@@ -230,16 +244,31 @@ export async function downloadFromYouTube(
     let lastStderr = '';
     const authArgs = await ytDlpAuthArgsAsync();
 
-    const tryDownload = () => {
+    const tryDownload = async () => {
       if (attemptIndex >= attempts.length) {
         reject(new Error(lastLines(lastStderr) || 'Download failed (all format attempts)'));
         return;
       }
 
+      if (isYouTubeRateLimited()) {
+        reject(new Error(lastLines(lastStderr) || 'YouTube rate-limited during download'));
+        return;
+      }
+
+      try {
+        await waitForYtDlpSlot();
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
       const attempt = attempts[attemptIndex++];
       const args = [
-        '--no-warnings', '--no-playlist', '--retries', '5', '--fragment-retries', '5',
+        '--no-warnings', '--no-playlist', '--retries', '3', '--fragment-retries', '3',
         '--socket-timeout', '30',
+        '--sleep-requests', '1',
+        '--sleep-interval', '2',
+        '--max-sleep-interval', '5',
         '--js-runtimes', 'node',
         '--remote-components', 'ejs:github',
         ...authArgs,
@@ -267,6 +296,11 @@ export async function downloadFromYouTube(
           return;
         }
         lastStderr = stderr;
+        if (isYouTubeRateLimitError(stderr)) {
+          noteYouTubeRateLimit('download');
+          reject(new Error(lastLines(stderr) || 'YouTube rate-limited'));
+          return;
+        }
         if (/403|Forbidden|Sign in to confirm|confirm you.?re not a bot/i.test(stderr)) {
           void rotateProfileNow('download-403');
         }
@@ -274,22 +308,27 @@ export async function downloadFromYouTube(
           reject(new Error(lastLines(stderr) || 'Disk full — cannot download'));
           return;
         }
+        // Don't burn more clients when the video itself is gone
+        if (/Video unavailable|Private video|has been removed/i.test(stderr)) {
+          reject(new Error(lastLines(stderr) || 'Video unavailable'));
+          return;
+        }
         const tip = lastLines(stderr, 3);
         if (isFormatUnavailableError(stderr) && attemptIndex < attempts.length) {
           console.warn(`[Download] Format unavailable (${attempt.label}): ${tip}`);
-          tryDownload();
+          void tryDownload();
           return;
         }
         if (attemptIndex < attempts.length) {
           console.warn(`[Download] Failed with ${attempt.label}: ${tip}`);
-          tryDownload();
+          void tryDownload();
           return;
         }
         reject(new Error(tip || `Download failed (exit ${code})`));
       });
     };
 
-    tryDownload();
+    void tryDownload();
   });
 
   void downloadResult;
@@ -300,6 +339,7 @@ export async function downloadFromYouTube(
   }
 
   await noteSuccessfulSongFetch();
+  clearYouTubeRateLimit();
 
   const rawTitle = String(meta.title || 'Unknown');
   const artist = String(meta.uploader || meta.channel || meta.artist || extractArtistFromTitle(rawTitle));

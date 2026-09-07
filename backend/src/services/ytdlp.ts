@@ -22,15 +22,73 @@ export interface YtDlpResult {
 const BASE_ARGS = [
   '--no-warnings',
   '--no-playlist',
-  '--retries', '5',
-  '--fragment-retries', '5',
+  '--retries', '3',
+  '--fragment-retries', '3',
   '--socket-timeout', '30',
+  // Pace requests — YouTube bans aggressive bursts for ~1h
+  '--sleep-requests', '1',
+  '--sleep-interval', '2',
+  '--max-sleep-interval', '5',
   // Node 22+ in the backend image solves YouTube EJS signature challenges
   '--js-runtimes', 'node',
   '--remote-components', 'ejs:github',
 ];
 
 let multiEnabledCache = false;
+
+/** Global YouTube rate-limit gate (session banned ~1h). */
+let ytRateLimitUntil = 0;
+let lastYtRequestAt = 0;
+let ytQueue: Promise<void> = Promise.resolve();
+const YT_MIN_GAP_MS = Math.max(1500, parseInt(process.env.YTDLP_MIN_GAP_MS || '2800', 10) || 2800);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isYouTubeRateLimited(): boolean {
+  return Date.now() < ytRateLimitUntil;
+}
+
+export function youtubeRateLimitRemainingMs(): number {
+  return Math.max(0, ytRateLimitUntil - Date.now());
+}
+
+export function noteYouTubeRateLimit(reason = 'rate-limit'): void {
+  // YouTube says "up to an hour" — gate slightly under that so we retry sooner after rotate
+  const mins = Math.max(20, parseInt(process.env.YTDLP_RATE_LIMIT_MINUTES || '50', 10) || 50);
+  ytRateLimitUntil = Date.now() + mins * 60 * 1000;
+  console.warn(`[yt-dlp] YouTube ${reason} — pausing downloads until ${new Date(ytRateLimitUntil).toISOString()}`);
+  void rotateProfileNow(reason).catch(() => null);
+}
+
+export function clearYouTubeRateLimit(): void {
+  ytRateLimitUntil = 0;
+}
+
+export function isYouTubeRateLimitError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /rate-?limited by YouTube|current session has been rate-limited|try again later/i.test(msg);
+}
+
+/** Serialize yt-dlp invocations and enforce a gap so we don't trip the hourly ban. */
+export async function waitForYtDlpSlot(): Promise<void> {
+  const run = async () => {
+    if (isYouTubeRateLimited()) {
+      const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
+      throw new Error(
+        `YouTube rate-limited (~${mins} min left). Wait, rotate proxy/cookies profile, or retry later.`,
+      );
+    }
+    const gap = Math.max(0, YT_MIN_GAP_MS - (Date.now() - lastYtRequestAt));
+    if (gap > 0) await sleep(gap);
+    lastYtRequestAt = Date.now();
+  };
+
+  const next = ytQueue.then(run, run);
+  ytQueue = next.then(() => undefined, () => undefined);
+  await next;
+}
 
 /** Shared auth / network args (cookies, proxy) — respects multi-profile when enabled. */
 export async function ytDlpAuthArgsAsync(): Promise<string[]> {
@@ -76,6 +134,13 @@ export function ytDlpCommand(): string {
 
 export function runYtDlp(args: string[], timeoutMs = 300000): Promise<YtDlpResult> {
   return new Promise(async (resolve, reject) => {
+    try {
+      await waitForYtDlpSlot();
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
     let authArgs: string[];
     try {
       authArgs = await resolveAuthArgs();
@@ -110,7 +175,9 @@ export function runYtDlp(args: string[], timeoutMs = 300000): Promise<YtDlpResul
       clearTimeout(timer);
       const result = { stdout: stdout.trim(), stderr: stderr.trim(), code: code ?? 1 };
       const combined = `${result.stderr}\n${result.stdout}`;
-      if (result.code !== 0 && /403|Forbidden|Sign in to confirm|confirm you.?re not a bot/i.test(combined)) {
+      if (result.code !== 0 && isYouTubeRateLimitError(combined)) {
+        noteYouTubeRateLimit('rate-limit');
+      } else if (result.code !== 0 && /403|Forbidden|Sign in to confirm|confirm you.?re not a bot|confirm your age/i.test(combined)) {
         await rotateProfileNow('403').catch(() => null);
       }
       resolve(result);
@@ -219,7 +286,7 @@ export function isFormatUnavailableError(err: unknown): boolean {
 
 export function isYouTubeBlockedError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /403|Forbidden|Sign in to confirm|confirm you.?re not a bot|confirm your age|age.?restrict/i.test(msg);
+  return /403|Forbidden|Sign in to confirm|confirm you.?re not a bot|confirm your age|age.?restrict|rate-?limited by YouTube/i.test(msg);
 }
 
 export { noteSuccessfulSongFetch };

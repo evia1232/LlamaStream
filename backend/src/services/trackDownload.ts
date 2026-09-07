@@ -6,6 +6,7 @@ import type { DownloadResult } from './downloader';
 import { fetchLyricsForTrack } from './lyrics';
 import { lastLines, ytDlpAudioExtractArgs, ytDlpAuthArgs, ytDlpCommand } from './ytdlp';
 import { finalizeFileStorage, getDownloadDirForTrack, touchTrackAccess, assertDiskSpaceForDownload } from './trackStorage';
+import { isYouTubeRateLimited, youtubeRateLimitRemainingMs } from './ytdlp';
 import {
   downloadKey,
   findCanonicalDownloadedTrack,
@@ -63,11 +64,14 @@ export function clearDownloadCooldown(trackId: string, sourceUrl?: string): void
 }
 
 function markDownloadFailed(trackId: string, sourceUrl: string, err: unknown): void {
-  const until = Date.now() + DOWNLOAD_FAIL_COOLDOWN_MS;
+  const rateLimited = /rate-?limited/i.test(err instanceof Error ? err.message : String(err));
+  const until = Date.now() + (rateLimited
+    ? Math.max(DOWNLOAD_FAIL_COOLDOWN_MS, youtubeRateLimitRemainingMs() || 50 * 60 * 1000)
+    : DOWNLOAD_FAIL_COOLDOWN_MS);
   downloadFailUntil.set(`tid:${trackId}`, until);
   if (sourceUrl) downloadFailUntil.set(`url:${sourceUrl}`, until);
   const msg = err instanceof Error ? err.message : String(err);
-  console.error(`[Download] Background save failed for track ${trackId} — cooling down ${DOWNLOAD_FAIL_COOLDOWN_MS / 1000}s:`, msg.split('\n')[0]);
+  console.error(`[Download] Background save failed for track ${trackId} — cooling down ${Math.round((until - Date.now()) / 1000)}s:`, msg.split('\n')[0]);
 }
 
 /** Fail fast when the music/cache volume is critically low (common after Docker overlay fills the disk). */
@@ -223,6 +227,12 @@ export function ensureBackgroundDownload(
   if (isDownloadInProgress(trackId)) return getActiveDownload(trackId);
   if (isDownloadCoolingDown(trackId, sourceUrl)) {
     console.warn(`[Download] Skipping restart for ${trackId} — recent failure cooldown`);
+    return;
+  }
+
+  if (isYouTubeRateLimited()) {
+    const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
+    console.warn(`[Download] Skipping ${trackId} — YouTube rate-limited (~${mins}m left)`);
     return;
   }
 

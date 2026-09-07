@@ -25,6 +25,8 @@ let tokenCache: { token: string; expiresAt: number } | null = null;
 
 /** Spotify /search limit max (API tightened from 50 → 10; values >10 return 400 Invalid limit). */
 const SPOTIFY_SEARCH_MAX_LIMIT = 10;
+/** Artist albums / album tracks — Spotify also rejects high limits on some endpoints now. */
+const SPOTIFY_LIST_MAX_LIMIT = 20;
 
 /** In-memory search cache — typing + album-art lookups spam /search otherwise. */
 const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -871,7 +873,12 @@ async function spotifyGet<T>(path: string, tokenOverride?: string): Promise<T | 
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      console.error('[Spotify] GET failed:', path, res.status, body.slice(0, 200));
+      // Dev-mode Spotify apps often get 403 on artist top-tracks — noisy but not fatal
+      if (res.status === 403 && path.includes('/top-tracks')) {
+        console.warn('[Spotify] top-tracks forbidden (check app mode / market):', path);
+      } else {
+        console.error('[Spotify] GET failed:', path, res.status, body.slice(0, 200));
+      }
       return null;
     }
     return await res.json() as T;
@@ -1073,8 +1080,8 @@ export async function fetchSpotifyArtistAlbums(artistId: string): Promise<Spotif
   const market = normalizeMarket(config.spotifyMarket);
 
   const params = new URLSearchParams({
-    include_groups: 'album,single,compilation',
-    limit: '50',
+    include_groups: 'album,single',
+    limit: String(SPOTIFY_LIST_MAX_LIMIT),
   });
   if (market) params.set('market', market);
 
@@ -1092,7 +1099,9 @@ export async function fetchSpotifyArtistAlbums(artistId: string): Promise<Spotif
 
   if (!data?.items?.length) {
     // Retry without market filter
-    const fallback = await spotifyGet<typeof data>(`/artists/${artistId}/albums?include_groups=album,single,compilation&limit=50`);
+    const fallback = await spotifyGet<typeof data>(
+      `/artists/${artistId}/albums?include_groups=album,single&limit=${SPOTIFY_LIST_MAX_LIMIT}`,
+    );
     if (fallback?.items?.length) {
       for (const a of fallback.items) {
         if (seen.has(a.id)) continue;
@@ -1129,6 +1138,8 @@ export async function fetchSpotifyArtistAlbums(artistId: string): Promise<Spotif
 }
 
 export async function fetchSpotifyAlbumTracks(albumId: string): Promise<SpotifySearchResult[]> {
-  const data = await spotifyGet<{ items: SpotifyApiTrack[] }>(`/albums/${albumId}/tracks?limit=50`);
+  const data = await spotifyGet<{ items: SpotifyApiTrack[] }>(
+    `/albums/${albumId}/tracks?limit=${SPOTIFY_LIST_MAX_LIMIT}`,
+  );
   return (data?.items || []).map(mapSpotifyApiTrack);
 }
