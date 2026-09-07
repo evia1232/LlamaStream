@@ -76,6 +76,9 @@ const VARIANT_PATTERNS: RegExp[] = [
   /\bvisualizer\b/i,
   /\blyrics video\b/i,
   /\blyric video\b/i,
+  /\bלייב\b/,
+  /\bאאוטרו\b/,
+  /\bאינטרו\b/,
 ];
 
 const GOOD_KEYWORDS = [
@@ -100,7 +103,9 @@ function normalizeForMatch(s: string): string {
 }
 
 function primaryArtist(artist: string): string {
-  return sanitizeSearchText(artist).split(/[,;&]| feat\.?| ft\.?| featuring /i)[0].trim();
+  return sanitizeSearchText(artist)
+    .split(/[,;&]| feat\.?| ft\.?| featuring |\s+x\s+|\s+עם\s+/i)[0]
+    .trim();
 }
 
 export function sanitizeSearchText(s: string): string {
@@ -111,11 +116,14 @@ export function sanitizeSearchText(s: string): string {
     .trim();
 }
 
-/** Clean titles like "תנטוספליפ_79_בונוס" for search */
+/** Clean titles like "תנטוספליפ_79_בונוס" / "מנגינה יקרה / אאוטרו" for search */
 export function cleanSearchTitle(title: string): string {
   return sanitizeSearchText(title)
     .replace(/\s*[\(\[\{].*?[\)\]\}]\s*/g, ' ')
-    .replace(/\b(bonus|בונוס|remaster(ed)?|radio\s*edit)\b/gi, ' ')
+    // Strip outro/intro/bonus suffixes after slash or dash (common on Hebrew Spotify tracks)
+    .replace(/\s*[\/|·•]\s*(outro|intro|interlude|אאוטרו|אינטרו|בונוס|bonus)\b.*$/gi, '')
+    .replace(/\s*[-–—]\s*(live\s*session|live|לייב(\s*סשן)?|session|radio\s*edit|remaster(ed)?)\b.*$/gi, '')
+    .replace(/\b(bonus|בונוס|remaster(ed)?|radio\s*edit|live\s*session|אאוטרו|אינטרו)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }

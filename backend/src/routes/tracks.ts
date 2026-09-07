@@ -6,7 +6,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import prisma from '../lib/prisma';
 import { resolveAndDownload, downloadLibraryTrack, prefetchLibraryTrack, researchTrack, resolveYouTubeSource, upsertPendingTrack, prepareTrackForPlayback, resolveAndAttachSourceInBackground } from '../services/downloader';
-import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress, isDownloadCoolingDown, pipeYouTubeAudio, pipeYouTubeSearch } from '../services/trackDownload';
+import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress, isDownloadCoolingDown, pipeYouTubeAudio, pipeYouTubeSearch, clearDownloadCooldown, cancelBackgroundDownload } from '../services/trackDownload';
 import { fetchLyricsForTrack } from '../services/lyrics';
 import { unifiedSearch } from '../services/search';
 import { isSpotifyUrl, isYouTubeUrl } from '../services/spotify';
@@ -579,7 +579,10 @@ router.post('/:id/play', authenticate, async (req: AuthRequest, res) => {
 });
 
 router.get('/:id/lyrics', authenticate, async (req, res) => {
-  let lyrics = await prisma.lyrics.findUnique({ where: { trackId: req.params.id } });
+  const force = req.query.refresh === '1' || req.query.force === '1';
+  let lyrics = force
+    ? await fetchLyricsForTrack(req.params.id, undefined, undefined, { force: true })
+    : await prisma.lyrics.findUnique({ where: { trackId: req.params.id } });
   if (!lyrics) {
     lyrics = await fetchLyricsForTrack(req.params.id);
   }
@@ -666,6 +669,54 @@ router.post('/:id/research', authenticate, async (req: AuthRequest, res) => {
     res.json({ track: formatTrack(track) });
   } catch (err) {
     console.error('Research track error:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/** Retry download: clear cooldown; reuse sourceUrl if present, otherwise re-search YouTube. */
+router.post('/:id/retry-download', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+    const quality = user?.audioQuality || 'HIGH';
+    const existing = await prisma.track.findUnique({
+      where: { id: req.params.id },
+      include: { artist: true, album: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'Track not found' });
+
+    clearDownloadCooldown(existing.id, existing.sourceUrl || undefined);
+    cancelBackgroundDownload(existing.id);
+
+    const forceResearch = req.body?.research === true || req.query.research === '1';
+    if (!existing.sourceUrl || forceResearch) {
+      const track = await researchTrack(existing.id, quality);
+      return res.json({ track: formatTrack(track), mode: 'research' });
+    }
+
+    if (existing.filePath) {
+      try {
+        const fs = await import('fs');
+        if (fs.existsSync(existing.filePath)) fs.unlinkSync(existing.filePath);
+      } catch { /* ignore */ }
+    }
+    await prisma.track.update({
+      where: { id: existing.id },
+      data: { filePath: null, isDownloaded: false, downloadedAt: null },
+    });
+
+    ensureBackgroundDownload(existing.id, existing.sourceUrl, quality, {
+      title: existing.title,
+      artist: existing.artist.name,
+      album: existing.album?.title,
+    });
+
+    const track = await prisma.track.findUniqueOrThrow({
+      where: { id: existing.id },
+      include: { artist: true, album: true, lyrics: true },
+    });
+    res.json({ track: formatTrack(track), mode: 'retry' });
+  } catch (err) {
+    console.error('Retry download error:', err);
     res.status(500).json({ error: (err as Error).message });
   }
 });

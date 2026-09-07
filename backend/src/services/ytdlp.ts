@@ -219,7 +219,7 @@ export function isFormatUnavailableError(err: unknown): boolean {
 
 export function isYouTubeBlockedError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /403|Forbidden|Sign in to confirm|confirm you.?re not a bot/i.test(msg);
+  return /403|Forbidden|Sign in to confirm|confirm you.?re not a bot|confirm your age|age.?restrict/i.test(msg);
 }
 
 export { noteSuccessfulSongFetch };

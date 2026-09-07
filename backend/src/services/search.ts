@@ -154,6 +154,7 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
     id: a.id,
     name: a.name,
     imageUrl: a.imageUrl,
+    spotifyArtistId: a.spotifyArtistId ?? undefined,
   }));
 
   // Skip artist search when track search already hit 429 — that fan-out re-arms the quota ban
@@ -162,10 +163,19 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
     try {
       const spArtist = await searchSpotifyArtist(trimmed);
       if (spArtist) {
-        const dupe = mergedArtists.some(
+        const existing = mergedArtists.find(
           (a) => a.name.toLowerCase() === spArtist.name.toLowerCase(),
         );
-        if (!dupe) {
+        if (existing) {
+          existing.imageUrl = existing.imageUrl || spArtist.imageUrl || null;
+          existing.spotifyArtistId = existing.spotifyArtistId || spArtist.id;
+          if (existing.id && !existing.id.startsWith('spotify-') && spArtist.imageUrl) {
+            await prisma.artist.update({
+              where: { id: existing.id },
+              data: { imageUrl: spArtist.imageUrl, spotifyArtistId: spArtist.id },
+            }).catch(() => null);
+          }
+        } else {
           mergedArtists = [
             {
               id: `spotify-artist-${spArtist.id}`,
@@ -180,6 +190,18 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
     } catch (err) {
       console.error('[Search] Spotify artist lookup failed:', err);
     }
+  }
+
+  // Autoload images for local artists that still lack one (without opening artist page)
+  if (searchSpotify && !spotifyBlocked) {
+    const { enrichArtistImages } = await import('./artistImages');
+    const enriched = await enrichArtistImages(mergedArtists, { maxLookups: 5 });
+    mergedArtists = enriched.map((a) => ({
+      id: a.id,
+      name: a.name,
+      imageUrl: a.imageUrl,
+      spotifyArtistId: a.spotifyArtistId ?? undefined,
+    }));
   }
 
   return {

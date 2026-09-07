@@ -57,6 +57,11 @@ export function isDownloadCoolingDown(trackId: string, sourceUrl?: string): bool
   return false;
 }
 
+export function clearDownloadCooldown(trackId: string, sourceUrl?: string): void {
+  downloadFailUntil.delete(`tid:${trackId}`);
+  if (sourceUrl) downloadFailUntil.delete(`url:${sourceUrl}`);
+}
+
 function markDownloadFailed(trackId: string, sourceUrl: string, err: unknown): void {
   const until = Date.now() + DOWNLOAD_FAIL_COOLDOWN_MS;
   downloadFailUntil.set(`tid:${trackId}`, until);

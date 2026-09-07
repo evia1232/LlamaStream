@@ -9,7 +9,7 @@ import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestA
 import { rotateProfileNow } from './ytdlpProfiles';
 import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
-import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress, waitForTrackDownload } from './trackDownload';
+import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgress, waitForTrackDownload, clearDownloadCooldown } from './trackDownload';
 import { getCacheAudioDir, getDownloadDirForTrack, finalizeFileStorage, promoteTrackToLibrary, isTrackPinned } from './trackStorage';
 import { findCanonicalDownloadedTrack, linkTrackToCanonical, propagateDownloadToSourceId } from './trackDedup';
 import { resolveAlbumArt, needsBetterAlbumArt, upgradeTrackAlbumArtInBackground } from './albumArt';
@@ -175,7 +175,7 @@ export async function searchYouTube(query: string, limit = 15, minDuration?: num
     }
 
     lastError = lastLines(result.stderr) || 'YouTube search failed';
-    const blocked = /403|Forbidden|Sign in to confirm/i.test(result.stderr);
+    const blocked = /403|Forbidden|Sign in to confirm|confirm you.?re not a bot|confirm your age|age.?restrict/i.test(result.stderr);
     if (!blocked) break;
   }
 
@@ -208,7 +208,13 @@ export async function downloadFromYouTube(
     sourceUrl,
   ], 60000);
   if (metaResult.code !== 0) {
-    throw new Error(lastLines(metaResult.stderr) || 'Failed to fetch video metadata');
+    const tip = lastLines(metaResult.stderr) || 'Failed to fetch video metadata';
+    if (/confirm your age|Sign in to confirm|age.?restrict/i.test(tip)) {
+      throw new Error(
+        `${tip}\n\nAge-restricted video — set YTDLP_COOKIES_FILE (logged-in Netscape cookies) and YTDLP_PROXY, then use Retry download.`,
+      );
+    }
+    throw new Error(tip);
   }
 
   let meta: Record<string, unknown>;
@@ -579,7 +585,7 @@ export async function resolveYouTubeSource(
   }
 
   // Prefer primary artist for search — long Spotify credit lists kill YouTube matches
-  const searchArtist = artist.split(/[,;&]| feat\.?| ft\.?| featuring /i)[0]?.trim() || artist;
+  const searchArtist = artist.split(/[,;&]| feat\.?| ft\.?| featuring |\s+x\s+|\s+עם\s+/i)[0]?.trim() || artist;
   const searchQuery = searchArtist && title ? `${searchArtist} - ${title}` : trimmed;
   const target = {
     title: title || searchQuery,
@@ -671,6 +677,21 @@ export async function resolveYouTubeSource(
   }
 
   if (candidates.length === 0) {
+    // Last try: no duration floor on yt-dlp (Hebrew / short intros often filtered out)
+    if (title && artist && minSearchDuration) {
+      try {
+        const q = `${searchArtist} ${title}`;
+        const batch = await searchYouTube(q, 15);
+        collectResults(batch);
+        const pool = filterYouTubeResults(batch, target, true);
+        candidates = rankYouTubeResults(pool, target, { ...rankOpts, minScore: 12, filterVariants: true });
+      } catch (err) {
+        console.error(`YouTube unconstrained search failed for "${searchArtist} ${title}":`, err);
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
     const best = pickBestAvailableResult(allRaw, target, {
       filterVariants: true,
       rawQuery: trimmed,
@@ -682,7 +703,10 @@ export async function resolveYouTubeSource(
   }
 
   if (candidates.length === 0) {
-    throw new Error(`No YouTube results for: ${searchQuery}`);
+    const hint = allRaw.length > 0
+      ? ` (${allRaw.length} raw hits filtered out — try research / check cookies+proxy)`
+      : ' (empty yt-dlp search — check YTDLP_PROXY / YTDLP_COOKIES_FILE for age/bot blocks)';
+    throw new Error(`No YouTube results for: ${searchQuery}${hint}`);
   }
 
   const verified = await pickVerifiedCandidate(candidates, target, !!opts?.relaxed, excludeIds);
@@ -1206,6 +1230,7 @@ export async function researchTrack(
 
   const previousSourceId = track.sourceId;
   cancelBackgroundDownload(trackId);
+  clearDownloadCooldown(trackId, track.sourceUrl || undefined);
 
   if (track.filePath && fs.existsSync(track.filePath)) {
     try {

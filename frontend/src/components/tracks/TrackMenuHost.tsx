@@ -117,6 +117,22 @@ export default function TrackMenuHost() {
     }
   };
 
+  const handleRetryDownload = async () => {
+    if (!hasLibraryId || researching) return;
+    setResearching(true);
+    try {
+      const { data } = await api.post(`/tracks/${track.id}/retry-download`);
+      const updated = normalizeTrack(data.track);
+      if (currentTrack?.id === track.id) setCurrentTrack(updated);
+      await playTrack(updated);
+      options.onRefresh?.();
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
+    } finally {
+      setResearching(false);
+    }
+  };
+
   const menuActions: TrackMenuAction[] = [
     {
       id: 'play',
@@ -147,6 +163,13 @@ export default function TrackMenuHost() {
       label: isLiked ? t('unlike') : t('like'),
       icon: <Heart className="w-4 h-4" fill={isLiked ? 'currentColor' : 'none'} />,
       onClick: () => { toggleLike(track.id, track); },
+    }] : []),
+    ...(hasLibraryId ? [{
+      id: 'retryDownload',
+      label: researching ? t('retryingDownload') : t('retryDownload'),
+      icon: <RefreshCw className={clsx('w-4 h-4', researching && 'animate-spin')} />,
+      onClick: () => { void handleRetryDownload(); },
+      disabled: researching || downloading,
     }] : []),
     ...(hasLibraryId ? [{
       id: 'research',

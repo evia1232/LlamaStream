@@ -830,7 +830,8 @@ export default function PlayerBar() {
 
       <div className="player-bar-desktop hidden md:block relative h-full w-full overflow-visible">
         <div
-          className="absolute inset-y-0 start-0 flex items-center gap-3 min-w-0 max-w-[30%] ps-4 pe-2 z-10 cursor-default"
+          className="absolute inset-y-0 start-0 flex items-center gap-3 min-w-0 max-w-[30%] ps-4 pe-2 z-10 cursor-pointer"
+          onClick={() => setShowNowPlaying(true)}
           onContextMenu={(e) => openTrackContextMenu(e, currentTrack)}
         >
           <div className="w-14 h-14 rounded bg-spotify-gray shrink-0 overflow-hidden">
@@ -847,7 +848,10 @@ export default function PlayerBar() {
           </div>
           <button
             type="button"
-            onClick={() => toggleLike(currentTrack.id, currentTrack)}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleLike(currentTrack.id, currentTrack);
+            }}
             className={clsx('icon-btn shrink-0', isLiked && 'text-spotify-green')}
           >
             <Heart className="w-4 h-4" fill={isLiked ? 'currentColor' : 'none'} />

@@ -69,12 +69,20 @@ router.get('/', authenticate, async (req: AuthRequest, res) => {
       coverImages: extractPlaylistCoverImages(p),
       trackCount: p._count.tracks,
     })),
-    topArtists: artists.map((a) => ({
-      id: a.id,
-      name: a.name,
-      imageUrl: a.imageUrl,
-      spotifyArtistId: a.spotifyArtistId,
-    })),
+    topArtists: await (async () => {
+      const rows = artists.map((a) => ({
+        id: a.id,
+        name: a.name,
+        imageUrl: a.imageUrl,
+        spotifyArtistId: a.spotifyArtistId,
+      }));
+      try {
+        const { enrichArtistImages } = await import('../services/artistImages');
+        return enrichArtistImages(rows, { maxLookups: 6 });
+      } catch {
+        return rows;
+      }
+    })(),
     history: recentHistory.map((h) => ({
       ...formatHomeTrack(h.track),
       playedAt: h.playedAt,

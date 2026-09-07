@@ -105,7 +105,7 @@ interface PlayerState {
   removeFromQueue: (itemId: string) => Promise<void>;
   clearQueue: () => Promise<void>;
   toggleLike: (trackId: string, trackHint?: Track) => void;
-  fetchLyrics: (trackId: string) => Promise<void>;
+  fetchLyrics: (trackId: string, force?: boolean) => Promise<void>;
   clearPendingSeek: () => void;
   registerSeek: (fn: ((time: number) => void) | null) => void;
   registerPause: (fn: (() => void) | null) => void;
@@ -840,15 +840,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     void sync();
   },
 
-  fetchLyrics: async (trackId) => {
+  fetchLyrics: async (trackId, force) => {
     if (!trackId) return;
+    if (force) lyricsSessionCache.delete(trackId);
     // Serve from session cache immediately
-    const cached = lyricsSessionCache.get(trackId);
+    const cached = force ? undefined : lyricsSessionCache.get(trackId);
     if (cached) {
       if (get().currentTrack?.id === trackId) set({ lyrics: cached });
     }
     try {
-      const { data } = await api.get(`/tracks/${trackId}/lyrics`);
+      const { data } = await api.get(`/tracks/${trackId}/lyrics`, {
+        params: force ? { refresh: 1 } : undefined,
+      });
       // Ignore stale responses after skipping tracks
       if (get().currentTrack?.id !== trackId) return;
       if (data.lyrics) {

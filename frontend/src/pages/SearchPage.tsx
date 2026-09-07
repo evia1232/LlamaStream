@@ -17,6 +17,7 @@ import {
 import { Track } from '../types';
 import { usePlayerStore } from '../store';
 import PlaylistCover from '../components/playlists/PlaylistCover';
+import CachedImage from '../components/ui/CachedImage';
 import clsx from 'clsx';
 
 interface YouTubeResult {
@@ -53,6 +54,19 @@ function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function SectionTitle({ children, icon }: { children: React.ReactNode; icon?: React.ReactNode }) {
+  return (
+    <h2 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+      {icon}
+      {children}
+    </h2>
+  );
+}
+
+function SubLabel({ children }: { children: React.ReactNode }) {
+  return <h3 className="text-xs font-semibold uppercase tracking-wider text-spotify-text mb-2">{children}</h3>;
 }
 
 export default function SearchPage() {
@@ -194,25 +208,25 @@ export default function SearchPage() {
           external: { url: opts?.youtubeUrl, spotifyUrl: opts?.spotifyUrl, album: opts?.album },
           onRefresh: () => search(query),
         }}
-        className="flex items-center gap-3 md:gap-4 p-2 md:p-3 rounded-md card-hover group cursor-pointer"
+        className="flex items-center gap-3 p-2 rounded-md hover:bg-white/5 group cursor-pointer"
       >
-        <div className="relative w-11 h-11 md:w-12 md:h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
+        <div className="relative w-12 h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
           {thumbnailUrl ? (
             <img src={thumbnailUrl} alt="" className="w-full h-full object-cover" />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-spotify-text">♪</div>
+            <div className="w-full h-full flex items-center justify-center text-spotify-text text-sm">♪</div>
           )}
           <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
             <Play className="w-4 h-4 fill-white text-white play-icon-nudge" />
           </div>
         </div>
         <div className="flex-1 min-w-0">
-          <p className={clsx('text-base font-normal truncate', isCurrent && 'text-spotify-green')}>{title}</p>
-          <p className="text-body truncate">{getArtistName(artist)}</p>
+          <p className={clsx('text-sm font-medium truncate', isCurrent && 'text-spotify-green')}>{title}</p>
+          <p className="text-xs text-spotify-text truncate">{getArtistName(artist)}</p>
           {isCurrent && <PlaybackMeta track={track} className="mt-0.5" />}
-          {opts?.badge && !isCurrent && <span className="text-caption">{opts.badge}</span>}
+          {opts?.badge && !isCurrent && <span className="text-[10px] uppercase tracking-wide text-spotify-text">{opts.badge}</span>}
         </div>
-        <span className="text-caption hidden sm:inline tabular-nums">{formatTime(duration)}</span>
+        <span className="text-xs text-spotify-text hidden sm:inline tabular-nums shrink-0">{formatTime(duration)}</span>
       </TrackSurface>
     );
   };
@@ -231,22 +245,22 @@ export default function SearchPage() {
     && /\/playlist\//i.test(results.detectedUrl.url);
 
   return (
-    <div className="p-4 md:p-8 pb-4 max-w-full overflow-x-hidden">
-      <h1 className="text-heading mb-6 md:mb-8">{t('search')}</h1>
-      <div className="relative mb-3">
-        <SearchIcon className="absolute start-4 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-500" />
+    <div className="p-4 md:p-6 pb-4 max-w-5xl mx-auto overflow-x-hidden">
+      <h1 className="text-2xl md:text-3xl font-bold mb-4">{t('search')}</h1>
+      <div className="relative mb-2">
+        <SearchIcon className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
         <input
           type="text"
           value={query}
           onChange={(e) => handleQueryChange(e.target.value)}
           placeholder={t('searchPlaceholder')}
-          className="search-input"
+          className="search-input !py-3 !text-sm"
           autoFocus
           dir="auto"
         />
       </div>
 
-      <p className="text-caption mb-6 md:mb-8">{t('searchHint')}</p>
+      <p className="text-xs text-spotify-text mb-6">{t('searchHint')}</p>
 
       {error && (
         <div className="flex items-start gap-2 bg-red-900/40 border border-red-500/50 rounded-lg p-3 mb-4 text-sm max-w-full overflow-hidden">
@@ -283,19 +297,16 @@ export default function SearchPage() {
       )}
 
       {!loading && !query.trim() && (recentQueries.length > 0 || recentTracks.length > 0) && (
-        <section className="mb-10">
-          <h2 className="text-heading-sm mb-4 flex items-center gap-2">
-            <Clock className="w-5 h-5 text-spotify-green" />
-            {t('recentSearches')}
-          </h2>
+        <section className="mb-8">
+          <SectionTitle icon={<Clock className="w-4 h-4 text-spotify-green" />}>{t('recentSearches')}</SectionTitle>
           {recentQueries.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-6">
+            <div className="flex flex-wrap gap-2 mb-5">
               {recentQueries.map((q) => (
                 <button
                   key={q}
                   type="button"
                   onClick={() => handleQueryChange(q)}
-                  className="px-3 py-1.5 rounded-full bg-spotify-lightgray text-sm hover:bg-white/10 transition-colors"
+                  className="px-3 py-1 rounded-full bg-spotify-lightgray text-xs hover:bg-white/10 transition-colors"
                 >
                   {q}
                 </button>
@@ -304,7 +315,7 @@ export default function SearchPage() {
           )}
           {recentTracks.length > 0 && (
             <div>
-              <h3 className="text-label mb-2">{t('tracks')}</h3>
+              <SubLabel>{t('tracks')}</SubLabel>
               {recentTracks.map((item) => {
                 const track = recentTrackToTrack(item);
                 const isCurrent = currentTrack?.id === track.id;
@@ -320,21 +331,21 @@ export default function SearchPage() {
                       })();
                     }}
                     onSwipeRight={() => addToQueue(track.id, false, track)}
-                    className="flex items-center gap-3 p-2 rounded-md card-hover cursor-pointer"
+                    className="flex items-center gap-3 p-2 rounded-md hover:bg-white/5 cursor-pointer"
                   >
-                    <div className="w-11 h-11 rounded overflow-hidden bg-spotify-lightgray shrink-0">
+                    <div className="w-12 h-12 rounded overflow-hidden bg-spotify-lightgray shrink-0">
                       {item.thumbnailUrl ? (
                         <img src={item.thumbnailUrl} alt="" className="w-full h-full object-cover" />
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center text-spotify-text">♪</div>
+                        <div className="w-full h-full flex items-center justify-center text-spotify-text text-sm">♪</div>
                       )}
                     </div>
                     <div className="flex-1 min-w-0 text-start">
-                      <p className={clsx('truncate', isCurrent && 'text-spotify-green')}>{item.title}</p>
-                      <p className="text-body truncate">{getArtistName(item.artist)}</p>
+                      <p className={clsx('text-sm truncate', isCurrent && 'text-spotify-green')}>{item.title}</p>
+                      <p className="text-xs text-spotify-text truncate">{getArtistName(item.artist)}</p>
                       {isCurrent && <PlaybackMeta track={track} className="mt-0.5" />}
                     </div>
-                    <span className="text-caption tabular-nums">{formatTime(item.duration)}</span>
+                    <span className="text-xs text-spotify-text tabular-nums">{formatTime(item.duration)}</span>
                   </TrackSurface>
                 );
               })}
@@ -345,61 +356,60 @@ export default function SearchPage() {
 
       {!loading && results && query.trim() && (
         <>
+          {(results.artists?.length ?? 0) > 0 && (
+            <section className="mb-8">
+              <SubLabel>{t('artists')}</SubLabel>
+              <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-spotify">
+                {results.artists.map((artist) => (
+                  <Link
+                    key={artist.id}
+                    to={`/artist/by-name/${encodeURIComponent(artist.name)}${artist.spotifyArtistId ? `?spotifyArtistId=${encodeURIComponent(artist.spotifyArtistId)}` : ''}`}
+                    className="shrink-0 w-28 text-center group"
+                  >
+                    <div className="w-28 h-28 rounded-full bg-spotify-lightgray mb-2 overflow-hidden mx-auto shadow-sm">
+                      {artist.imageUrl ? (
+                        <CachedImage src={artist.imageUrl} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-2xl font-bold text-spotify-text">
+                          {artist.name.slice(0, 1).toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-sm font-medium truncate group-hover:underline">{artist.name}</p>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          )}
+
           {hasLocal && (
-            <section className="mb-10">
-              <h2 className="text-heading-sm mb-4 flex items-center gap-2">
-                <HardDrive className="w-5 h-5 text-spotify-green" />
-                {t('localLibrary')}
-              </h2>
+            <section className="mb-8">
+              <SectionTitle icon={<HardDrive className="w-4 h-4 text-spotify-green" />}>{t('localLibrary')}</SectionTitle>
 
               {localTracks.length > 0 && (
                 <div className="mb-6">
-                  <h3 className="text-label mb-2">{t('tracks')}</h3>
+                  <SubLabel>{t('tracks')}</SubLabel>
                   {localTracks.map((track, i) => (
                     <TrackRow key={track.id} track={track} index={i} onDeleted={() => search(query)} />
                   ))}
                 </div>
               )}
 
-              {(results.artists?.length ?? 0) > 0 && (
-                <div className="mb-6">
-                  <h3 className="text-label mb-3">{t('artists')}</h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4">
-                    {results.artists.map((artist) => (
-                      <Link
-                        key={artist.id}
-                        to={`/artist/by-name/${encodeURIComponent(artist.name)}${artist.spotifyArtistId ? `?spotifyArtistId=${encodeURIComponent(artist.spotifyArtistId)}` : ''}`}
-                        className="text-center card-hover p-3 rounded-lg"
-                      >
-                        <div className="w-full aspect-square rounded-full bg-spotify-lightgray mb-2 overflow-hidden">
-                          {artist.imageUrl ? (
-                            <img src={artist.imageUrl} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-2xl">🎤</div>
-                          )}
-                        </div>
-                        <p className="text-title truncate text-sm">{artist.name}</p>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {(results.playlists?.length ?? 0) > 0 && (
-                <div className="mb-6">
-                  <h3 className="text-label mb-3">{t('playlists')}</h3>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                <div className="mb-2">
+                  <SubLabel>{t('playlists')}</SubLabel>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                     {results.playlists.map((pl) => (
-                      <Link key={pl.id} to={`/playlist/${pl.id}`} className="bg-spotify-lightgray p-3 rounded-lg card-hover">
+                      <Link key={pl.id} to={`/playlist/${pl.id}`} className="p-2 rounded-md hover:bg-white/5 transition-colors">
                         <div className="aspect-square rounded-md bg-spotify-gray mb-2 overflow-hidden">
                           <PlaylistCover
                             coverUrl={pl.coverUrl}
                             coverImages={pl.coverImages}
                             className="w-full h-full"
-                            fallback={<span className="text-3xl">♪</span>}
+                            fallback={<span className="text-2xl text-spotify-text">♪</span>}
                           />
                         </div>
-                        <p className="text-title truncate text-sm">{pl.name}</p>
+                        <p className="text-sm font-medium truncate">{pl.name}</p>
                         {pl.trackCount !== undefined && (
                           <p className="text-xs text-spotify-text">{t('trackCount', { count: pl.trackCount })}</p>
                         )}
@@ -412,12 +422,12 @@ export default function SearchPage() {
           )}
 
           {isSpotifyPlaylistUrl && (
-            <section className="mb-8">
+            <section className="mb-6">
               <button
                 type="button"
                 onClick={() => void importSpotifyPlaylist(results.detectedUrl!.url)}
                 disabled={importing}
-                className="green-btn flex items-center gap-2 disabled:opacity-50"
+                className="green-btn flex items-center gap-2 disabled:opacity-50 text-sm"
               >
                 <Import className="w-4 h-4" />
                 {importing ? t('importing') : t('importPlaylist')}
@@ -427,7 +437,7 @@ export default function SearchPage() {
 
           {(results.spotifyUrlTracks?.length ?? 0) > 0 && (
             <section className="mb-8">
-              <h2 className="text-heading-sm mb-4">{t('spotifyResults')}</h2>
+              <SectionTitle>{t('spotifyResults')}</SectionTitle>
               {results.spotifyUrlTracks.map((item, i) =>
                 renderExternalRow(
                   `sp-url-${i}`,
@@ -443,7 +453,7 @@ export default function SearchPage() {
 
           {results.detectedUrl?.type === 'youtube' && (
             <section className="mb-8">
-              <h2 className="text-heading-sm mb-4">{t('youtubeResults')}</h2>
+              <SectionTitle>{t('youtubeResults')}</SectionTitle>
               <button
                 type="button"
                 onClick={() => void playExternal({
@@ -453,7 +463,7 @@ export default function SearchPage() {
                   duration: 0,
                   youtubeUrl: results.detectedUrl!.url,
                 })}
-                className="green-btn flex items-center gap-2"
+                className="green-btn flex items-center gap-2 text-sm"
               >
                 <Play className="w-4 h-4 fill-black" />
                 {t('play')}
@@ -463,7 +473,7 @@ export default function SearchPage() {
 
           {(results.spotify?.length ?? 0) > 0 && (
             <section className="mb-8">
-              <h2 className="text-heading-sm mb-4">{t('spotifyResults')}</h2>
+              <SectionTitle>{t('spotifyResults')}</SectionTitle>
               {results.spotify.map((item) =>
                 renderExternalRow(
                   item.id,
@@ -479,7 +489,7 @@ export default function SearchPage() {
 
           {(results.youtube?.length ?? 0) > 0 && (
             <section className="mb-8">
-              <h2 className="text-heading-sm mb-4">{t('youtubeResults')}</h2>
+              <SectionTitle>{t('youtubeResults')}</SectionTitle>
               {results.youtube.map((item) =>
                 renderExternalRow(
                   item.id,
@@ -493,8 +503,8 @@ export default function SearchPage() {
             </section>
           )}
 
-          {!hasLocal && !hasExternal && (
-            <p className="text-spotify-text text-center py-12">{t('noResults')}</p>
+          {!hasLocal && !hasExternal && (results.artists?.length ?? 0) === 0 && (
+            <p className="text-spotify-text text-center py-12 text-sm">{t('noResults')}</p>
           )}
         </>
       )}

@@ -132,16 +132,44 @@ async function searchLyrics(params: Record<string, string>): Promise<LrcRecord[]
   return Array.isArray(data) ? data as LrcRecord[] : [];
 }
 
+function titleMatchRatio(record: LrcRecord, targetTitle: string): number {
+  const name = record.trackName || record.name || '';
+  return tokenOverlap(name, targetTitle);
+}
+
+function artistMatchRatio(record: LrcRecord, targetArtist: string): number {
+  return Math.max(
+    ...artistVariants(targetArtist).map((a) => tokenOverlap(record.artistName || '', a)),
+    tokenOverlap(record.artistName || '', targetArtist),
+  );
+}
+
+function isAcceptableMatch(
+  record: LrcRecord,
+  target: { title: string; artist: string },
+  opts?: { requireArtist?: boolean },
+): boolean {
+  const titleScore = titleMatchRatio(record, target.title);
+  if (titleScore < 0.45) return false;
+  const artistScore = artistMatchRatio(record, target.artist);
+  if (opts?.requireArtist !== false && artistScore < 0.25 && titleScore < 0.85) return false;
+  return true;
+}
+
 function pickBest(
   records: LrcRecord[],
   target: { title: string; artist: string; duration?: number; album?: string | null },
-  minScore = 35,
-  opts?: { ignoreDuration?: boolean },
+  minScore = 40,
+  opts?: { ignoreDuration?: boolean; requireArtist?: boolean },
 ): LrcRecord | null {
   if (records.length === 0) return null;
   const scored = records
     .map((r) => ({ r, score: scoreRecord(r, target, opts) }))
-    .filter(({ r, score }) => score >= minScore && (r.plainLyrics || r.syncedLyrics))
+    .filter(({ r, score }) =>
+      score >= minScore
+      && (r.plainLyrics || r.syncedLyrics)
+      && isAcceptableMatch(r, target, opts),
+    )
     .sort((a, b) => b.score - a.score);
   return scored[0]?.r ?? null;
 }
@@ -172,21 +200,27 @@ async function resolveFromLrcLib(target: { title: string; artist: string; durati
 
   for (const params of getAttempts) {
     const hit = await tryGetLyrics(params);
-    if (hit && (hit.plainLyrics || hit.syncedLyrics)) {
-      // Prefer exact get hits that include synced lyrics when available
-      if (hit.syncedLyrics || !hit.plainLyrics) return hit;
-      // Keep looking briefly for a synced variant via search below if only plain
-      const syncedAlt = await searchLyrics({
-        track_name: params.track_name || '',
-        artist_name: params.artist_name || '',
-      });
-      const bestSynced = pickBest(
-        syncedAlt.filter((r) => !!r.syncedLyrics),
-        { title: params.track_name || target.title, artist: params.artist_name || target.artist, duration, album },
-        28,
-      );
-      return bestSynced || hit;
-    }
+    if (!hit || !(hit.plainLyrics || hit.syncedLyrics)) continue;
+    const targetForHit = {
+      title: params.track_name || target.title,
+      artist: params.artist_name || target.artist,
+      duration,
+      album,
+    };
+    // Never accept /get hits that barely match title/artist (lrclib sometimes returns unrelated songs)
+    if (!isAcceptableMatch(hit, targetForHit) || scoreRecord(hit, targetForHit) < 28) continue;
+
+    if (hit.syncedLyrics || !hit.plainLyrics) return hit;
+    const syncedAlt = await searchLyrics({
+      track_name: params.track_name || '',
+      artist_name: params.artist_name || '',
+    });
+    const bestSynced = pickBest(
+      syncedAlt.filter((r) => !!r.syncedLyrics),
+      targetForHit,
+      35,
+    );
+    return bestSynced || hit;
   }
 
   const searchQueries: Record<string, string>[] = [];
@@ -195,29 +229,20 @@ async function resolveFromLrcLib(target: { title: string; artist: string; durati
       searchQueries.push({ q: `${title} ${artist}` });
       searchQueries.push({ track_name: title, artist_name: artist });
     }
-    searchQueries.push({ q: title });
-    searchQueries.push({ track_name: title });
   }
 
   const scoredTarget = { title: titles[0] || target.title, artist: artists[0] || target.artist, duration, album };
 
   for (const params of searchQueries) {
     const results = await searchLyrics(params);
-    const best = pickBest(results, scoredTarget, 30);
+    const best = pickBest(results, scoredTarget, 40);
     if (best) return best;
   }
 
-  // Relaxed fallback — ignore duration mismatch (common for popular radio edits / live versions)
+  // Relaxed fallback — ignore duration mismatch, still require title/artist gate
   for (const params of searchQueries.slice(0, 8)) {
     const results = await searchLyrics(params);
-    const best = pickBest(results, scoredTarget, 22, { ignoreDuration: true });
-    if (best) return best;
-  }
-
-  // Last resort: title-only with very loose match
-  for (const title of titles) {
-    const results = await searchLyrics({ q: title });
-    const best = pickBest(results, { ...scoredTarget, title }, 18, { ignoreDuration: true });
+    const best = pickBest(results, scoredTarget, 32, { ignoreDuration: true });
     if (best) return best;
   }
 
@@ -300,7 +325,12 @@ async function saveLyricsRecord(trackId: string, data: LrcRecord, trackDuration?
   });
 }
 
-export async function fetchLyricsForTrack(input: LyricsFetchInput | string, title?: string, artist?: string) {
+export async function fetchLyricsForTrack(
+  input: LyricsFetchInput | string,
+  title?: string,
+  artist?: string,
+  opts?: { force?: boolean },
+) {
   try {
     let trackId: string;
     let meta: { title: string; artist: string; duration?: number; album?: string | null };
@@ -313,7 +343,10 @@ export async function fetchLyricsForTrack(input: LyricsFetchInput | string, titl
         include: { artist: true, album: true, lyrics: true },
       });
       if (!track) return null;
-      if (track.lyrics) return track.lyrics;
+      if (track.lyrics && !opts?.force) return track.lyrics;
+      if (opts?.force && track.lyrics) {
+        await prisma.lyrics.delete({ where: { trackId } }).catch(() => null);
+      }
       meta = {
         title: track.title,
         artist: track.artist.name,
@@ -323,7 +356,10 @@ export async function fetchLyricsForTrack(input: LyricsFetchInput | string, titl
     } else {
       trackId = input.trackId;
       const existing = await prisma.lyrics.findUnique({ where: { trackId } });
-      if (existing) return existing;
+      if (existing && !opts?.force) return existing;
+      if (opts?.force && existing) {
+        await prisma.lyrics.delete({ where: { trackId } }).catch(() => null);
+      }
       meta = {
         title: input.title,
         artist: input.artist,
