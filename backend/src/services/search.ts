@@ -139,7 +139,7 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
         ? searchSpotifyTracks(trimmed, Math.min(limit, 10))
         : Promise.resolve({ tracks: [] as SpotifySearchResult[], configured: false as boolean, error: undefined as string | undefined }),
       searchYoutube
-        ? searchYouTube(trimmed, Math.min(limit, 8))
+        ? searchYouTube(trimmed, Math.min(limit, 8), undefined, { interactive: true })
         : Promise.resolve([] as UnifiedSearchResult['youtube']),
     ]);
     spotify = spResult.tracks;

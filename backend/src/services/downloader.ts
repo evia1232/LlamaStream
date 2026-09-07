@@ -4,7 +4,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractAttempts, isFormatUnavailableError, ytDlpAuthArgsAsync, ytDlpCommand, noteSuccessfulSongFetch, waitForYtDlpSlot, isYouTubeRateLimitError, noteYouTubeRateLimit, isYouTubeRateLimited, clearYouTubeRateLimit, youtubeRateLimitRemainingMs } from './ytdlp';
+import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractAttempts, isFormatUnavailableError, ytDlpAuthArgsAsync, ytDlpCommand, noteSuccessfulSongFetch, waitForYtDlpSlot, isYouTubeRateLimitError, noteYouTubeRateLimit, isYouTubeRateLimited, isYouTubeHardRateLimited, clearYouTubeRateLimit, youtubeRateLimitRemainingMs } from './ytdlp';
 import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, cleanSearchTitle, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults, artistMatchStrength, isWrongArtistMatch, shouldEnforceArtistMatch } from '../lib/trackMatch';
 import { rotateProfileNow } from './ytdlpProfiles';
 import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
@@ -32,18 +32,31 @@ export function clearResolveCooldown(trackId: string): void {
 
 function markResolveFailed(trackId: string, err: unknown): void {
   const msg = err instanceof Error ? err.message : String(err);
-  const empty = /empty yt-dlp search|No YouTube results/i.test(msg);
-  const blocked = /403|Forbidden|rate-?limited|bot|Sign in to confirm/i.test(msg);
-  if (empty || blocked) {
+  // "filtered out" means yt-dlp worked — do NOT treat as empty-search IP storm
+  const trulyEmpty = /empty yt-dlp search/i.test(msg);
+  const filteredOnly = /raw hits filtered out/i.test(msg);
+  const blocked = /403|Forbidden|bot|Sign in to confirm/i.test(msg)
+    && !/rate-?limited/i.test(msg);
+  const hardRate = /rate-?limited by YouTube|current session has been rate-limited/i.test(msg);
+
+  if (hardRate) {
+    noteYouTubeRateLimit('rate-limit', { soft: false });
+  } else if (trulyEmpty || blocked) {
     consecutiveEmptySearches += 1;
-    if (consecutiveEmptySearches >= 2) {
-      noteYouTubeRateLimit(empty ? 'empty-search-storm' : 'blocked-search-storm');
+    // Soft pause background only — don't lock the user out of search/play
+    if (consecutiveEmptySearches >= 4) {
+      noteYouTubeRateLimit(trulyEmpty ? 'empty-search-storm' : 'blocked-search-storm', { soft: true, minutes: 5 });
       consecutiveEmptySearches = 0;
     }
+  } else if (filteredOnly) {
+    consecutiveEmptySearches = Math.max(0, consecutiveEmptySearches - 1);
   } else {
     consecutiveEmptySearches = Math.max(0, consecutiveEmptySearches - 1);
   }
-  const ms = (empty || blocked) ? RESOLVE_EMPTY_COOLDOWN_MS : RESOLVE_SOFT_COOLDOWN_MS;
+
+  const ms = (trulyEmpty || blocked)
+    ? RESOLVE_EMPTY_COOLDOWN_MS
+    : (filteredOnly ? RESOLVE_SOFT_COOLDOWN_MS : RESOLVE_SOFT_COOLDOWN_MS);
   resolveFailUntil.set(trackId, Date.now() + ms);
   console.warn(`[Prepare] Resolve cooldown ${Math.round(ms / 1000)}s for ${trackId}`);
 }
@@ -182,8 +195,17 @@ async function pickVerifiedCandidate(
   return null;
 }
 
-export async function searchYouTube(query: string, limit = 15, minDuration?: number): Promise<SearchResult[]> {
-  if (isYouTubeRateLimited()) {
+export async function searchYouTube(
+  query: string,
+  limit = 15,
+  minDuration?: number,
+  opts?: { interactive?: boolean },
+): Promise<SearchResult[]> {
+  // Soft pause: still allow interactive UI search; block background/resolve searches
+  if (!opts?.interactive && isYouTubeRateLimited()) {
+    return [];
+  }
+  if (opts?.interactive && isYouTubeHardRateLimited()) {
     return [];
   }
 
@@ -204,7 +226,7 @@ export async function searchYouTube(query: string, limit = 15, minDuration?: num
   args.push(`ytsearch${capped}:${query}`);
 
   try {
-    const result = await runYtDlp(args, 25000, { kind: 'search' });
+    const result = await runYtDlp(args, 25000, { kind: 'search', interactive: !!opts?.interactive });
     if (result.code === 0) {
       return parseJsonLines<Record<string, unknown>>(result.stdout)
         .map((data) => ({
@@ -221,14 +243,14 @@ export async function searchYouTube(query: string, limit = 15, minDuration?: num
 
     const lastError = lastLines(result.stderr) || 'YouTube search failed';
     if (isYouTubeRateLimitError(lastError)) {
-      noteYouTubeRateLimit('search');
+      noteYouTubeRateLimit('search', { soft: false });
       return [];
     }
     console.warn(`[YouTube] search failed for "${query}":`, lastError.split('\n')[0]);
     return [];
   } catch (err) {
-    if (isYouTubeRateLimitError(err) || isYouTubeRateLimited()) {
-      noteYouTubeRateLimit('search');
+    if (isYouTubeRateLimitError(err) || /rate-?limited/i.test((err as Error).message)) {
+      if (isYouTubeRateLimitError(err)) noteYouTubeRateLimit('search', { soft: false });
       return [];
     }
     console.warn(`[YouTube] search error for "${query}":`, (err as Error).message);
@@ -610,9 +632,12 @@ export async function resolveYouTubeSource(
     album?: string;
     relaxed?: boolean;
     excludeSourceIds?: string[];
+    /** User clicked play/search — soft background pause must not block */
+    interactive?: boolean;
   }
 ): Promise<ResolvedSource> {
   const trimmed = input.trim();
+  const ytSearchOpts = { interactive: !!opts?.interactive };
 
   if (opts?.url || /youtube\.com|youtu\.be|music\.youtube\.com/i.test(trimmed)) {
     const url = opts?.url || trimmed;
@@ -709,7 +734,7 @@ export async function resolveYouTubeSource(
   };
 
   if (title && artist) {
-    if (isYouTubeRateLimited()) {
+    if (opts?.interactive ? isYouTubeHardRateLimited() : isYouTubeRateLimited()) {
       throw new Error(`YouTube rate-limited (~${Math.ceil(youtubeRateLimitRemainingMs() / 60000)} min left)`);
     }
     // Prefer official audio first for Latin; keep fan-out small to save proxy
@@ -718,7 +743,7 @@ export async function resolveYouTubeSource(
     let sawAnyYtHit = false;
     for (const q of queries) {
       try {
-        const batch = await searchYouTube(q, 8, minSearchDuration);
+        const batch = await searchYouTube(q, 8, minSearchDuration, ytSearchOpts);
         if (batch.length > 0) sawAnyYtHit = true;
         collectResults(batch);
         candidates.push(...batch.filter((r) => !candidates.some((c) => c.id === r.id)
@@ -747,7 +772,7 @@ export async function resolveYouTubeSource(
 
   if (candidates.length === 0) {
     try {
-      const fallback = await searchYouTube(searchQuery, 15, minSearchDuration);
+      const fallback = await searchYouTube(searchQuery, 15, minSearchDuration, ytSearchOpts);
       collectResults(fallback);
       const pool = filterYouTubeResults(fallback, target, !!opts?.relaxed);
       candidates = title && artist
@@ -761,7 +786,7 @@ export async function resolveYouTubeSource(
   // Title-only / unconstrained cascades only when we already saw some raw hits to re-rank
   if (candidates.length === 0 && title && artist && allRaw.length > 0) {
     try {
-      const titleOnly = await searchYouTube(`${searchArtist} ${title}`, 15, minSearchDuration);
+      const titleOnly = await searchYouTube(`${searchArtist} ${title}`, 15, minSearchDuration, ytSearchOpts);
       collectResults(titleOnly);
       const pool = filterYouTubeResults(titleOnly, target, !!opts?.relaxed);
       candidates = rankYouTubeResults(pool, target, { ...rankOpts, minScore: opts?.relaxed ? 18 : 30 });
@@ -784,7 +809,7 @@ export async function resolveYouTubeSource(
   if (candidates.length === 0 && title && artist && allRaw.length > 0 && minSearchDuration) {
     try {
       const q = `${searchArtist} ${title}`;
-      const batch = await searchYouTube(q, 15);
+      const batch = await searchYouTube(q, 15, undefined, ytSearchOpts);
       collectResults(batch);
       const pool = filterYouTubeResults(batch, target, true);
       candidates = rankYouTubeResults(pool, target, { ...rankOpts, minScore: 12, filterVariants: true });
@@ -901,7 +926,7 @@ export function resolveAndAttachSourceInBackground(
   resolveInFlight.add(trackId);
   void (async () => {
     try {
-      const source = await resolveYouTubeSource(input, { ...opts, relaxed: !!opts?.relaxed });
+      const source = await resolveYouTubeSource(input, { ...opts, relaxed: !!opts?.relaxed, interactive: false });
       const track = await prisma.track.findUnique({ where: { id: trackId }, include: { artist: true } });
       if (!track) return;
 
@@ -1001,8 +1026,9 @@ export async function prepareTrackForPlayback(
         album: existing.album?.title,
       });
     } else if (!existing.sourceUrl && existing.title && existing.artist.name) {
-      if (!isResolveCoolingDown(existing.id) && !isYouTubeRateLimited()) {
+      if (!isResolveCoolingDown(existing.id) && !isYouTubeHardRateLimited()) {
         if (opts?.deferResolve) {
+          if (isYouTubeRateLimited()) return existing;
           resolveAndAttachSourceInBackground(existing.id, searchQuery, quality, {
             ...opts,
             title: existing.title,
@@ -1014,14 +1040,15 @@ export async function prepareTrackForPlayback(
           resolveInFlight.add(existing.id);
           try {
             const source = await Promise.race([
-              resolveYouTubeSource(searchQuery, {
-                title: existing.title,
-                artist: existing.artist.name,
-                duration: existing.duration > 0 ? existing.duration : opts?.duration,
-                album: existing.album?.title || opts?.album,
-                spotifyUrl: opts?.spotifyUrl,
-                relaxed: !!opts?.relaxed,
-              }),
+            resolveYouTubeSource(searchQuery, {
+              title: existing.title,
+              artist: existing.artist.name,
+              duration: existing.duration > 0 ? existing.duration : opts?.duration,
+              album: existing.album?.title || opts?.album,
+              spotifyUrl: opts?.spotifyUrl,
+              relaxed: !!opts?.relaxed,
+              interactive: true,
+            }),
               new Promise<never>((_, reject) => {
                 setTimeout(() => reject(new Error('YouTube resolve timed out')), 45000);
               }),
@@ -1089,8 +1116,9 @@ export async function prepareTrackForPlayback(
     });
 
     // Interactive play: resolve the RIGHT source now (not a random cover in the background)
-    if (!isResolveCoolingDown(track.id) && !isYouTubeRateLimited()) {
+    if (!isResolveCoolingDown(track.id) && !isYouTubeHardRateLimited()) {
       if (opts?.deferResolve) {
+        if (isYouTubeRateLimited()) return track;
         resolveAndAttachSourceInBackground(track.id, searchQuery, quality, opts);
         return track;
       }
@@ -1100,7 +1128,7 @@ export async function prepareTrackForPlayback(
       resolveInFlight.add(track.id);
       try {
         const source = await Promise.race([
-          resolveYouTubeSource(searchQuery, { ...opts, relaxed: !!opts?.relaxed }),
+          resolveYouTubeSource(searchQuery, { ...opts, relaxed: !!opts?.relaxed, interactive: true }),
           new Promise<never>((_, reject) => {
             setTimeout(() => reject(new Error('YouTube resolve timed out')), 45000);
           }),

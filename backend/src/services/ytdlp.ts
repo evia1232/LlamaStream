@@ -32,8 +32,10 @@ const BASE_ARGS = [
 
 let multiEnabledCache = false;
 
-/** Global YouTube rate-limit gate (session banned). */
-let ytRateLimitUntil = 0;
+/** Hard gate — YouTube actually banned us (403 / official rate-limit). Blocks everything. */
+let ytHardLimitUntil = 0;
+/** Soft gate — too many failed background resolves. Blocks downloads/import/prefetch only. */
+let ytSoftLimitUntil = 0;
 let lastYtSearchAt = 0;
 let lastYtDownloadAt = 0;
 let ytSearchQueue: Promise<void> = Promise.resolve();
@@ -45,24 +47,43 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** True if background work (download/import/prefetch) should pause. */
 export function isYouTubeRateLimited(): boolean {
-  return Date.now() < ytRateLimitUntil;
+  return Date.now() < ytHardLimitUntil || Date.now() < ytSoftLimitUntil;
+}
+
+/** True only for a real YouTube ban — interactive search/play still blocked. */
+export function isYouTubeHardRateLimited(): boolean {
+  return Date.now() < ytHardLimitUntil;
 }
 
 export function youtubeRateLimitRemainingMs(): number {
-  return Math.max(0, ytRateLimitUntil - Date.now());
+  return Math.max(0, Math.max(ytHardLimitUntil, ytSoftLimitUntil) - Date.now());
 }
 
-export function noteYouTubeRateLimit(reason = 'rate-limit'): void {
-  // Keep gate short — long pauses make the whole app feel dead
-  const mins = Math.max(8, parseInt(process.env.YTDLP_RATE_LIMIT_MINUTES || '15', 10) || 15);
-  ytRateLimitUntil = Date.now() + mins * 60 * 1000;
-  console.warn(`[yt-dlp] YouTube ${reason} — pausing yt-dlp until ${new Date(ytRateLimitUntil).toISOString()}`);
-  void rotateProfileNow(reason).catch(() => null);
+export function noteYouTubeRateLimit(
+  reason = 'rate-limit',
+  opts?: { soft?: boolean; minutes?: number },
+): void {
+  const soft = opts?.soft ?? /empty-search|storm|restore-storm/i.test(reason);
+  const defaultMins = soft ? 5 : Math.max(8, parseInt(process.env.YTDLP_RATE_LIMIT_MINUTES || '15', 10) || 15);
+  const mins = Math.max(1, opts?.minutes ?? defaultMins);
+  const until = Date.now() + mins * 60 * 1000;
+  if (soft) {
+    ytSoftLimitUntil = Math.max(ytSoftLimitUntil, until);
+    console.warn(
+      `[yt-dlp] Soft pause (${reason}) — background downloads paused until ${new Date(ytSoftLimitUntil).toISOString()} (search/play still allowed)`,
+    );
+  } else {
+    ytHardLimitUntil = Math.max(ytHardLimitUntil, until);
+    console.warn(`[yt-dlp] YouTube ${reason} — pausing ALL yt-dlp until ${new Date(ytHardLimitUntil).toISOString()}`);
+    void rotateProfileNow(reason).catch(() => null);
+  }
 }
 
 export function clearYouTubeRateLimit(): void {
-  ytRateLimitUntil = 0;
+  ytHardLimitUntil = 0;
+  ytSoftLimitUntil = 0;
 }
 
 export function isYouTubeRateLimitError(err: unknown): boolean {
@@ -72,10 +93,26 @@ export function isYouTubeRateLimitError(err: unknown): boolean {
 
 export type YtDlpSlotKind = 'search' | 'download';
 
-/** Serialize yt-dlp; search/download use separate queues so UI search is not stuck behind downloads. */
-export async function waitForYtDlpSlot(kind: YtDlpSlotKind = 'download'): Promise<void> {
+/**
+ * Serialize yt-dlp.
+ * - interactive search: only blocked by hard YouTube ban
+ * - download / background: also blocked by soft pause
+ */
+export async function waitForYtDlpSlot(
+  kind: YtDlpSlotKind = 'download',
+  opts?: { interactive?: boolean },
+): Promise<void> {
+  const interactive = !!opts?.interactive && kind === 'search';
+
   const run = async () => {
-    if (isYouTubeRateLimited()) {
+    if (interactive) {
+      if (isYouTubeHardRateLimited()) {
+        const mins = Math.ceil(Math.max(0, ytHardLimitUntil - Date.now()) / 60000);
+        throw new Error(
+          `YouTube rate-limited (~${mins} min left). Wait, rotate proxy/cookies profile, or retry later.`,
+        );
+      }
+    } else if (isYouTubeRateLimited()) {
       const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
       throw new Error(
         `YouTube rate-limited (~${mins} min left). Wait, rotate proxy/cookies profile, or retry later.`,
@@ -146,11 +183,11 @@ export function ytDlpCommand(): string {
 export function runYtDlp(
   args: string[],
   timeoutMs = 300000,
-  opts?: { kind?: YtDlpSlotKind },
+  opts?: { kind?: YtDlpSlotKind; interactive?: boolean },
 ): Promise<YtDlpResult> {
   return new Promise(async (resolve, reject) => {
     try {
-      await waitForYtDlpSlot(opts?.kind || 'download');
+      await waitForYtDlpSlot(opts?.kind || 'download', { interactive: opts?.interactive });
     } catch (err) {
       reject(err);
       return;
