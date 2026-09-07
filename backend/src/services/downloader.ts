@@ -191,6 +191,13 @@ export async function downloadFromYouTube(
   const dir = outputDir ?? getCacheAudioDir();
   fs.mkdirSync(dir, { recursive: true });
 
+  try {
+    const { assertDiskSpaceForDownload } = await import('./trackStorage');
+    assertDiskSpaceForDownload(dir);
+  } catch (err) {
+    if (err instanceof Error && /Disk almost full/i.test(err.message)) throw err;
+  }
+
   const fileId = uuidv4();
   const outputTemplate = path.join(dir, `${fileId}.%(ext)s`);
 
@@ -257,17 +264,22 @@ export async function downloadFromYouTube(
         if (/403|Forbidden|Sign in to confirm|confirm you.?re not a bot/i.test(stderr)) {
           void rotateProfileNow('download-403');
         }
+        if (/No space left|ENOSPC|disk quota exceeded/i.test(stderr)) {
+          reject(new Error(lastLines(stderr) || 'Disk full — cannot download'));
+          return;
+        }
+        const tip = lastLines(stderr, 3);
         if (isFormatUnavailableError(stderr) && attemptIndex < attempts.length) {
-          console.warn(`[Download] Format unavailable (${attempt.label}), retrying…`);
+          console.warn(`[Download] Format unavailable (${attempt.label}): ${tip}`);
           tryDownload();
           return;
         }
         if (attemptIndex < attempts.length) {
-          console.warn(`[Download] Failed with ${attempt.label}, retrying…`);
+          console.warn(`[Download] Failed with ${attempt.label}: ${tip}`);
           tryDownload();
           return;
         }
-        reject(new Error(lastLines(stderr) || `Download failed (exit ${code})`));
+        reject(new Error(tip || `Download failed (exit ${code})`));
       });
     };
 

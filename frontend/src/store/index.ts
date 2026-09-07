@@ -272,11 +272,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     const generation = get()._playGeneration;
 
-    const { contextTracks, volume } = get();
+    const { contextTracks, volume, playbackEngine: prevEngine } = get();
     const ctxIdx = contextTracks.findIndex((t) => t.id === track.id);
     if (ctxIdx >= 0) {
       set({ contextIndex: ctxIdx });
-    } else {
+    } else if (!seamless) {
+      // Explicit play from outside the current list — drop playlist/liked context.
+      // Seamless next must NOT clear context (navigation / id edge cases).
       set({ contextTracks: [], contextIndex: -1 });
     }
 
@@ -298,18 +300,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       isBuffering: false,
       currentTime: startTime,
       pendingSeekTime: startTime,
-      // Keep cached lyrics for this track; clear only when switching songs
       lyrics: lyricsSessionCache.get(track.id) ?? null,
       playbackEngine: useSpotify ? 'spotify' : 'local',
     });
     void get().fetchLyrics(track.id);
-    // Fast path: stream from cache or pipe YouTube while downloading in background
+
     if (canPlayLocal && !useSpotify) {
       if (stale()) return;
+      // Leaving Spotify → local
+      if (prevEngine === 'spotify') {
+        void useSpotifyPlayerStore.getState().pause();
+      }
       set({
         duration: track.duration || get().duration,
       });
-      // Load immediately — don't wait for React re-render (frozen on lock screen)
       try {
         get()._loadLocalTrackFn?.(streamableTrack, startTime);
       } catch { /* ignore */ }
@@ -335,10 +339,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (useSpotify && spotifyUri) {
       set({ isPreparingPlayback: true });
       try {
+        // Stop local HTMLAudio so it cannot overlap Spotify
+        get()._pauseFn?.();
         const spot = useSpotifyPlayerStore.getState();
         const ok = await spot.init(effectivePlaybackVolume(volume));
         if (stale()) return;
         if (!ok) throw new Error(spot.initError || 'Spotify player failed');
+        await spot.pause();
         await spot.playUri(spotifyUri, startTime * 1000);
         if (stale()) return;
         set({
@@ -349,6 +356,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         });
         void get().fetchLyrics(track.id);
         get().broadcastPlaybackSync();
+        void get().prepareDiscoverAutoplay();
         return;
       } catch (err) {
         if (stale()) return;
@@ -400,7 +408,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   beginTrackTransition: () => {
     set((s) => ({ _playGeneration: s._playGeneration + 1, isBuffering: true }));
-    // Keep current audio playing until the next track is ready — avoids background autoplay blocks.
+    // Silence Spotify only — keep local HTMLAudio until the next src is loaded
+    // (pausing local here breaks mobile autoplay after skip).
+    void useSpotifyPlayerStore.getState().pause();
   },
 
   stopPlaybackImmediate: () => {
@@ -599,6 +609,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   prepareDiscoverAutoplay: async () => {
     const { currentTrack, autoplay, queue, contextTracks, _discoverLoading } = get();
     if (!autoplay || !currentTrack || _discoverLoading) return;
+    // Never replace an active playlist / multi-track context with discover
     if (queue.length > 0 || contextTracks.length > 1) return;
 
     const artistName = typeof currentTrack.artist === 'string'

@@ -22,6 +22,23 @@ export function getCacheAudioDir(): string {
   return dir;
 }
 
+/** Fail fast when music/cache volume is critically low. */
+export function assertDiskSpaceForDownload(dir: string, minFreeMb = 256): void {
+  try {
+    const st = (fs as typeof fs & { statfsSync?: (p: string) => { bavail: number | bigint; bsize: number | bigint } }).statfsSync?.(dir);
+    if (!st) return;
+    const freeBytes = Number(st.bavail) * Number(st.bsize);
+    const freeMb = freeBytes / (1024 * 1024);
+    if (freeMb < minFreeMb) {
+      throw new Error(
+        `Disk almost full (${Math.floor(freeMb)}MB free under ${dir}). Free space or prune Docker before downloading.`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof Error && /Disk almost full/i.test(err.message)) throw err;
+  }
+}
+
 export function getLibraryAudioDir(): string {
   fs.mkdirSync(config.musicStoragePath, { recursive: true });
   return config.musicStoragePath;

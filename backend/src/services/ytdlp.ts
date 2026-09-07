@@ -139,6 +139,15 @@ export function ytDlpAudioExtractAttempts(quality: 'LOW' | 'NORMAL' | 'HIGH' = '
 
   return [
     {
+      // Least restrictive format first — m4a-only often fails when only webm opus is offered
+      label: 'android+web best',
+      args: [
+        '--extractor-args', 'youtube:player_client=android,web',
+        '-f', 'bestaudio/best',
+        ...extract,
+      ],
+    },
+    {
       label: 'android+web m4a',
       args: [
         '--extractor-args', 'youtube:player_client=android,web',

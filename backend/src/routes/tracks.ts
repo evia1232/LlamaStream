@@ -6,7 +6,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import prisma from '../lib/prisma';
 import { resolveAndDownload, downloadLibraryTrack, prefetchLibraryTrack, researchTrack, resolveYouTubeSource, upsertPendingTrack, prepareTrackForPlayback, resolveAndAttachSourceInBackground } from '../services/downloader';
-import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress, pipeYouTubeAudio, pipeYouTubeSearch } from '../services/trackDownload';
+import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress, isDownloadCoolingDown, pipeYouTubeAudio, pipeYouTubeSearch } from '../services/trackDownload';
 import { fetchLyricsForTrack } from '../services/lyrics';
 import { unifiedSearch } from '../services/search';
 import { isSpotifyUrl, isYouTubeUrl } from '../services/spotify';
@@ -499,7 +499,7 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
 
   if (fresh.sourceUrl) {
     const quality = parseStoredQuality(fresh.quality);
-    if (!isDownloadInProgress(fresh.id)) {
+    if (!isDownloadInProgress(fresh.id) && !isDownloadCoolingDown(fresh.id, fresh.sourceUrl)) {
       ensureBackgroundDownload(fresh.id, fresh.sourceUrl, quality, {
         title: fresh.title,
         artist: fresh.artist.name,
@@ -513,7 +513,7 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
   if (fresh.title && fresh.artist.name) {
     const quality = parseStoredQuality(fresh.quality);
     const query = `${fresh.artist.name} - ${fresh.title}`;
-    if (!isDownloadInProgress(fresh.id)) {
+    if (!isDownloadInProgress(fresh.id) && !isDownloadCoolingDown(fresh.id)) {
       resolveAndAttachSourceInBackground(fresh.id, query, quality, {
         title: fresh.title,
         artist: fresh.artist.name,

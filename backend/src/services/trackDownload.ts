@@ -5,7 +5,7 @@ import prisma from '../lib/prisma';
 import type { DownloadResult } from './downloader';
 import { fetchLyricsForTrack } from './lyrics';
 import { lastLines, ytDlpAudioExtractArgs, ytDlpAuthArgs, ytDlpCommand } from './ytdlp';
-import { finalizeFileStorage, getDownloadDirForTrack, touchTrackAccess } from './trackStorage';
+import { finalizeFileStorage, getDownloadDirForTrack, touchTrackAccess, assertDiskSpaceForDownload } from './trackStorage';
 import {
   downloadKey,
   findCanonicalDownloadedTrack,
@@ -15,6 +15,10 @@ import {
 
 const activeDownloads = new Map<string, Promise<void>>();
 const trackToDownloadKey = new Map<string, string>();
+
+/** After a hard failure, don't restart background download for a while (stream retries were looping). */
+const downloadFailUntil = new Map<string, number>();
+const DOWNLOAD_FAIL_COOLDOWN_MS = 3 * 60 * 1000;
 
 const YTDLP_BASE = [
   '--no-warnings',
@@ -42,6 +46,27 @@ export function getActiveDownload(trackId: string): Promise<void> | undefined {
   if (key) return activeDownloads.get(key);
   return activeDownloads.get(`tid:${trackId}`);
 }
+
+export function isDownloadCoolingDown(trackId: string, sourceUrl?: string): boolean {
+  const now = Date.now();
+  const keys = [`tid:${trackId}`, sourceUrl ? `url:${sourceUrl}` : ''].filter(Boolean);
+  for (const k of keys) {
+    const until = downloadFailUntil.get(k);
+    if (until && until > now) return true;
+  }
+  return false;
+}
+
+function markDownloadFailed(trackId: string, sourceUrl: string, err: unknown): void {
+  const until = Date.now() + DOWNLOAD_FAIL_COOLDOWN_MS;
+  downloadFailUntil.set(`tid:${trackId}`, until);
+  if (sourceUrl) downloadFailUntil.set(`url:${sourceUrl}`, until);
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`[Download] Background save failed for track ${trackId} — cooling down ${DOWNLOAD_FAIL_COOLDOWN_MS / 1000}s:`, msg.split('\n')[0]);
+}
+
+/** Fail fast when the music/cache volume is critically low (common after Docker overlay fills the disk). */
+export { assertDiskSpaceForDownload } from './trackStorage';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -191,6 +216,10 @@ export function ensureBackgroundDownload(
   meta: { title?: string; artist?: string; album?: string }
 ) {
   if (isDownloadInProgress(trackId)) return getActiveDownload(trackId);
+  if (isDownloadCoolingDown(trackId, sourceUrl)) {
+    console.warn(`[Download] Skipping restart for ${trackId} — recent failure cooldown`);
+    return;
+  }
 
   const pendingKey = `tid:${trackId}`;
   trackToDownloadKey.set(trackId, pendingKey);
@@ -202,8 +231,11 @@ export function ensureBackgroundDownload(
     const { downloadFromYouTube } = await import('./downloader');
     console.log(`[Download] Background save started for track ${trackId}`);
     const outputDir = await getDownloadDirForTrack(trackId);
+    assertDiskSpaceForDownload(outputDir);
     const download = await downloadFromYouTube(sourceUrl, quality, undefined, outputDir);
     await finalizeTrackDownload(trackId, download, quality, meta);
+    downloadFailUntil.delete(`tid:${trackId}`);
+    downloadFailUntil.delete(`url:${sourceUrl}`);
     console.log(`[Download] Background save complete for track ${trackId}`);
   };
 
@@ -223,12 +255,17 @@ export function ensureBackgroundDownload(
       if (sourceKey) {
         let shared = activeDownloads.get(sourceKey);
         if (!shared) {
-          shared = runDownload().finally(() => activeDownloads.delete(sourceKey));
+          shared = runDownload()
+            .catch((err) => {
+              markDownloadFailed(trackId, sourceUrl, err);
+              throw err;
+            })
+            .finally(() => activeDownloads.delete(sourceKey));
           activeDownloads.set(sourceKey, shared);
         }
         trackToDownloadKey.set(trackId, sourceKey);
         activeDownloads.delete(pendingKey);
-        await shared.catch(() => { /* ignore */ });
+        await shared.catch(() => { /* already logged */ });
         const after = await findCanonicalDownloadedTrack(track?.sourceId, sourceUrl);
         if (after) await linkTrackToCanonical(trackId, after);
         return;
@@ -236,7 +273,7 @@ export function ensureBackgroundDownload(
 
       await runDownload();
     } catch (err) {
-      console.error(`[Download] Background save failed for track ${trackId}:`, (err as Error).message);
+      markDownloadFailed(trackId, sourceUrl, err);
     } finally {
       const key = trackToDownloadKey.get(trackId);
       if (key) activeDownloads.delete(key);
