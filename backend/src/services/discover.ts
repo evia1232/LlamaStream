@@ -208,7 +208,7 @@ async function collectYouTubeRecs(
     `${seed.title} mix`,
     `best songs like ${artist}`,
     `${artist} radio mix`,
-  ]).slice(0, 3);
+  ]).slice(0, 1);
 
   const found: SearchResult[] = [];
   const seen = new Set<string>();
@@ -218,7 +218,14 @@ async function collectYouTubeRecs(
     if (found.length >= limit * 2) break;
     if (Date.now() < youtubeDiscoverBlockedUntil) break;
     try {
-      const results = await searchYouTube(q, 12);
+      const { isYouTubeRateLimited } = await import('./ytdlp');
+      if (isYouTubeRateLimited()) {
+        youtubeDiscoverBlockedUntil = Date.now() + 10 * 60 * 1000;
+        break;
+      }
+    } catch { /* ignore */ }
+    try {
+      const results = await searchYouTube(q, 8);
       // Looser match to the seed title — we want adjacent songs, not clones
       const ranked = rankYouTubeResults(
         results,
@@ -336,7 +343,18 @@ export async function getDiscoverRecommendations(
 
   const ytNeeded = limit - recommendations.length;
   if (ytNeeded > 0) {
-    const ytResults = await collectYouTubeRecs(seed, sourceIds, titles, ytNeeded + 2);
+    let ytResults: SearchResult[] = [];
+    try {
+      const { isYouTubeRateLimited } = await import('./ytdlp');
+      if (!isYouTubeRateLimited() && Date.now() >= youtubeDiscoverBlockedUntil) {
+        ytResults = await Promise.race([
+          collectYouTubeRecs(seed, sourceIds, titles, ytNeeded + 2),
+          new Promise<SearchResult[]>((resolve) => setTimeout(() => resolve([]), 12000)),
+        ]);
+      }
+    } catch (err) {
+      console.warn('[Discover] YouTube recs skipped:', (err as Error).message);
+    }
     for (const r of ytResults) {
       recommendations.push({
         id: `discover-yt-${r.id}`,
@@ -404,6 +422,12 @@ export async function prefetchNextDiscoverTrack(
   seedTrackId: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH'
 ) {
+  const { isYouTubeRateLimited } = await import('./ytdlp');
+  if (isYouTubeRateLimited()) {
+    return { status: 'skipped', reason: 'youtube-rate-limited' };
+  }
+
+  // Prefer library-only recommendations for prefetch speed
   const { recommendations } = await getDiscoverRecommendations(userId, seedTrackId, 4);
 
   for (const rec of recommendations) {
@@ -432,15 +456,15 @@ export async function prefetchNextDiscoverTrack(
         return { trackId: track.id, status: 'prefetching' };
       } catch (err) {
         const msg = (err as Error).message;
-        if (isYouTubeBlockedError(err)) {
-          youtubeDiscoverBlockedUntil = Date.now() + 15 * 60 * 1000;
-          console.warn('[Discover] Prefetch blocked by YouTube 403 — pausing 15m');
+        if (isYouTubeBlockedError(err) || /rate-?limited/i.test(msg)) {
+          youtubeDiscoverBlockedUntil = Date.now() + 10 * 60 * 1000;
+          console.warn('[Discover] Prefetch blocked — pausing 10m');
           break;
         }
         if (/format is not available/i.test(msg)) {
           console.warn('[Discover] Prefetch skipped (format):', msg.split('\n')[0]);
         } else {
-          console.error('[Discover] Prefetch failed:', msg);
+          console.warn('[Discover] Prefetch failed:', msg.split('\n')[0]);
         }
       }
     }

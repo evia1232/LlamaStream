@@ -539,7 +539,7 @@ export default function PlayerBar() {
   useEffect(() => {
     if (!isPlaying || isRemoteActive) return;
     prefetchUpcoming();
-    const timer = window.setInterval(prefetchUpcoming, 15000);
+    const timer = window.setInterval(prefetchUpcoming, 45000);
     return () => window.clearInterval(timer);
   }, [isPlaying, currentTrack?.id, isRemoteActive, prefetchUpcoming]);
 

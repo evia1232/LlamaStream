@@ -152,5 +152,5 @@ export function prefetchTrack(track: Track): void {
 }
 
 export function prefetchDiscoverNext(seedTrackId: string): void {
-  api.get('/discover/prefetch', { params: { seedTrackId } }).catch(() => { /* ignore */ });
+  api.get('/discover/prefetch', { params: { seedTrackId }, timeout: 8000 }).catch(() => { /* ignore */ });
 }

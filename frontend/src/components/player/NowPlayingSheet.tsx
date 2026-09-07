@@ -184,8 +184,9 @@ export default function NowPlayingSheet() {
             seedTrackId: currentTrack.id.startsWith('external-') ? undefined : currentTrack.id,
             seedTitle: currentTrack.title,
             seedArtist: getArtistName(currentTrack.artist),
-            limit: 8,
+            limit: 6,
           },
+          timeout: 15000,
         });
         if (cancelled) return;
         const tracks = (data.recommendations || data.tracks || []) as Track[];

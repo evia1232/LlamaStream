@@ -4,7 +4,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractAttempts, isFormatUnavailableError, ytDlpAuthArgsAsync, ytDlpCommand, noteSuccessfulSongFetch, waitForYtDlpSlot, isYouTubeRateLimitError, noteYouTubeRateLimit, isYouTubeRateLimited, clearYouTubeRateLimit } from './ytdlp';
+import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractAttempts, isFormatUnavailableError, ytDlpAuthArgsAsync, ytDlpCommand, noteSuccessfulSongFetch, waitForYtDlpSlot, isYouTubeRateLimitError, noteYouTubeRateLimit, isYouTubeRateLimited, clearYouTubeRateLimit, youtubeRateLimitRemainingMs } from './ytdlp';
 import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, cleanSearchTitle, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults, artistMatchStrength } from '../lib/trackMatch';
 import { rotateProfileNow } from './ytdlpProfiles';
 import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
@@ -134,32 +134,28 @@ async function pickVerifiedCandidate(
 }
 
 export async function searchYouTube(query: string, limit = 15, minDuration?: number): Promise<SearchResult[]> {
-  const clientAttempts = [
-    'android,web',
-    'ios,web',
-    'tv_embedded,web',
-    'web',
+  if (isYouTubeRateLimited()) {
+    return [];
+  }
+
+  // One fast client — retrying 4 clients made search feel broken
+  const args = [
+    '--flat-playlist',
+    '--dump-json',
+    '--skip-download',
+    '--extractor-args', 'youtube:player_client=android,web',
   ];
 
-  let lastError = '';
+  if (minDuration && minDuration >= 60) {
+    const floor = Math.max(45, Math.floor(minDuration * 0.45));
+    args.push('--match-filter', `duration >= ${floor}`);
+  }
 
-  for (const clients of clientAttempts) {
-    const args = [
-      '--flat-playlist',
-      '--dump-json',
-      '--skip-download',
-      '--extractor-args', `youtube:player_client=${clients}`,
-    ];
+  const capped = Math.min(Math.max(limit, 1), 10);
+  args.push(`ytsearch${capped}:${query}`);
 
-    if (minDuration && minDuration >= 60) {
-      const floor = Math.max(45, Math.floor(minDuration * 0.45));
-      args.push('--match-filter', `duration >= ${floor}`);
-    }
-
-    args.push(`ytsearch${limit}:${query}`);
-
-    const result = await runYtDlp(args, 60000);
-
+  try {
+    const result = await runYtDlp(args, 25000, { kind: 'search' });
     if (result.code === 0) {
       return parseJsonLines<Record<string, unknown>>(result.stdout)
         .map((data) => ({
@@ -174,16 +170,21 @@ export async function searchYouTube(query: string, limit = 15, minDuration?: num
         .filter((r) => !isYouTubeShortOrReel(r));
     }
 
-    lastError = lastLines(result.stderr) || 'YouTube search failed';
+    const lastError = lastLines(result.stderr) || 'YouTube search failed';
     if (isYouTubeRateLimitError(lastError)) {
       noteYouTubeRateLimit('search');
-      throw new Error(lastError);
+      return [];
     }
-    const blocked = /403|Forbidden|Sign in to confirm|confirm you.?re not a bot|confirm your age|age.?restrict/i.test(result.stderr);
-    if (!blocked) break;
+    console.warn(`[YouTube] search failed for "${query}":`, lastError.split('\n')[0]);
+    return [];
+  } catch (err) {
+    if (isYouTubeRateLimitError(err) || isYouTubeRateLimited()) {
+      noteYouTubeRateLimit('search');
+      return [];
+    }
+    console.warn(`[YouTube] search error for "${query}":`, (err as Error).message);
+    return [];
   }
-
-  throw new Error(lastError || 'YouTube search failed');
 }
 
 export async function downloadFromYouTube(
@@ -256,7 +257,7 @@ export async function downloadFromYouTube(
       }
 
       try {
-        await waitForYtDlpSlot();
+        await waitForYtDlpSlot('download');
       } catch (err) {
         reject(err);
         return;
@@ -264,11 +265,8 @@ export async function downloadFromYouTube(
 
       const attempt = attempts[attemptIndex++];
       const args = [
-        '--no-warnings', '--no-playlist', '--retries', '3', '--fragment-retries', '3',
-        '--socket-timeout', '30',
-        '--sleep-requests', '1',
-        '--sleep-interval', '2',
-        '--max-sleep-interval', '5',
+        '--no-warnings', '--no-playlist', '--retries', '2', '--fragment-retries', '2',
+        '--socket-timeout', '20',
         '--js-runtimes', 'node',
         '--remote-components', 'ejs:github',
         ...authArgs,
@@ -657,10 +655,13 @@ export async function resolveYouTubeSource(
   };
 
   if (title && artist) {
-    const queries = buildSearchQueries(searchArtist || artist, title, album);
+    if (isYouTubeRateLimited()) {
+      throw new Error(`YouTube rate-limited (~${Math.ceil(youtubeRateLimitRemainingMs() / 60000)} min left)`);
+    }
+    const queries = buildSearchQueries(searchArtist || artist, title, album).slice(0, 5);
     for (const q of queries) {
       try {
-        const batch = await searchYouTube(q, 10, minSearchDuration);
+        const batch = await searchYouTube(q, 8, minSearchDuration);
         collectResults(batch);
         candidates.push(...batch.filter((r) => !candidates.some((c) => c.id === r.id)
           && !isRejectedYouTubeResult(r, target, !!opts?.relaxed) && !isExcluded(r)));

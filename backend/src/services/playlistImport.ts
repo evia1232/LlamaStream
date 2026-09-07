@@ -357,7 +357,7 @@ export async function processPlaylistImport(jobId: string) {
     });
 
     // Pace yt-dlp during bulk import (rate-limit protection)
-    await sleep(2200);
+    await sleep(1500);
   }
 
   await prisma.playlist.update({
@@ -434,19 +434,24 @@ export async function retryFailedImportTrack(
     throw new Error(`YouTube rate-limited (~${mins} min left). Wait, then retry.`);
   }
 
-  const track = await resolveAndDownload(
-    item.url || `${cleanArtist.split(/[,;&]/)[0].trim()} - ${cleanTitle}`,
-    quality,
-    {
-      title: cleanTitle,
-      artist: cleanArtist,
-      duration: item.duration,
-      album: item.album,
-      url: item.url?.includes('youtube') ? item.url : undefined,
-      spotifyUrl: item.url?.includes('spotify') ? item.url : undefined,
-      relaxed: true,
-    },
-  );
+  const track = await Promise.race([
+    resolveAndDownload(
+      item.url || `${cleanArtist.split(/[,;&]/)[0].trim()} - ${cleanTitle}`,
+      quality,
+      {
+        title: cleanTitle,
+        artist: cleanArtist,
+        duration: item.duration,
+        album: item.album,
+        url: item.url?.includes('youtube') ? item.url : undefined,
+        spotifyUrl: item.url?.includes('spotify') ? item.url : undefined,
+        relaxed: true,
+      },
+    ),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Retry timed out after 90s — YouTube may be slow or rate-limited')), 90000);
+    }),
+  ]);
 
   clearDownloadCooldown(track.id, track.sourceUrl || undefined);
   await addTrackToPlaylist(playlistId, track.id, position);

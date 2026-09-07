@@ -422,7 +422,6 @@ export function rankYouTubeResults(
         return false;
       }
       if (filterVariants && hasUnwantedVariant(result.title, target.title, options?.rawQuery)) {
-        console.log(`[Match] Skipped variant: "${result.title}"`);
         return false;
       }
       return true;

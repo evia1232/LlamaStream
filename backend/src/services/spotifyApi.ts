@@ -25,8 +25,8 @@ let tokenCache: { token: string; expiresAt: number } | null = null;
 
 /** Spotify /search limit max (API tightened from 50 → 10; values >10 return 400 Invalid limit). */
 const SPOTIFY_SEARCH_MAX_LIMIT = 10;
-/** Artist albums / album tracks — Spotify also rejects high limits on some endpoints now. */
-const SPOTIFY_LIST_MAX_LIMIT = 20;
+/** Artist albums / album tracks — same Invalid limit constraint on current Spotify API. */
+const SPOTIFY_LIST_MAX_LIMIT = 10;
 
 /** In-memory search cache — typing + album-art lookups spam /search otherwise. */
 const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -876,6 +876,8 @@ async function spotifyGet<T>(path: string, tokenOverride?: string): Promise<T | 
       // Dev-mode Spotify apps often get 403 on artist top-tracks — noisy but not fatal
       if (res.status === 403 && path.includes('/top-tracks')) {
         console.warn('[Spotify] top-tracks forbidden (check app mode / market):', path);
+      } else if (res.status === 400 && /Invalid limit/i.test(body)) {
+        console.warn('[Spotify] Invalid limit on', path.split('?')[0]);
       } else {
         console.error('[Spotify] GET failed:', path, res.status, body.slice(0, 200));
       }

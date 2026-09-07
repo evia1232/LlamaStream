@@ -134,20 +134,18 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
   } else if (isYouTubeUrl(trimmed)) {
     detectedUrl = { type: 'youtube', url: trimmed };
   } else {
-    if (searchSpotify) {
-      const spResult = await searchSpotifyTracks(trimmed, limit);
-      spotify = spResult.tracks;
-      spotifyError = spResult.error;
-      spotifyConfigured = spResult.configured;
-    }
-
-    if (searchYoutube) {
-      const ytResults = await searchYouTube(trimmed, limit).catch((err) => {
-        console.error('YouTube search failed:', err);
-        return [] as UnifiedSearchResult['youtube'];
-      });
-      youtube = ytResults;
-    }
+    const [spResult, ytResults] = await Promise.all([
+      searchSpotify
+        ? searchSpotifyTracks(trimmed, Math.min(limit, 10))
+        : Promise.resolve({ tracks: [] as SpotifySearchResult[], configured: false as boolean, error: undefined as string | undefined }),
+      searchYoutube
+        ? searchYouTube(trimmed, Math.min(limit, 8))
+        : Promise.resolve([] as UnifiedSearchResult['youtube']),
+    ]);
+    spotify = spResult.tracks;
+    spotifyError = spResult.error;
+    spotifyConfigured = spResult.configured;
+    youtube = ytResults;
   }
 
   let mergedArtists: UnifiedSearchResult['artists'] = artists.map((a) => ({
@@ -161,7 +159,10 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
   const spotifyBlocked = !!(spotifyError && /429|rate-?limit|QUOTA/i.test(spotifyError));
   if (searchSpotify && isSpotifyConfigured() && !spotifyBlocked && !isSpotifyUrl(trimmed) && !isYouTubeUrl(trimmed)) {
     try {
-      const spArtist = await searchSpotifyArtist(trimmed);
+      const spArtist = await Promise.race([
+        searchSpotifyArtist(trimmed),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+      ]);
       if (spArtist) {
         const existing = mergedArtists.find(
           (a) => a.name.toLowerCase() === spArtist.name.toLowerCase(),
@@ -170,7 +171,7 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
           existing.imageUrl = existing.imageUrl || spArtist.imageUrl || null;
           existing.spotifyArtistId = existing.spotifyArtistId || spArtist.id;
           if (existing.id && !existing.id.startsWith('spotify-') && spArtist.imageUrl) {
-            await prisma.artist.update({
+            void prisma.artist.update({
               where: { id: existing.id },
               data: { imageUrl: spArtist.imageUrl, spotifyArtistId: spArtist.id },
             }).catch(() => null);
@@ -192,16 +193,14 @@ export async function unifiedSearch(query: string, userId: string, limit = 20): 
     }
   }
 
-  // Autoload images for local artists that still lack one (without opening artist page)
+  // Fill missing images in background — never block search response
   if (searchSpotify && !spotifyBlocked) {
-    const { enrichArtistImages } = await import('./artistImages');
-    const enriched = await enrichArtistImages(mergedArtists, { maxLookups: 5 });
-    mergedArtists = enriched.map((a) => ({
-      id: a.id,
-      name: a.name,
-      imageUrl: a.imageUrl,
-      spotifyArtistId: a.spotifyArtistId ?? undefined,
-    }));
+    const needsImages = mergedArtists.filter((a) => !a.imageUrl).slice(0, 3);
+    if (needsImages.length > 0) {
+      void import('./artistImages').then(({ enrichArtistImages }) =>
+        enrichArtistImages(needsImages, { maxLookups: 3 }).catch(() => null),
+      );
+    }
   }
 
   return {

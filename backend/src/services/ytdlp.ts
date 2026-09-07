@@ -22,13 +22,9 @@ export interface YtDlpResult {
 const BASE_ARGS = [
   '--no-warnings',
   '--no-playlist',
-  '--retries', '3',
-  '--fragment-retries', '3',
-  '--socket-timeout', '30',
-  // Pace requests — YouTube bans aggressive bursts for ~1h
-  '--sleep-requests', '1',
-  '--sleep-interval', '2',
-  '--max-sleep-interval', '5',
+  '--retries', '2',
+  '--fragment-retries', '2',
+  '--socket-timeout', '20',
   // Node 22+ in the backend image solves YouTube EJS signature challenges
   '--js-runtimes', 'node',
   '--remote-components', 'ejs:github',
@@ -36,11 +32,14 @@ const BASE_ARGS = [
 
 let multiEnabledCache = false;
 
-/** Global YouTube rate-limit gate (session banned ~1h). */
+/** Global YouTube rate-limit gate (session banned). */
 let ytRateLimitUntil = 0;
-let lastYtRequestAt = 0;
-let ytQueue: Promise<void> = Promise.resolve();
-const YT_MIN_GAP_MS = Math.max(1500, parseInt(process.env.YTDLP_MIN_GAP_MS || '2800', 10) || 2800);
+let lastYtSearchAt = 0;
+let lastYtDownloadAt = 0;
+let ytSearchQueue: Promise<void> = Promise.resolve();
+let ytDownloadQueue: Promise<void> = Promise.resolve();
+const YT_SEARCH_GAP_MS = Math.max(400, parseInt(process.env.YTDLP_SEARCH_GAP_MS || '900', 10) || 900);
+const YT_DOWNLOAD_GAP_MS = Math.max(800, parseInt(process.env.YTDLP_MIN_GAP_MS || '1600', 10) || 1600);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -55,10 +54,10 @@ export function youtubeRateLimitRemainingMs(): number {
 }
 
 export function noteYouTubeRateLimit(reason = 'rate-limit'): void {
-  // YouTube says "up to an hour" — gate slightly under that so we retry sooner after rotate
-  const mins = Math.max(20, parseInt(process.env.YTDLP_RATE_LIMIT_MINUTES || '50', 10) || 50);
+  // Keep gate short — long pauses make the whole app feel dead
+  const mins = Math.max(8, parseInt(process.env.YTDLP_RATE_LIMIT_MINUTES || '15', 10) || 15);
   ytRateLimitUntil = Date.now() + mins * 60 * 1000;
-  console.warn(`[yt-dlp] YouTube ${reason} — pausing downloads until ${new Date(ytRateLimitUntil).toISOString()}`);
+  console.warn(`[yt-dlp] YouTube ${reason} — pausing yt-dlp until ${new Date(ytRateLimitUntil).toISOString()}`);
   void rotateProfileNow(reason).catch(() => null);
 }
 
@@ -71,8 +70,10 @@ export function isYouTubeRateLimitError(err: unknown): boolean {
   return /rate-?limited by YouTube|current session has been rate-limited|try again later/i.test(msg);
 }
 
-/** Serialize yt-dlp invocations and enforce a gap so we don't trip the hourly ban. */
-export async function waitForYtDlpSlot(): Promise<void> {
+export type YtDlpSlotKind = 'search' | 'download';
+
+/** Serialize yt-dlp; search/download use separate queues so UI search is not stuck behind downloads. */
+export async function waitForYtDlpSlot(kind: YtDlpSlotKind = 'download'): Promise<void> {
   const run = async () => {
     if (isYouTubeRateLimited()) {
       const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
@@ -80,13 +81,23 @@ export async function waitForYtDlpSlot(): Promise<void> {
         `YouTube rate-limited (~${mins} min left). Wait, rotate proxy/cookies profile, or retry later.`,
       );
     }
-    const gap = Math.max(0, YT_MIN_GAP_MS - (Date.now() - lastYtRequestAt));
+    const last = kind === 'search' ? lastYtSearchAt : lastYtDownloadAt;
+    const gapMs = kind === 'search' ? YT_SEARCH_GAP_MS : YT_DOWNLOAD_GAP_MS;
+    const gap = Math.max(0, gapMs - (Date.now() - last));
     if (gap > 0) await sleep(gap);
-    lastYtRequestAt = Date.now();
+    if (kind === 'search') lastYtSearchAt = Date.now();
+    else lastYtDownloadAt = Date.now();
   };
 
-  const next = ytQueue.then(run, run);
-  ytQueue = next.then(() => undefined, () => undefined);
+  if (kind === 'search') {
+    const next = ytSearchQueue.then(run, run);
+    ytSearchQueue = next.then(() => undefined, () => undefined);
+    await next;
+    return;
+  }
+
+  const next = ytDownloadQueue.then(run, run);
+  ytDownloadQueue = next.then(() => undefined, () => undefined);
   await next;
 }
 
@@ -132,10 +143,14 @@ export function ytDlpCommand(): string {
   return resolveYtDlpBin();
 }
 
-export function runYtDlp(args: string[], timeoutMs = 300000): Promise<YtDlpResult> {
+export function runYtDlp(
+  args: string[],
+  timeoutMs = 300000,
+  opts?: { kind?: YtDlpSlotKind },
+): Promise<YtDlpResult> {
   return new Promise(async (resolve, reject) => {
     try {
-      await waitForYtDlpSlot();
+      await waitForYtDlpSlot(opts?.kind || 'download');
     } catch (err) {
       reject(err);
       return;

@@ -31,8 +31,13 @@ router.get('/prefetch', authenticate, async (req: AuthRequest, res) => {
 
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
     const quality = user?.audioQuality || 'HIGH';
-    const result = await prefetchNextDiscoverTrack(req.user!.userId, seedTrackId, quality);
-    res.json(result);
+    // Never block the HTTP request — nginx 504s otherwise while yt-dlp runs
+    setImmediate(() => {
+      prefetchNextDiscoverTrack(req.user!.userId, seedTrackId, quality).catch((err) => {
+        console.warn('[Discover] background prefetch:', (err as Error).message);
+      });
+    });
+    res.json({ status: 'started' });
   } catch (err) {
     console.error('Discover prefetch error:', err);
     res.status(500).json({ error: (err as Error).message });
