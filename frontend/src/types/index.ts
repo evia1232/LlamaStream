@@ -38,6 +38,8 @@ export interface Track {
   album?: { id: string; title: string; coverUrl?: string | null } | null;
   source?: 'library' | 'youtube' | 'spotify';
   youtubeUrl?: string;
+  /** Playlist slot index (Spotify order) when loaded from a playlist */
+  position?: number;
   spotifyUrl?: string;
   spotifyArtistId?: string;
   quality?: 'LOW' | 'NORMAL' | 'HIGH';
@@ -52,7 +54,18 @@ export interface Playlist {
   visibility: 'PUBLIC' | 'PRIVATE';
   trackCount?: number;
   tracks?: Track[];
+  failedItems?: FailedImportItem[];
   importJob?: ImportJobStatus | null;
+}
+
+export interface FailedImportItem {
+  position: number;
+  name: string;
+  artist: string;
+  album?: string;
+  duration?: number;
+  url?: string;
+  error: string;
 }
 
 export interface ImportJobStatus {
@@ -62,7 +75,8 @@ export interface ImportJobStatus {
   completedTracks: number;
   failedTracks: number;
   playlist: { id: string; name: string };
-  errors?: string[];
+  errors?: Array<string | FailedImportItem>;
+  failedItems?: FailedImportItem[];
   createdAt?: string;
 }
 

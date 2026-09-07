@@ -18,6 +18,65 @@ export interface ImportTrackItem {
   url?: string;
 }
 
+/** Structured failed import entry — keeps Spotify/YouTube playlist index for retry insert. */
+export interface FailedImportItem {
+  position: number;
+  name: string;
+  artist: string;
+  album?: string;
+  duration?: number;
+  url?: string;
+  error: string;
+}
+
+export function isFailedImportItem(value: unknown): value is FailedImportItem {
+  return !!value
+    && typeof value === 'object'
+    && typeof (value as FailedImportItem).position === 'number'
+    && typeof (value as FailedImportItem).name === 'string'
+    && typeof (value as FailedImportItem).artist === 'string';
+}
+
+/** Normalize job.errors + missing positions into FailedImportItem[]. */
+export function buildFailedImportItems(
+  trackData: ImportTrackItem[],
+  errors: unknown,
+  occupiedPositions: Set<number>,
+  opts?: { attemptedUntil?: number },
+): FailedImportItem[] {
+  const attemptedUntil = opts?.attemptedUntil ?? trackData.length;
+  const raw = Array.isArray(errors) ? errors : [];
+
+  const structured = raw.filter(isFailedImportItem);
+  if (structured.length > 0) {
+    return structured
+      .filter((f) => !occupiedPositions.has(f.position))
+      .sort((a, b) => a.position - b.position);
+  }
+
+  // Legacy string errors / holes after completed import
+  const out: FailedImportItem[] = [];
+  for (let i = 0; i < Math.min(trackData.length, attemptedUntil); i++) {
+    if (occupiedPositions.has(i)) continue;
+    const item = trackData[i];
+    const errStr = raw.find(
+      (e): e is string => typeof e === 'string' && (e.includes(item.name) || e.includes(item.artist)),
+    );
+    out.push({
+      position: i,
+      name: item.name,
+      artist: item.artist,
+      album: item.album,
+      duration: item.duration,
+      url: item.url,
+      error: errStr
+        ? (errStr.includes(': ') ? errStr.slice(errStr.indexOf(': ') + 2) : errStr)
+        : 'Import failed',
+    });
+  }
+  return out;
+}
+
 function parseJsonLines<T>(output: string): T[] {
   const items: T[] = [];
   for (const line of output.split('\n').filter(Boolean)) {
@@ -227,12 +286,33 @@ export async function processPlaylistImport(jobId: string) {
     data: { status: 'running' },
   });
 
-  const errors = Array.isArray(job.errors) ? [...(job.errors as string[])] : [];
-  let position = job.completedTracks + job.failedTracks;
+  const rawErrors = Array.isArray(job.errors) ? [...(job.errors as unknown[])] : [];
+  const errors: FailedImportItem[] = rawErrors.filter(isFailedImportItem);
+  // Drop legacy string-only bag when we start writing structured failures
   let completed = job.completedTracks;
   let failed = job.failedTracks;
+  let startIndex = completed + failed;
 
-  for (let i = position; i < tracks.length; i++) {
+  for (let i = startIndex; i < tracks.length; i++) {
+    // Respect YouTube hourly ban — pause import instead of burning the rest
+    try {
+      const { isYouTubeRateLimited, youtubeRateLimitRemainingMs } = await import('./ytdlp');
+      if (isYouTubeRateLimited()) {
+        const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
+        await prisma.playlistImportJob.update({
+          where: { id: jobId },
+          data: {
+            status: 'pending',
+            completedTracks: completed,
+            failedTracks: failed,
+            errors: errors as unknown as object[],
+          },
+        });
+        console.warn(`[Import] Job ${jobId} paused — YouTube rate-limited (~${mins}m). Will resume on restart.`);
+        return;
+      }
+    } catch { /* ignore */ }
+
     const item = tracks[i];
     const cleanArtist = sanitizeSearchText(item.artist);
     const cleanTitle = sanitizeSearchText(item.name).replace(/_/g, ' ');
@@ -251,23 +331,33 @@ export async function processPlaylistImport(jobId: string) {
         }
       );
 
-      await addTrackToPlaylist(job.playlistId, track.id, position);
+      await addTrackToPlaylist(job.playlistId, track.id, i);
       await promoteTrackToLibrary(track.id);
-      position++;
       completed++;
     } catch (err) {
       failed++;
-      errors.push(`${cleanArtist} - ${cleanTitle}: ${(err as Error).message}`);
-      position++;
+      errors.push({
+        position: i,
+        name: cleanTitle,
+        artist: cleanArtist,
+        album: item.album,
+        duration: item.duration,
+        url: item.url,
+        error: (err as Error).message,
+      });
     }
 
     await prisma.playlistImportJob.update({
       where: { id: jobId },
-      data: { completedTracks: completed, failedTracks: failed, errors },
+      data: {
+        completedTracks: completed,
+        failedTracks: failed,
+        errors: errors as unknown as object[],
+      },
     });
 
-    // Avoid YouTube search rate limits during bulk import
-    await sleep(800);
+    // Pace yt-dlp during bulk import (rate-limit protection)
+    await sleep(2200);
   }
 
   await prisma.playlist.update({
@@ -283,11 +373,106 @@ export async function processPlaylistImport(jobId: string) {
       status: failed === tracks.length ? 'failed' : 'completed',
       completedTracks: completed,
       failedTracks: failed,
-      errors,
+      errors: errors as unknown as object[],
     },
   });
 
   console.log(`[Import] Job ${jobId} done: ${completed}/${tracks.length} tracks`);
+}
+
+/** Retry one failed import slot and insert at the original Spotify/YouTube position. */
+export async function retryFailedImportTrack(
+  playlistId: string,
+  userId: string,
+  position: number,
+) {
+  const playlist = await prisma.playlist.findUnique({
+    where: { id: playlistId },
+    include: {
+      importJob: true,
+      tracks: { select: { position: true, trackId: true } },
+    },
+  });
+  if (!playlist || playlist.userId !== userId) throw new Error('Playlist not found');
+  const job = playlist.importJob;
+  if (!job) throw new Error('No import job for this playlist');
+
+  const trackData = (job.trackData as unknown as ImportTrackItem[]) || [];
+  const occupied = new Set(playlist.tracks.map((t) => t.position));
+  if (occupied.has(position)) {
+    throw new Error('A track already exists at this playlist position');
+  }
+
+  const failedItems = buildFailedImportItems(
+    trackData,
+    job.errors,
+    occupied,
+    { attemptedUntil: trackData.length },
+  );
+  const failed = failedItems.find((f) => f.position === position);
+  const item = trackData[position] || (failed
+    ? {
+        name: failed.name,
+        artist: failed.artist,
+        album: failed.album,
+        duration: failed.duration,
+        url: failed.url,
+      }
+    : null);
+
+  if (!item) throw new Error('No failed track at this position');
+
+  const cleanArtist = sanitizeSearchText(item.artist);
+  const cleanTitle = sanitizeSearchText(item.name).replace(/_/g, ' ');
+  const quality = (job.quality as 'LOW' | 'NORMAL' | 'HIGH') || 'HIGH';
+
+  const { clearDownloadCooldown } = await import('./trackDownload');
+  const { isYouTubeRateLimited, youtubeRateLimitRemainingMs } = await import('./ytdlp');
+
+  if (isYouTubeRateLimited()) {
+    const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
+    throw new Error(`YouTube rate-limited (~${mins} min left). Wait, then retry.`);
+  }
+
+  const track = await resolveAndDownload(
+    item.url || `${cleanArtist.split(/[,;&]/)[0].trim()} - ${cleanTitle}`,
+    quality,
+    {
+      title: cleanTitle,
+      artist: cleanArtist,
+      duration: item.duration,
+      album: item.album,
+      url: item.url?.includes('youtube') ? item.url : undefined,
+      spotifyUrl: item.url?.includes('spotify') ? item.url : undefined,
+      relaxed: true,
+    },
+  );
+
+  clearDownloadCooldown(track.id, track.sourceUrl || undefined);
+  await addTrackToPlaylist(playlistId, track.id, position);
+  await promoteTrackToLibrary(track.id);
+
+  const remaining = failedItems.filter((f) => f.position !== position);
+  await prisma.playlistImportJob.update({
+    where: { id: job.id },
+    data: {
+      failedTracks: remaining.length,
+      completedTracks: Math.max(0, (job.totalTracks || trackData.length) - remaining.length),
+      errors: remaining as unknown as object[],
+      status: remaining.length === 0 ? 'completed' : job.status === 'failed' ? 'completed' : job.status,
+    },
+  });
+
+  const full = await prisma.track.findUniqueOrThrow({
+    where: { id: track.id },
+    include: { artist: true, album: true },
+  });
+
+  return {
+    track: full,
+    position,
+    remainingFailed: remaining.length,
+  };
 }
 
 export async function listActiveImportJobs(userId: string) {

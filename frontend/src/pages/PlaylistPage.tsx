@@ -1,23 +1,28 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Play, Download, Trash2, Camera, X } from 'lucide-react';
+import { Play, Download, Trash2, Camera, X, RefreshCw } from 'lucide-react';
+import clsx from 'clsx';
 import api from '../api/client';
 import TrackRow from '../components/tracks/TrackRow';
-import { Track, Playlist } from '../types';
+import { Track, Playlist, FailedImportItem, ImportJobStatus } from '../types';
 import { normalizeTrack } from '../lib/trackUtils';
 import { usePlayerStore } from '../store';
 import PlaylistCover from '../components/playlists/PlaylistCover';
 import ImportStatusList from '../components/playlists/ImportStatusList';
-import { ImportJobStatus } from '../types';
+
+type PlaylistRow =
+  | { kind: 'track'; position: number; track: Track }
+  | { kind: 'failed'; position: number; item: FailedImportItem };
 
 export default function PlaylistPage() {
   const { id } = useParams<{ id: string }>();
   const { t } = useTranslation();
-  const [playlist, setPlaylist] = useState<Playlist | null>(null);
+  const [playlist, setPlaylist] = useState<(Playlist & { failedItems?: FailedImportItem[] }) | null>(null);
   const playTracks = usePlayerStore((s) => s.playTracks);
 
   const [importJob, setImportJob] = useState<ImportJobStatus | null>(null);
+  const [retryingPos, setRetryingPos] = useState<number | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   const loadPlaylist = useCallback(() => {
@@ -48,8 +53,45 @@ export default function PlaylistPage() {
 
   const normalizedTracks = (playlist?.tracks ?? []).map((t) => normalizeTrack(t as Track));
 
+  const rows: PlaylistRow[] = useMemo(() => {
+    const map = new Map<number, PlaylistRow>();
+    for (const track of normalizedTracks) {
+      const position = typeof (track as Track & { position?: number }).position === 'number'
+        ? (track as Track & { position?: number }).position!
+        : map.size;
+      map.set(position, { kind: 'track', position, track: { ...track, position } as Track });
+    }
+    const failed = playlist?.failedItems?.length
+      ? playlist.failedItems
+      : importJob?.failedItems || [];
+    for (const item of failed) {
+      if (map.has(item.position)) continue;
+      map.set(item.position, { kind: 'failed', position: item.position, item });
+    }
+    return [...map.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, row]) => row);
+  }, [normalizedTracks, playlist?.failedItems, importJob?.failedItems]);
+
+  const playableTracks = rows
+    .filter((r): r is Extract<PlaylistRow, { kind: 'track' }> => r.kind === 'track')
+    .map((r) => r.track);
+
   const handlePlayAll = () => {
-    if (normalizedTracks.length > 0) void playTracks(normalizedTracks, 0);
+    if (playableTracks.length > 0) void playTracks(playableTracks, 0);
+  };
+
+  const handleRetryFailed = async (item: FailedImportItem) => {
+    if (!id || retryingPos !== null) return;
+    setRetryingPos(item.position);
+    try {
+      await api.post(`/playlists/${id}/retry-failed`, { position: item.position });
+      loadPlaylist();
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
+    } finally {
+      setRetryingPos(null);
+    }
   };
 
   const handleExport = async (format: 'json' | 'm3u' | 'txt') => {
@@ -135,7 +177,7 @@ export default function PlaylistPage() {
           <p className="text-label mb-2">{t('playlists')}</p>
           <h1 className="text-hero mb-3 md:mb-4">{playlist.name}</h1>
           {playlist.description && <p className="text-body mb-2">{playlist.description}</p>}
-          <p className="text-caption">{t('trackCount', { count: playlist.tracks?.length || 0 })}</p>
+          <p className="text-caption">{t('trackCount', { count: playableTracks.length })}</p>
         </div>
       </div>
 
@@ -159,7 +201,10 @@ export default function PlaylistPage() {
 
       {importJob && (importActive || importFinished) && (
         <div className="px-6 pb-2">
-          <ImportStatusList jobs={[{ ...importJob, playlist: { id: playlist.id, name: playlist.name } }]} />
+          <ImportStatusList
+            jobs={[{ ...importJob, playlist: { id: playlist.id, name: playlist.name }, failedItems: playlist.failedItems || importJob.failedItems }]}
+            onRetrySuccess={loadPlaylist}
+          />
         </div>
       )}
 
@@ -171,17 +216,45 @@ export default function PlaylistPage() {
           <span />
           <span className="text-end">⏱</span>
         </div>
-        {normalizedTracks.map((track, i) => (
-          <TrackRow
-            key={track.id}
-            track={track}
-            index={i}
-            contextTracks={normalizedTracks}
-            playlistId={id}
-            onRemovedFromPlaylist={loadPlaylist}
-            onDeleted={loadPlaylist}
-          />
-        ))}
+        {rows.map((row) => {
+          if (row.kind === 'track') {
+            return (
+              <TrackRow
+                key={row.track.id}
+                track={row.track}
+                index={row.position}
+                contextTracks={playableTracks}
+                playlistId={id}
+                onRemovedFromPlaylist={loadPlaylist}
+                onDeleted={loadPlaylist}
+              />
+            );
+          }
+
+          return (
+            <div
+              key={`failed-${row.position}`}
+              className="grid grid-cols-[16px_1fr_auto] md:grid-cols-[16px_4fr_3fr_auto] gap-4 px-4 py-2 items-center rounded-md bg-red-500/[0.06] border border-transparent hover:border-red-500/20"
+            >
+              <span className="text-caption tabular-nums text-red-300/80">{row.position + 1}</span>
+              <div className="min-w-0">
+                <p className="text-sm text-white/80 truncate">{row.item.name}</p>
+                <p className="text-caption truncate">{row.item.artist}</p>
+                <p className="text-[11px] text-red-300/80 mt-0.5 line-clamp-1">{row.item.error}</p>
+              </div>
+              <p className="hidden md:block text-caption truncate text-spotify-text">{row.item.album || '—'}</p>
+              <button
+                type="button"
+                onClick={() => void handleRetryFailed(row.item)}
+                disabled={retryingPos !== null}
+                className="green-btn !py-1.5 !px-3 !text-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <RefreshCw className={clsx('w-3.5 h-3.5', retryingPos === row.position && 'animate-spin')} />
+                {retryingPos === row.position ? t('retryingDownload') : t('retryImportTrack')}
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

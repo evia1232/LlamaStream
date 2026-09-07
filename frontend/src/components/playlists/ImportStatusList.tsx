@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
-import { ChevronDown, ChevronUp } from 'lucide-react';
-import { ImportJobStatus } from '../../types';
+import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import { FailedImportItem, ImportJobStatus } from '../../types';
+import api from '../../api/client';
 
 interface ImportStatusListProps {
   jobs: ImportJobStatus[];
   className?: string;
+  onRetrySuccess?: () => void;
   onRefresh?: () => void;
 }
 
@@ -22,17 +24,53 @@ function statusLabel(status: string, t: (key: string) => string): string {
   }
 }
 
-function parseImportError(error: string): { label: string; reason: string } {
-  const idx = error.indexOf(': ');
-  if (idx === -1) return { label: error, reason: '' };
-  return { label: error.slice(0, idx), reason: error.slice(idx + 2) };
+function toFailedItems(job: ImportJobStatus): FailedImportItem[] {
+  if (job.failedItems?.length) return job.failedItems;
+  const errors = Array.isArray(job.errors) ? job.errors : [];
+  return errors
+    .map((e, i) => {
+      if (e && typeof e === 'object' && 'position' in e) return e as FailedImportItem;
+      if (typeof e !== 'string') return null;
+      const idx = e.indexOf(': ');
+      const label = idx === -1 ? e : e.slice(0, idx);
+      const reason = idx === -1 ? '' : e.slice(idx + 2);
+      const dash = label.indexOf(' - ');
+      return {
+        position: i,
+        artist: dash >= 0 ? label.slice(0, dash) : '',
+        name: dash >= 0 ? label.slice(dash + 3) : label,
+        error: reason || e,
+      } as FailedImportItem;
+    })
+    .filter(Boolean) as FailedImportItem[];
 }
 
-function ImportFailedList({ errors }: { errors: string[] }) {
+function ImportFailedList({
+  job,
+  onRetrySuccess,
+}: {
+  job: ImportJobStatus;
+  onRetrySuccess?: () => void;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
+  const [retryingPos, setRetryingPos] = useState<number | null>(null);
+  const items = toFailedItems(job);
 
-  if (errors.length === 0) return null;
+  if (items.length === 0) return null;
+
+  const handleRetry = async (item: FailedImportItem) => {
+    if (retryingPos !== null) return;
+    setRetryingPos(item.position);
+    try {
+      await api.post(`/playlists/${job.playlist.id}/retry-failed`, { position: item.position });
+      onRetrySuccess?.();
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
+    } finally {
+      setRetryingPos(null);
+    }
+  };
 
   return (
     <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 overflow-hidden">
@@ -41,29 +79,43 @@ function ImportFailedList({ errors }: { errors: string[] }) {
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-red-300 hover:bg-red-500/10 transition-colors"
       >
-        <span>{t('importFailedListTitle', { count: errors.length })}</span>
+        <span>{t('importFailedListTitle', { count: items.length })}</span>
         {open ? <ChevronUp className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
       </button>
       {open && (
-        <ul className="max-h-56 overflow-y-auto border-t border-red-500/20 divide-y divide-red-500/10">
-          {errors.map((error, i) => {
-            const { label, reason } = parseImportError(error);
-            return (
-              <li key={`${label}-${i}`} className="px-3 py-2 text-xs">
-                <p className="text-white/90 font-medium truncate">{label}</p>
-                {reason && <p className="text-spotify-text mt-0.5 line-clamp-2">{reason}</p>}
-              </li>
-            );
-          })}
+        <ul className="max-h-72 overflow-y-auto border-t border-red-500/20 divide-y divide-red-500/10">
+          {items.map((item) => (
+            <li key={`${item.position}-${item.name}`} className="px-3 py-2 text-xs flex items-start gap-2">
+              <span className="text-spotify-text tabular-nums w-6 shrink-0 pt-0.5">{item.position + 1}</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-white/90 font-medium truncate">{item.artist} - {item.name}</p>
+                {item.error && <p className="text-spotify-text mt-0.5 line-clamp-2">{item.error}</p>}
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleRetry(item)}
+                disabled={retryingPos !== null}
+                className="shrink-0 icon-btn px-2 py-1 text-spotify-green disabled:opacity-50 flex items-center gap-1"
+                title={t('retryImportTrack')}
+              >
+                <RefreshCw className={clsx('w-3.5 h-3.5', retryingPos === item.position && 'animate-spin')} />
+                <span className="hidden sm:inline">{retryingPos === item.position ? t('retryingDownload') : t('retryImportTrack')}</span>
+              </button>
+            </li>
+          ))}
         </ul>
       )}
     </div>
   );
 }
 
-export default function ImportStatusList({ jobs, className }: ImportStatusListProps) {
+export default function ImportStatusList({ jobs, className, onRetrySuccess, onRefresh }: ImportStatusListProps) {
   const { t } = useTranslation();
   if (jobs.length === 0) return null;
+  const afterRetry = () => {
+    onRetrySuccess?.();
+    onRefresh?.();
+  };
 
   return (
     <div className={clsx('space-y-3', className)}>
@@ -73,7 +125,7 @@ export default function ImportStatusList({ jobs, className }: ImportStatusListPr
         const pct = Math.min(100, Math.round((done / total) * 100));
         const active = ['parsing', 'pending', 'running'].includes(job.status);
         const finished = ['completed', 'failed'].includes(job.status);
-        const errors = Array.isArray(job.errors) ? job.errors : [];
+        const failedCount = Math.max(job.failedTracks, toFailedItems(job).length);
 
         return (
           <div key={job.id} className="surface-elevated p-4 rounded-spotify">
@@ -89,7 +141,7 @@ export default function ImportStatusList({ jobs, className }: ImportStatusListPr
               </div>
               <span className="text-caption shrink-0 tabular-nums">
                 {job.totalTracks > 0
-                  ? t('importProgress', { done, total: job.totalTracks, failed: job.failedTracks })
+                  ? t('importProgress', { done, total: job.totalTracks, failed: failedCount })
                   : t('importPreparing')}
               </span>
             </div>
@@ -104,21 +156,21 @@ export default function ImportStatusList({ jobs, className }: ImportStatusListPr
               />
             </div>
 
-            {(finished || job.failedTracks > 0) && job.totalTracks > 0 && (
+            {(finished || failedCount > 0) && job.totalTracks > 0 && (
               <div className="mt-3 flex flex-wrap gap-2 text-xs">
                 <span className="px-2.5 py-1 rounded-full bg-spotify-green/15 text-spotify-green">
                   {t('importSucceededCount', { count: job.completedTracks })}
                 </span>
-                {job.failedTracks > 0 && (
+                {failedCount > 0 && (
                   <span className="px-2.5 py-1 rounded-full bg-red-500/15 text-red-300">
-                    {t('importFailedCount', { count: job.failedTracks })}
+                    {t('importFailedCount', { count: failedCount })}
                   </span>
                 )}
               </div>
             )}
 
-            {job.failedTracks > 0 && errors.length > 0 && (
-              <ImportFailedList errors={errors} />
+            {failedCount > 0 && (
+              <ImportFailedList job={job} onRetrySuccess={afterRetry} />
             )}
           </div>
         );

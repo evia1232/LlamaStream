@@ -8,7 +8,7 @@ import { body, validationResult } from 'express-validator';
 import { authenticate, AuthRequest, optionalAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { exportPlaylist, listUserSpotifyPlaylists } from '../services/spotify';
-import { startPlaylistImport, startSpotifyPlaylistsImport, getImportJobStatus, importSpotifyPlaylist, listActiveImportJobs } from '../services/playlistImport';
+import { startPlaylistImport, startSpotifyPlaylistsImport, getImportJobStatus, importSpotifyPlaylist, listActiveImportJobs, retryFailedImportTrack, buildFailedImportItems, FailedImportItem, ImportTrackItem } from '../services/playlistImport';
 import { trackStreamUrl } from '../services/trackDownload';
 import { addTrackToPlaylist, nextPlaylistPosition } from '../lib/playlistTracks';
 import { prefetchLibraryTrack } from '../services/downloader';
@@ -176,14 +176,30 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
+  const occupied = new Set(playlist.tracks.map((pt) => pt.position));
+  const trackData = (playlist.importJob?.trackData as unknown as ImportTrackItem[]) || [];
+  const failedItems: FailedImportItem[] = playlist.importJob
+    ? buildFailedImportItems(
+        trackData,
+        playlist.importJob.errors,
+        occupied,
+        {
+          attemptedUntil: playlist.importJob.status === 'running' || playlist.importJob.status === 'pending'
+            ? playlist.importJob.completedTracks + playlist.importJob.failedTracks
+            : trackData.length,
+        },
+      )
+    : [];
+
   const importJob = playlist.importJob
     ? {
         id: playlist.importJob.id,
         status: playlist.importJob.status,
         totalTracks: playlist.importJob.totalTracks,
         completedTracks: playlist.importJob.completedTracks,
-        failedTracks: playlist.importJob.failedTracks,
+        failedTracks: Math.max(playlist.importJob.failedTracks, failedItems.length),
         errors: playlist.importJob.errors,
+        failedItems,
       }
     : null;
 
@@ -202,6 +218,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
         album: pt.track.album,
         position: pt.position,
       })),
+      failedItems,
     },
   });
 });
@@ -266,6 +283,34 @@ router.delete('/:id/cover', authenticate, async (req: AuthRequest, res) => {
     include: { _count: { select: { tracks: true } }, tracks: { include: { track: { include: { album: true } } }, orderBy: { position: 'asc' }, take: 4 } },
   });
   res.json({ playlist: formatPlaylist(updated) });
+});
+
+router.post('/:id/retry-failed', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const position = Number(req.body?.position);
+    if (!Number.isFinite(position) || position < 0) {
+      return res.status(400).json({ error: 'position required' });
+    }
+    const result = await retryFailedImportTrack(req.params.id, req.user!.userId, position);
+    res.json({
+      position: result.position,
+      remainingFailed: result.remainingFailed,
+      track: {
+        id: result.track.id,
+        title: result.track.title,
+        duration: result.track.duration,
+        thumbnailUrl: result.track.thumbnailUrl,
+        streamUrl: trackStreamUrl(result.track),
+        isDownloaded: result.track.isDownloaded,
+        artist: result.track.artist,
+        album: result.track.album,
+        position: result.position,
+      },
+    });
+  } catch (err) {
+    console.error('Retry failed import track:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 router.post('/:id/tracks', authenticate, async (req: AuthRequest, res) => {
