@@ -12,6 +12,8 @@ export interface RankOptions {
   filterVariants?: boolean;
   rawQuery?: string;
   minScore?: number;
+  /** Playlist import / retry — keep lyric videos, softer duration/artist gates */
+  relaxed?: boolean;
 }
 
 /** Always reject — not the song */
@@ -296,7 +298,7 @@ export function isRejectedYouTubeResult(
   relaxed = false
 ): boolean {
   if (isYouTubeShortOrReel(result)) return true;
-  if (isLikelyBadMatch(result.title)) return true;
+  if (isLikelyBadMatch(result.title, relaxed)) return true;
 
   if (target.duration && target.duration > 0 && result.duration > 0) {
     if (!isDurationCompatible(target.duration, result.duration, relaxed)) return true;
@@ -318,9 +320,15 @@ export function filterYouTubeResults(
   return results.filter((r) => !isRejectedYouTubeResult(r, target, relaxed));
 }
 
-export function isLikelyBadMatch(title: string): boolean {
+export function isLikelyBadMatch(title: string, relaxed = false): boolean {
   const lower = title.toLowerCase();
-  if (BAD_KEYWORDS.some((kw) => lower.includes(kw))) return true;
+  // Lyric / visualizer uploads are often the only official Hebrew source — keep in relaxed mode
+  const softLyric = /\b(lyric|lyrics|visualizer)\b/i.test(lower) || /\bמילים\b/.test(title);
+  for (const kw of BAD_KEYWORDS) {
+    if (!lower.includes(kw)) continue;
+    if (relaxed && softLyric && /lyric|visualizer|with lyrics/i.test(kw)) continue;
+    return true;
+  }
   if (/\bkaraoke\b/i.test(lower)) return true;
   if (/\bsing\s*along\b/i.test(lower)) return true;
   if (/\bקאבר\b/.test(title)) return true;
@@ -387,7 +395,7 @@ export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, opt
     if (ytCombined.includes(kw)) score += 10;
   }
 
-  if (isLikelyBadMatch(ytTitle)) score -= 80;
+  if (isLikelyBadMatch(ytTitle, !!options?.relaxed)) score -= 80;
 
   const variants = findVariants(ytTitle);
   const userWantsVariant = userRequestedVariant(options?.rawQuery, target.title);
@@ -404,25 +412,32 @@ export function rankYouTubeResults(
   target: MatchTarget,
   options?: RankOptions
 ): SearchResult[] {
-  const minScore = options?.minScore ?? (options?.filterVariants ? 35 : 15);
+  const relaxed = !!options?.relaxed;
+  const minScore = options?.minScore ?? (options?.filterVariants ? (relaxed ? 18 : 35) : (relaxed ? 10 : 15));
   const filterVariants = options?.filterVariants ?? false;
   const hasArtist = normalizeForMatch(primaryArtist(target.artist || '')).length >= 2;
 
   return [...results]
-    .filter((r) => !isRejectedYouTubeResult(r, target, false))
+    .filter((r) => !isRejectedYouTubeResult(r, target, relaxed))
     .map((r) => ({ result: r, score: scoreYouTubeMatch(r, target, options) }))
     .filter(({ result, score }) => {
       if (score < minScore) return false;
-      if (isLikelyBadMatch(result.title)) return false;
+      if (isLikelyBadMatch(result.title, relaxed)) return false;
       if (isYouTubeShortOrReel(result)) return false;
-      if (hasArtist && isWrongArtistMatch(result, target)) return false;
-      if (hasArtist && artistMatchStrength(result, target.artist) < 0.15 && score < 70) return false;
+      // Soften artist gates for import retries — Latin Spotify names often missing from Hebrew YT titles
+      if (!relaxed && hasArtist && isWrongArtistMatch(result, target)) return false;
+      if (hasArtist && artistMatchStrength(result, target.artist) < (relaxed ? 0.05 : 0.15) && score < (relaxed ? 40 : 70)) {
+        return false;
+      }
       if (target.duration && target.duration > 0 && result.duration > 0
-        && !isDurationCompatible(target.duration, result.duration, false)) {
+        && !isDurationCompatible(target.duration, result.duration, relaxed)) {
         return false;
       }
       if (filterVariants && hasUnwantedVariant(result.title, target.title, options?.rawQuery)) {
-        return false;
+        // Keep lyric/visualizer in relaxed mode
+        if (!(relaxed && /\b(lyric|lyrics|visualizer|מילים)\b/i.test(result.title))) {
+          return false;
+        }
       }
       return true;
     })
@@ -437,29 +452,44 @@ export function pickBestAvailableResult(
 ): SearchResult | null {
   if (results.length === 0) return null;
 
-  const ranked = rankYouTubeResults(results, target, options);
+  const relaxed = !!options?.relaxed;
+  const ranked = rankYouTubeResults(results, target, { ...options, relaxed });
   if (ranked.length > 0) return ranked[0];
 
   const hasArtist = normalizeForMatch(primaryArtist(target.artist || '')).length >= 2;
   const normTitle = normalizeForMatch(cleanSearchTitle(target.title));
-  const safe = results.filter((r) => !isLikelyBadMatch(r.title) && !isYouTubeShortOrReel(r)
-    && !isRejectedYouTubeResult(r, target, !!options?.minScore && options.minScore <= 18)
-    && !(hasArtist && isWrongArtistMatch(r, target)));
+  const safe = results.filter((r) => !isLikelyBadMatch(r.title, relaxed) && !isYouTubeShortOrReel(r)
+    && !isRejectedYouTubeResult(r, target, relaxed)
+    && !(hasArtist && !relaxed && isWrongArtistMatch(r, target)));
 
   for (const r of safe) {
     const ytNorm = normalizeForMatch(r.title);
     if (normTitle.length >= 3 && (ytNorm.includes(normTitle) || normTitle.includes(ytNorm))) {
-      if (hasArtist && artistMatchStrength(r, target.artist) < 0.2) continue;
-      if (!hasUnwantedVariant(r.title, target.title, options?.rawQuery)) return r;
+      if (hasArtist && !relaxed && artistMatchStrength(r, target.artist) < 0.2) continue;
+      if (!hasUnwantedVariant(r.title, target.title, options?.rawQuery)
+        || (relaxed && /\b(lyric|lyrics|visualizer|מילים)\b/i.test(r.title))) {
+        return r;
+      }
     }
   }
 
-  const relaxed = rankYouTubeResults(safe, target, {
+  // Last resort for import: closest duration among non-short/non-karaoke hits
+  if (relaxed && safe.length > 0 && target.duration && target.duration > 0) {
+    const byDuration = [...safe]
+      .filter((r) => r.duration > 0)
+      .sort((a, b) => Math.abs(a.duration - target.duration!) - Math.abs(b.duration - target.duration!));
+    if (byDuration[0] && Math.abs(byDuration[0].duration - target.duration) <= 90) {
+      return byDuration[0];
+    }
+  }
+
+  const fallback = rankYouTubeResults(safe, target, {
     ...options,
-    filterVariants: true,
-    minScore: 12,
+    filterVariants: !relaxed,
+    minScore: 8,
+    relaxed: true,
   });
-  return relaxed[0] ?? null;
+  return fallback[0] ?? null;
 }
 
 export function buildSearchQueries(artist: string, title: string, album?: string): string[] {

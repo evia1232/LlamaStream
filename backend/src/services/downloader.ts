@@ -667,8 +667,13 @@ export async function resolveYouTubeSource(
   };
 
   const filterVariants = shouldFilterVariants(trimmed, opts);
-  const baseMinScore = opts?.relaxed ? 22 : (filterVariants ? 40 : 20);
-  const rankOpts = { filterVariants, rawQuery: trimmed, minScore: baseMinScore };
+  const baseMinScore = opts?.relaxed ? 18 : (filterVariants ? 40 : 20);
+  const rankOpts = {
+    filterVariants,
+    rawQuery: trimmed,
+    minScore: baseMinScore,
+    relaxed: !!opts?.relaxed,
+  };
   const minSearchDuration = targetDuration && targetDuration > 0 ? targetDuration : undefined;
   const excludeIds = new Set(opts?.excludeSourceIds ?? []);
   const isExcluded = (r: SearchResult) => excludeIds.has(r.id);
@@ -774,9 +779,10 @@ export async function resolveYouTubeSource(
 
   if (candidates.length === 0) {
     const best = pickBestAvailableResult(allRaw, target, {
-      filterVariants: true,
+      filterVariants: !opts?.relaxed,
       rawQuery: trimmed,
-      minScore: opts?.relaxed ? 12 : 18,
+      minScore: opts?.relaxed ? 8 : 18,
+      relaxed: !!opts?.relaxed,
     });
     if (best) {
       candidates = [best];
