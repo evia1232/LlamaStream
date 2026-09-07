@@ -14,6 +14,40 @@ import { getCacheAudioDir, getDownloadDirForTrack, finalizeFileStorage, promoteT
 import { findCanonicalDownloadedTrack, linkTrackToCanonical, propagateDownloadToSourceId } from './trackDedup';
 import { resolveAlbumArt, needsBetterAlbumArt, upgradeTrackAlbumArtInBackground } from './albumArt';
 
+/** Prevent resolve storms that burn proxy IPs (stream/prefetch/error retries). */
+const resolveInFlight = new Set<string>();
+const resolveFailUntil = new Map<string, number>();
+const RESOLVE_EMPTY_COOLDOWN_MS = 12 * 60 * 1000;
+const RESOLVE_SOFT_COOLDOWN_MS = 3 * 60 * 1000;
+let consecutiveEmptySearches = 0;
+
+export function isResolveCoolingDown(trackId: string): boolean {
+  const until = resolveFailUntil.get(trackId);
+  return !!until && until > Date.now();
+}
+
+export function clearResolveCooldown(trackId: string): void {
+  resolveFailUntil.delete(trackId);
+}
+
+function markResolveFailed(trackId: string, err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  const empty = /empty yt-dlp search|No YouTube results/i.test(msg);
+  const blocked = /403|Forbidden|rate-?limited|bot|Sign in to confirm/i.test(msg);
+  if (empty || blocked) {
+    consecutiveEmptySearches += 1;
+    if (consecutiveEmptySearches >= 2) {
+      noteYouTubeRateLimit(empty ? 'empty-search-storm' : 'blocked-search-storm');
+      consecutiveEmptySearches = 0;
+    }
+  } else {
+    consecutiveEmptySearches = Math.max(0, consecutiveEmptySearches - 1);
+  }
+  const ms = (empty || blocked) ? RESOLVE_EMPTY_COOLDOWN_MS : RESOLVE_SOFT_COOLDOWN_MS;
+  resolveFailUntil.set(trackId, Date.now() + ms);
+  console.warn(`[Prepare] Resolve cooldown ${Math.round(ms / 1000)}s for ${trackId}`);
+}
+
 export interface SearchResult {
   id: string;
   title: string;
@@ -658,14 +692,16 @@ export async function resolveYouTubeSource(
     if (isYouTubeRateLimited()) {
       throw new Error(`YouTube rate-limited (~${Math.ceil(youtubeRateLimitRemainingMs() / 60000)} min left)`);
     }
-    const queries = buildSearchQueries(searchArtist || artist, title, album).slice(0, 5);
+    // Cap query fan-out — empty proxy responses used to fire 5+ searches per track
+    const queries = buildSearchQueries(searchArtist || artist, title, album).slice(0, 2);
+    let sawAnyYtHit = false;
     for (const q of queries) {
       try {
         const batch = await searchYouTube(q, 8, minSearchDuration);
+        if (batch.length > 0) sawAnyYtHit = true;
         collectResults(batch);
         candidates.push(...batch.filter((r) => !candidates.some((c) => c.id === r.id)
           && !isRejectedYouTubeResult(r, target, !!opts?.relaxed) && !isExcluded(r)));
-        // Re-rank after each query; stop early on a strong artist+title hit
         const rankedSoFar = rankYouTubeResults(candidates, target, rankOpts);
         if (rankedSoFar.length > 0) {
           candidates = rankedSoFar;
@@ -679,6 +715,13 @@ export async function resolveYouTubeSource(
       }
     }
     candidates = rankYouTubeResults(candidates, target, rankOpts);
+
+    // Bot/proxy block: yt-dlp returned nothing — do NOT cascade more searches
+    if (!sawAnyYtHit && allRaw.length === 0 && candidates.length === 0) {
+      throw new Error(
+        `No YouTube results for: ${searchQuery} (empty yt-dlp search — check YTDLP_PROXY / YTDLP_COOKIES_FILE for age/bot blocks)`,
+      );
+    }
   }
 
   if (candidates.length === 0) {
@@ -694,8 +737,8 @@ export async function resolveYouTubeSource(
     }
   }
 
-  // Title-only searches are last resort and still must pass artist filters
-  if (candidates.length === 0 && title && artist) {
+  // Title-only / unconstrained cascades only when we already saw some raw hits to re-rank
+  if (candidates.length === 0 && title && artist && allRaw.length > 0) {
     try {
       const titleOnly = await searchYouTube(`${searchArtist} ${title}`, 15, minSearchDuration);
       collectResults(titleOnly);
@@ -717,18 +760,15 @@ export async function resolveYouTubeSource(
     }
   }
 
-  if (candidates.length === 0) {
-    // Last try: no duration floor on yt-dlp (Hebrew / short intros often filtered out)
-    if (title && artist && minSearchDuration) {
-      try {
-        const q = `${searchArtist} ${title}`;
-        const batch = await searchYouTube(q, 15);
-        collectResults(batch);
-        const pool = filterYouTubeResults(batch, target, true);
-        candidates = rankYouTubeResults(pool, target, { ...rankOpts, minScore: 12, filterVariants: true });
-      } catch (err) {
-        console.error(`YouTube unconstrained search failed for "${searchArtist} ${title}":`, err);
-      }
+  if (candidates.length === 0 && title && artist && allRaw.length > 0 && minSearchDuration) {
+    try {
+      const q = `${searchArtist} ${title}`;
+      const batch = await searchYouTube(q, 15);
+      collectResults(batch);
+      const pool = filterYouTubeResults(batch, target, true);
+      candidates = rankYouTubeResults(pool, target, { ...rankOpts, minScore: 12, filterVariants: true });
+    } catch (err) {
+      console.error(`YouTube unconstrained search failed for "${searchArtist} ${title}":`, err);
     }
   }
 
@@ -831,9 +871,14 @@ export function resolveAndAttachSourceInBackground(
   quality: 'LOW' | 'NORMAL' | 'HIGH',
   opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string; thumbnailUrl?: string },
 ) {
+  if (resolveInFlight.has(trackId)) return;
+  if (isResolveCoolingDown(trackId)) return;
+  if (isYouTubeRateLimited()) return;
+  if (isDownloadInProgress(trackId)) return;
+
+  resolveInFlight.add(trackId);
   void (async () => {
     try {
-      if (isDownloadInProgress(trackId)) return;
       const source = await resolveYouTubeSource(input, { ...opts, relaxed: true });
       const track = await prisma.track.findUnique({ where: { id: trackId }, include: { artist: true } });
       if (!track) return;
@@ -843,13 +888,15 @@ export function resolveAndAttachSourceInBackground(
         data: {
           sourceUrl: source.url,
           sourceId: source.sourceId,
-          // Never replace Spotify/iTunes art with a YouTube frame
           ...(needsBetterAlbumArt(track.thumbnailUrl)
             ? { thumbnailUrl: source.thumbnailUrl || track.thumbnailUrl }
             : {}),
           duration: source.duration || track.duration,
         },
       });
+
+      clearResolveCooldown(trackId);
+      consecutiveEmptySearches = 0;
 
       if (needsBetterAlbumArt(track.thumbnailUrl)) {
         upgradeTrackAlbumArtInBackground(trackId, {
@@ -867,7 +914,10 @@ export function resolveAndAttachSourceInBackground(
         album: opts?.album,
       });
     } catch (err) {
+      markResolveFailed(trackId, err);
       console.error(`[Prepare] Background source resolve failed for ${trackId}:`, (err as Error).message);
+    } finally {
+      resolveInFlight.delete(trackId);
     }
   })();
 }
@@ -893,7 +943,9 @@ export async function prepareTrackForPlayback(
         album: existing.album?.title,
       });
     } else if (!existing.sourceUrl && existing.title && existing.artist.name) {
-      resolveAndAttachSourceInBackground(existing.id, searchQuery, quality, opts);
+      if (!isResolveCoolingDown(existing.id) && !isYouTubeRateLimited()) {
+        resolveAndAttachSourceInBackground(existing.id, searchQuery, quality, opts);
+      }
     }
     return existing;
   }
@@ -931,7 +983,9 @@ export async function prepareTrackForPlayback(
       preferredThumbnail: opts.thumbnailUrl,
       spotifyUrl: opts.spotifyUrl,
     });
-    resolveAndAttachSourceInBackground(track.id, searchQuery, quality, opts);
+    if (!isResolveCoolingDown(track.id) && !isYouTubeRateLimited()) {
+      resolveAndAttachSourceInBackground(track.id, searchQuery, quality, opts);
+    }
     return track;
   }
 
@@ -1235,6 +1289,9 @@ export async function prefetchLibraryTrack(
 
   let sourceUrl = track.sourceUrl;
   if (!sourceUrl) {
+    if (isResolveCoolingDown(trackId) || isYouTubeRateLimited()) {
+      return { status: 'preparing' as const, trackId };
+    }
     resolveAndAttachSourceInBackground(
       trackId,
       `${track.artist.name} - ${track.title}`,

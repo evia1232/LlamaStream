@@ -5,12 +5,12 @@ import { body, query } from 'express-validator';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { resolveAndDownload, downloadLibraryTrack, prefetchLibraryTrack, researchTrack, resolveYouTubeSource, upsertPendingTrack, prepareTrackForPlayback, resolveAndAttachSourceInBackground } from '../services/downloader';
-import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress, isDownloadCoolingDown, pipeYouTubeAudio, pipeYouTubeSearch, clearDownloadCooldown, cancelBackgroundDownload } from '../services/trackDownload';
+import { resolveAndDownload, downloadLibraryTrack, prefetchLibraryTrack, researchTrack, resolveYouTubeSource, upsertPendingTrack, prepareTrackForPlayback, resolveAndAttachSourceInBackground, isResolveCoolingDown } from '../services/downloader';
+import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress, isDownloadCoolingDown, pipeYouTubeAudio, clearDownloadCooldown, cancelBackgroundDownload } from '../services/trackDownload';
 import { fetchLyricsForTrack } from '../services/lyrics';
 import { unifiedSearch } from '../services/search';
 import { isSpotifyUrl, isYouTubeUrl } from '../services/spotify';
-import { ytDlpVersion } from '../services/ytdlp';
+import { ytDlpVersion, isYouTubeRateLimited } from '../services/ytdlp';
 import { getSpotifyStatus } from '../services/spotifyApi';
 import { getValidatedActiveDevice } from '../services/playbackSync';
 import { cleanupLibrary, deleteTrackById, getLibraryStats } from '../services/trackCleanup';
@@ -513,6 +513,16 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
   if (fresh.title && fresh.artist.name) {
     const quality = parseStoredQuality(fresh.quality);
     const query = `${fresh.artist.name} - ${fresh.title}`;
+
+    // Hard stop: do not spam yt-dlp when resolve just failed or YouTube is gated
+    if (isResolveCoolingDown(fresh.id) || isYouTubeRateLimited()) {
+      return res.status(503).json({
+        error: 'YouTube temporarily unavailable for this track — wait before retrying',
+        retryAfterSec: 180,
+      });
+    }
+
+    // One background resolve only — do NOT also pipe ytsearch (that doubled IP burn per stream hit)
     if (!isDownloadInProgress(fresh.id) && !isDownloadCoolingDown(fresh.id)) {
       resolveAndAttachSourceInBackground(fresh.id, query, quality, {
         title: fresh.title,
@@ -521,8 +531,11 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
         album: fresh.album?.title,
       });
     }
-    pipeYouTubeSearch(query, quality, req, res);
-    return;
+    return res.status(503).json({
+      error: 'Resolving YouTube source — retry shortly',
+      preparing: true,
+      retryAfterSec: 8,
+    });
   }
 
   return res.status(404).json({ error: 'Track not ready for playback' });

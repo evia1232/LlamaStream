@@ -65,6 +65,7 @@ export default function PlayerBar() {
   const outgoingRef = useRef<HTMLAudioElement | null>(null);
   const outgoingBlobRef = useRef<string | null>(null);
   const lastImperativeTrackIdRef = useRef<string | null>(null);
+  const streamFailAtRef = useRef<Map<string, number>>(new Map());
 
   const isFading = () => fadeCountRef.current > 0;
 
@@ -338,13 +339,25 @@ export default function PlayerBar() {
     const onError = async () => {
       if (loadToken !== loadTokenRef.current || cancelled) return;
       const track = usePlayerStore.getState().currentTrack;
-      if (track && isLibraryId(track.id)) {
-        try {
-          const ready = await prepareTrackForPlayback(track);
-          usePlayerStore.setState({ currentTrack: ready });
-          if (canStreamTrackLocally(ready)) return;
-        } catch { /* fall through */ }
+      if (!track || !isLibraryId(track.id)) {
+        setIsBuffering(false);
+        return;
       }
+      // Prevent prepare→stream→error storms that burn proxy IPs
+      const last = streamFailAtRef.current.get(track.id) || 0;
+      if (Date.now() - last < 90_000) {
+        setIsBuffering(false);
+        return;
+      }
+      streamFailAtRef.current.set(track.id, Date.now());
+      try {
+        const ready = await prepareTrackForPlayback(track);
+        // Only update store (triggers reload) when a real source/file appeared
+        if (ready.isDownloaded || ready.youtubeUrl || (ready as { sourceUrl?: string }).sourceUrl) {
+          usePlayerStore.setState({ currentTrack: ready });
+          return;
+        }
+      } catch { /* fall through */ }
       setIsBuffering(false);
     };
 

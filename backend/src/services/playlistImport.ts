@@ -528,9 +528,10 @@ export async function startRestoreFailedImports(playlistId: string, userId: stri
   void (async () => {
     try {
       console.log(`[Import] Restore started for playlist ${playlistId}: ${failedItems.length} failed slots`);
+      let consecutiveFails = 0;
       for (const item of failedItems) {
         try {
-          const { isYouTubeRateLimited, youtubeRateLimitRemainingMs } = await import('./ytdlp');
+          const { isYouTubeRateLimited, youtubeRateLimitRemainingMs, noteYouTubeRateLimit } = await import('./ytdlp');
           if (isYouTubeRateLimited()) {
             const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
             console.warn(`[Import] Restore paused — YouTube rate-limited (~${mins} min)`);
@@ -541,19 +542,25 @@ export async function startRestoreFailedImports(playlistId: string, userId: stri
             return;
           }
           await retryFailedImportTrack(playlistId, userId, item.position);
-          await sleep(1500);
+          consecutiveFails = 0;
+          await sleep(4000);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.warn(`[Import] Restore skip pos ${item.position}: ${msg.split('\n')[0]}`);
-          if (/rate-?limited/i.test(msg)) {
+          consecutiveFails += 1;
+          if (/rate-?limited|empty yt-dlp search|403|Forbidden|bot/i.test(msg) || consecutiveFails >= 3) {
+            const { noteYouTubeRateLimit } = await import('./ytdlp');
+            if (/empty yt-dlp search|403|Forbidden|bot/i.test(msg) || consecutiveFails >= 3) {
+              noteYouTubeRateLimit('restore-storm');
+            }
             await prisma.playlistImportJob.update({
               where: { id: job.id },
               data: { status: 'pending' },
             });
+            console.warn(`[Import] Restore paused after failures (protect proxy IP)`);
             return;
           }
-          // leave this slot failed; continue next positions
-          await sleep(800);
+          await sleep(2500);
         }
       }
 
