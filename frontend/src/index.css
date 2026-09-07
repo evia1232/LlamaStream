@@ -303,6 +303,7 @@
   --color-accent-hover-rgb: 30 215 96;
   --player-h-mobile: 4rem;
   --player-h-desktop: 5.625rem;
+  --player-h: var(--player-h-desktop);
   --mobile-nav-h: 3.5rem;
 }
 
@@ -328,6 +329,24 @@
 
 .animate-slide-up {
   animation: slide-up 0.28s ease-out;
+}
+
+@keyframes np-panel-in {
+  from { transform: translateX(100%); opacity: 0.85; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+[dir="rtl"] .animate-np-panel {
+  animation: np-panel-in-rtl 0.28s ease-out;
+}
+
+@keyframes np-panel-in-rtl {
+  from { transform: translateX(-100%); opacity: 0.85; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-np-panel {
+  animation: np-panel-in 0.28s ease-out;
 }
 
 @keyframes fade-in {
