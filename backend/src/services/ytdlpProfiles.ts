@@ -153,12 +153,23 @@ export async function rotateProfileNow(reason = 'manual'): Promise<YtDlpProfile 
 
 export function buildProfileArgs(profile: YtDlpProfile): string[] {
   const args: string[] = [];
-  if (profile.cookiesFile && fs.existsSync(profile.cookiesFile)) {
-    args.push('--cookies', profile.cookiesFile);
+  // Fall back to default cookies when a rotation profile has proxy but no cookies file
+  const cookiesPath = (profile.cookiesFile && fs.existsSync(profile.cookiesFile))
+    ? profile.cookiesFile
+    : (config.ytdlpCookiesFile && fs.existsSync(config.ytdlpCookiesFile) ? config.ytdlpCookiesFile : undefined);
+
+  if (cookiesPath) {
+    args.push('--cookies', cookiesPath);
+  } else if (profile.cookiesFile || config.ytdlpCookiesFile) {
+    const missing = profile.cookiesFile || config.ytdlpCookiesFile;
+    console.error(`[yt-dlp] Cookies path set but FILE NOT FOUND: ${missing}`);
   }
-  if (profile.proxy) {
-    args.push('--proxy', profile.proxy);
+
+  const proxy = profile.proxy || config.ytdlpProxy || undefined;
+  if (proxy) {
+    args.push('--proxy', proxy);
   }
+
   if (profile.userAgent) {
     args.push('--user-agent', profile.userAgent);
   }
@@ -168,10 +179,27 @@ export function buildProfileArgs(profile: YtDlpProfile): string[] {
   return args;
 }
 
+function maskProxy(proxy?: string): string | null {
+  if (!proxy) return null;
+  try {
+    // socks5://user:pass@host:1080 → socks5://***@host:1080
+    return proxy.replace(/(:\/\/)([^@/]+@)/, '$1***@');
+  } catch {
+    return '(set)';
+  }
+}
+
 export async function getYtdlpProfileStatus() {
   const enabled = await isMultiProfileEnabled();
   const profiles = getConfiguredProfiles();
   const active = getActiveProfileSync(enabled);
+  const legacy = getLegacyProfile();
+  const cookiesPath = config.ytdlpCookiesFile || '';
+  const cookiesExist = !!(cookiesPath && fs.existsSync(cookiesPath));
+  const activeArgs = buildProfileArgs(active);
+  const activeUsesCookies = activeArgs.includes('--cookies');
+  const activeUsesProxy = activeArgs.includes('--proxy');
+
   return {
     enabled,
     rotateEvery: ROTATE_EVERY,
@@ -179,12 +207,89 @@ export async function getYtdlpProfileStatus() {
     activeProfileId: active.id,
     activeProfileLabel: active.label,
     profileCount: profiles.length,
+    /** What is actually applied to yt-dlp right now */
+    active: {
+      id: active.id,
+      label: active.label,
+      usesProxy: activeUsesProxy,
+      usesCookies: activeUsesCookies,
+      proxy: maskProxy(active.proxy || config.ytdlpProxy),
+    },
+    /** Default .env auth (YTDLP_PROXY / YTDLP_COOKIES_FILE) */
+    defaultAuth: {
+      proxyConfigured: !!config.ytdlpProxy,
+      proxy: maskProxy(config.ytdlpProxy),
+      cookiesConfigured: !!cookiesPath,
+      cookiesExist,
+      cookiesPath: cookiesPath || null,
+      ok: !!(config.ytdlpProxy || cookiesExist),
+      warning: !cookiesPath
+        ? 'YTDLP_COOKIES_FILE not set'
+        : (!cookiesExist ? `Cookies file missing inside container: ${cookiesPath}` : null),
+    },
     profiles: profiles.map((p) => ({
       id: p.id,
       label: p.label,
       hasProxy: !!p.proxy,
       hasCookies: !!(p.cookiesFile && fs.existsSync(p.cookiesFile)),
+      cookiesMissing: !!(p.cookiesFile && !fs.existsSync(p.cookiesFile)),
       playerClient: p.playerClient || null,
     })),
+    legacy: {
+      hasProxy: !!legacy.proxy,
+      hasCookies: !!(legacy.cookiesFile && fs.existsSync(legacy.cookiesFile)),
+    },
   };
+}
+
+/** Quick live check: does yt-dlp reach YouTube with current proxy/cookies? */
+export async function testYtdlpConnectivity(): Promise<{
+  ok: boolean;
+  message: string;
+  usesProxy: boolean;
+  usesCookies: boolean;
+  proxy: string | null;
+}> {
+  const { runYtDlp } = await import('./ytdlp');
+  const active = await getActiveProfile();
+  const args = buildProfileArgs(active);
+  const usesProxy = args.includes('--proxy');
+  const usesCookies = args.includes('--cookies');
+  const proxy = maskProxy(active.proxy || config.ytdlpProxy);
+
+  try {
+    const result = await runYtDlp([
+      '--flat-playlist',
+      '--print', '%(id)s',
+      '--playlist-end', '1',
+      'ytsearch1:official audio',
+    ], 35000, { kind: 'search' });
+
+    if (result.code === 0 && result.stdout.trim()) {
+      return {
+        ok: true,
+        message: `OK — YouTube search works (got id ${result.stdout.trim().split('\n')[0]})`,
+        usesProxy,
+        usesCookies,
+        proxy,
+      };
+    }
+
+    const tip = (result.stderr || result.stdout || 'yt-dlp failed').split('\n').filter(Boolean).slice(-3).join(' | ');
+    return {
+      ok: false,
+      message: tip,
+      usesProxy,
+      usesCookies,
+      proxy,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: (err as Error).message,
+      usesProxy,
+      usesCookies,
+      proxy,
+    };
+  }
 }

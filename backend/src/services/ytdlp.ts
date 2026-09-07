@@ -193,6 +193,9 @@ export function runYtDlp(
       if (result.code !== 0 && isYouTubeRateLimitError(combined)) {
         noteYouTubeRateLimit('rate-limit');
       } else if (result.code !== 0 && /403|Forbidden|Sign in to confirm|confirm you.?re not a bot|confirm your age/i.test(combined)) {
+        const usedProxy = authArgs.includes('--proxy');
+        const usedCookies = authArgs.includes('--cookies');
+        console.warn(`[yt-dlp] 403 — auth applied: proxy=${usedProxy} cookies=${usedCookies}`);
         await rotateProfileNow('403').catch(() => null);
       }
       resolve(result);

@@ -271,11 +271,16 @@ async function start() {
     console.log(`${config.appName} backend running on port ${config.port}`);
     if (config.ytdlpCookiesFile && fs.existsSync(config.ytdlpCookiesFile)) {
       console.log(`[yt-dlp] Using cookies: ${config.ytdlpCookiesFile}`);
+    } else if (config.ytdlpCookiesFile) {
+      console.error(`[yt-dlp] YTDLP_COOKIES_FILE set but MISSING: ${config.ytdlpCookiesFile}`);
     } else {
       console.log('[yt-dlp] No cookies file — YouTube may return 403 on datacenter IPs. Set YTDLP_COOKIES_FILE.');
     }
     if (config.ytdlpProxy) {
-      console.log('[yt-dlp] Using proxy');
+      const masked = config.ytdlpProxy.replace(/(:\/\/)([^@/]+@)/, '$1***@');
+      console.log(`[yt-dlp] Using proxy: ${masked}`);
+    } else {
+      console.log('[yt-dlp] No YTDLP_PROXY set');
     }
   });
 }

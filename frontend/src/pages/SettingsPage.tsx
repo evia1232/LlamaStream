@@ -99,9 +99,20 @@ export default function SettingsPage() {
     activeProfileLabel: string;
     profileCount: number;
     profiles: { id: string; label: string; hasProxy: boolean; hasCookies: boolean }[];
+    active?: { usesProxy: boolean; usesCookies: boolean; proxy: string | null };
+    defaultAuth?: {
+      proxyConfigured: boolean;
+      proxy: string | null;
+      cookiesConfigured: boolean;
+      cookiesExist: boolean;
+      cookiesPath: string | null;
+      ok: boolean;
+      warning: string | null;
+    };
   } | null>(null);
   const [ytdlpSaving, setYtdlpSaving] = useState(false);
   const [ytdlpMsg, setYtdlpMsg] = useState('');
+  const [ytdlpTesting, setYtdlpTesting] = useState(false);
   const [offlineCacheOn, setOfflineCacheOn] = useState(() => isOfflineCacheEnabled());
   const [localCacheStats, setLocalCacheStats] = useState<{ bytes: number; count: number }>({ bytes: 0, count: 0 });
   const [localCacheMsg, setLocalCacheMsg] = useState('');
@@ -210,6 +221,28 @@ export default function SettingsPage() {
     } finally {
       setYtdlpSaving(false);
     }
+  };
+
+  const testYtdlp = async () => {
+    setYtdlpTesting(true);
+    setYtdlpMsg('');
+    try {
+      const { data } = await api.post('/settings/ytdlp/test');
+      setYtdlpMsg(
+        data.ok
+          ? t('ytdlpTestOk', { detail: data.message })
+          : t('ytdlpTestFail', { detail: data.message }),
+      );
+    } catch (err: unknown) {
+      const body = (err as { response?: { data?: { ok?: boolean; message?: string; error?: string } } })?.response?.data;
+      const detail = body?.message || body?.error || t('error');
+      setYtdlpMsg(t('ytdlpTestFail', { detail }));
+    }
+    try {
+      const status = await api.get('/settings/ytdlp');
+      setYtdlpStatus(status.data);
+    } catch { /* ignore */ }
+    setYtdlpTesting(false);
   };
 
   const toggleOfflineCache = () => {
@@ -657,7 +690,51 @@ export default function SettingsPage() {
           <div>
             <div className="flex items-center gap-2 mb-3">
               <HardDrive className="w-5 h-5 text-spotify-green" />
-              <h2 className="text-lg font-bold">{t('ytdlpMultiTitle')}</h2>
+              <h2 className="text-lg font-bold">{t('ytdlpAuthTitle')}</h2>
+            </div>
+            <p className="text-body mb-4">{t('ytdlpAuthHint')}</p>
+            <div className="bg-spotify-lightgray rounded-xl p-4 space-y-2 mb-3 text-sm">
+              {ytdlpStatus?.defaultAuth ? (
+                <>
+                  <p>
+                    <span className="text-spotify-text">{t('ytdlpProxyLabel')}: </span>
+                    {ytdlpStatus.defaultAuth.proxyConfigured
+                      ? (ytdlpStatus.defaultAuth.proxy || t('ytdlpConfigured'))
+                      : t('ytdlpNotSet')}
+                  </p>
+                  <p>
+                    <span className="text-spotify-text">{t('ytdlpCookiesLabel')}: </span>
+                    {!ytdlpStatus.defaultAuth.cookiesConfigured
+                      ? t('ytdlpNotSet')
+                      : ytdlpStatus.defaultAuth.cookiesExist
+                        ? t('ytdlpCookiesOk')
+                        : t('ytdlpCookiesMissing')}
+                  </p>
+                  {ytdlpStatus.defaultAuth.warning && (
+                    <p className="text-red-400">{ytdlpStatus.defaultAuth.warning}</p>
+                  )}
+                  <p className="text-spotify-text">
+                    {t('ytdlpActiveNow')}:{' '}
+                    {ytdlpStatus.active?.usesProxy ? 'proxy' : 'no proxy'}
+                    {' · '}
+                    {ytdlpStatus.active?.usesCookies ? 'cookies' : 'no cookies'}
+                  </p>
+                </>
+              ) : (
+                <p className="text-spotify-text">{t('loading')}</p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => void testYtdlp()}
+              disabled={ytdlpTesting}
+              className="green-btn py-2.5 px-5 text-sm disabled:opacity-50 mb-6"
+            >
+              {ytdlpTesting ? t('ytdlpTesting') : t('ytdlpTestBtn')}
+            </button>
+
+            <div className="flex items-center gap-2 mb-3 mt-2">
+              <h3 className="text-base font-bold">{t('ytdlpMultiTitle')}</h3>
             </div>
             <p className="text-body mb-4">{t('ytdlpMultiHint')}</p>
             <div className="bg-spotify-lightgray rounded-xl p-4 flex items-center justify-between gap-4 mb-3">
@@ -690,7 +767,14 @@ export default function SettingsPage() {
                 ))}
               </ul>
             )}
-            {ytdlpMsg && <p className="text-sm text-spotify-green mt-3">{ytdlpMsg}</p>}
+            {ytdlpMsg && (
+              <p className={clsx(
+                'text-sm mt-3',
+                ytdlpMsg.includes('OK') || ytdlpMsg.includes('עובד') ? 'text-spotify-green' : 'text-spotify-text',
+              )}>
+                {ytdlpMsg}
+              </p>
+            )}
           </div>
 
           <div>

@@ -9,6 +9,7 @@ import {
 import {
   getYtdlpProfileStatus,
   setMultiProfileEnabled,
+  testYtdlpConnectivity,
 } from '../services/ytdlpProfiles';
 
 const router = Router();
@@ -66,6 +67,15 @@ router.put('/ytdlp', authenticate, requireAdmin, async (req: AuthRequest, res) =
     await setMultiProfileEnabled(multiProfile);
     const status = await getYtdlpProfileStatus();
     res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/ytdlp/test', authenticate, requireAdmin, async (_req, res) => {
+  try {
+    const result = await testYtdlpConnectivity();
+    res.status(result.ok ? 200 : 502).json(result);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
