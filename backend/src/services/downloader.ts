@@ -265,8 +265,8 @@ export async function downloadFromYouTube(
 
       const attempt = attempts[attemptIndex++];
       const args = [
-        '--no-warnings', '--no-playlist', '--retries', '2', '--fragment-retries', '2',
-        '--socket-timeout', '20',
+        '--no-warnings', '--no-playlist', '--retries', '5', '--fragment-retries', '5',
+        '--socket-timeout', '30',
         '--js-runtimes', 'node',
         '--remote-components', 'ejs:github',
         ...authArgs,

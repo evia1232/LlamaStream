@@ -22,9 +22,9 @@ export interface YtDlpResult {
 const BASE_ARGS = [
   '--no-warnings',
   '--no-playlist',
-  '--retries', '2',
-  '--fragment-retries', '2',
-  '--socket-timeout', '20',
+  '--retries', '5',
+  '--fragment-retries', '5',
+  '--socket-timeout', '30',
   // Node 22+ in the backend image solves YouTube EJS signature challenges
   '--js-runtimes', 'node',
   '--remote-components', 'ejs:github',
@@ -222,21 +222,29 @@ export function ytDlpAudioExtractAttempts(quality: 'LOW' | 'NORMAL' | 'HIGH' = '
     '--concurrent-fragments', '1',
   ];
 
+  // Prefer loose selectors — strict bestaudio often yields "Requested format is not available"
+  // when a client exposes only combined streams or empty format lists under proxy/cookies.
   return [
     {
-      // Least restrictive format first — m4a-only often fails when only webm opus is offered
-      label: 'android+web best',
+      label: 'default loose',
       args: [
-        '--extractor-args', 'youtube:player_client=android,web',
-        '-f', 'bestaudio/best',
+        '-f', 'ba/b/bestaudio/best',
         ...extract,
       ],
     },
     {
-      label: 'android+web m4a',
+      label: 'android+web loose',
       args: [
         '--extractor-args', 'youtube:player_client=android,web',
-        '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+        '-f', 'ba/b/bestaudio/best',
+        ...extract,
+      ],
+    },
+    {
+      label: 'web+android best',
+      args: [
+        '--extractor-args', 'youtube:player_client=web,android',
+        '-f', 'bestaudio*/best',
         ...extract,
       ],
     },
@@ -244,7 +252,7 @@ export function ytDlpAudioExtractAttempts(quality: 'LOW' | 'NORMAL' | 'HIGH' = '
       label: 'ios+android best',
       args: [
         '--extractor-args', 'youtube:player_client=ios,android,web',
-        '-f', 'bestaudio/best',
+        '-f', 'ba/b/bestaudio/best',
         ...extract,
       ],
     },
@@ -252,7 +260,7 @@ export function ytDlpAudioExtractAttempts(quality: 'LOW' | 'NORMAL' | 'HIGH' = '
       label: 'tv_embedded best',
       args: [
         '--extractor-args', 'youtube:player_client=tv_embedded,web',
-        '-f', 'bestaudio/best',
+        '-f', 'ba/b/bestaudio/best',
         ...extract,
       ],
     },
@@ -265,9 +273,8 @@ export function ytDlpAudioExtractAttempts(quality: 'LOW' | 'NORMAL' | 'HIGH' = '
       ],
     },
     {
-      label: 'default any audio',
+      label: 'no format filter',
       args: [
-        '-f', 'bestaudio/best/ba/b',
         ...extract,
       ],
     },

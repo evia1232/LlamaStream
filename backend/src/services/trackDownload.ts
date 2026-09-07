@@ -4,9 +4,15 @@ import { Response } from 'express';
 import prisma from '../lib/prisma';
 import type { DownloadResult } from './downloader';
 import { fetchLyricsForTrack } from './lyrics';
-import { lastLines, ytDlpAudioExtractArgs, ytDlpAuthArgs, ytDlpCommand } from './ytdlp';
+import {
+  lastLines,
+  ytDlpAudioExtractAttempts,
+  ytDlpAuthArgs,
+  ytDlpCommand,
+  isYouTubeRateLimited,
+  youtubeRateLimitRemainingMs,
+} from './ytdlp';
 import { finalizeFileStorage, getDownloadDirForTrack, touchTrackAccess, assertDiskSpaceForDownload } from './trackStorage';
-import { isYouTubeRateLimited, youtubeRateLimitRemainingMs } from './ytdlp';
 import {
   downloadKey,
   findCanonicalDownloadedTrack,
@@ -21,7 +27,8 @@ const trackToDownloadKey = new Map<string, string>();
 const downloadFailUntil = new Map<string, number>();
 const DOWNLOAD_FAIL_COOLDOWN_MS = 3 * 60 * 1000;
 
-const YTDLP_BASE = [
+/** Shared yt-dlp flags for live pipes — no hardcoded player_client (attempts set their own). */
+const YTDLP_PIPE_BASE = [
   '--no-warnings',
   '--no-playlist',
   '--retries', '5',
@@ -29,11 +36,10 @@ const YTDLP_BASE = [
   '--socket-timeout', '30',
   '--js-runtimes', 'node',
   '--remote-components', 'ejs:github',
-  '--extractor-args', 'youtube:player_client=android,web',
 ];
 
-function ytdlpArgs(...extra: string[]): string[] {
-  return [...YTDLP_BASE, ...ytDlpAuthArgs(), ...extra];
+function ytdlpPipeArgs(...extra: string[]): string[] {
+  return [...YTDLP_PIPE_BASE, ...ytDlpAuthArgs(), ...extra];
 }
 
 export function isDownloadInProgress(trackId: string): boolean {
@@ -300,46 +306,110 @@ export function ensureBackgroundDownload(
   return job;
 }
 
+/**
+ * Live-stream YouTube audio to the HTTP response.
+ * Retries client/format attempts until the first audio byte arrives (same ladder as downloads).
+ */
+function pipeYtDlpWithFallback(
+  target: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH',
+  req: { on: (event: string, cb: () => void) => void },
+  res: Response,
+  logLabel: string,
+): ChildProcess {
+  const attempts = ytDlpAudioExtractAttempts(quality);
+  let attemptIndex = 0;
+  let current: ChildProcess | null = null;
+  let headersSent = false;
+  let clientGone = false;
+
+  const fail = (stderr: string) => {
+    console.error(`[Stream] ${logLabel} failed:`, lastLines(stderr));
+    if (!res.headersSent) res.status(502).end();
+    else if (!res.writableEnded) res.end();
+  };
+
+  const start = (): ChildProcess => {
+    if (clientGone || res.writableEnded) {
+      return current!;
+    }
+    if (attemptIndex >= attempts.length) {
+      fail('all format attempts exhausted');
+      return current!;
+    }
+
+    const attempt = attempts[attemptIndex++];
+    const proc = spawn(ytDlpCommand(), ytdlpPipeArgs(
+      ...attempt.args,
+      '-o', '-',
+      target,
+    ), { stdio: ['ignore', 'pipe', 'pipe'] });
+    current = proc;
+
+    let stderr = '';
+    let gotData = false;
+
+    proc.stdout.on('data', (chunk: Buffer) => {
+      if (clientGone) return;
+      if (!gotData) {
+        gotData = true;
+        if (!headersSent && !res.headersSent) {
+          headersSent = true;
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Cache-Control', 'private, max-age=86400');
+          res.setHeader('Accept-Ranges', 'none');
+        }
+      }
+      if (!res.writableEnded) {
+        res.write(chunk);
+      }
+    });
+
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+
+    proc.on('error', (err) => {
+      console.error(`[Stream] ${logLabel} spawn error:`, err.message);
+      if (!gotData && attemptIndex < attempts.length && !clientGone) {
+        console.warn(`[Stream] ${logLabel} retry after spawn fail (${attempt.label})`);
+        start();
+        return;
+      }
+      fail(err.message);
+    });
+
+    proc.on('close', (code) => {
+      if (clientGone) return;
+      if (code === 0) {
+        if (!res.writableEnded) res.end();
+        return;
+      }
+      if (!gotData && attemptIndex < attempts.length) {
+        console.warn(`[Stream] ${logLabel} retry after ${attempt.label}: ${lastLines(stderr, 2)}`);
+        start();
+        return;
+      }
+      fail(stderr || `exit ${code}`);
+    });
+
+    return proc;
+  };
+
+  req.on('close', () => {
+    clientGone = true;
+    if (current && !current.killed) current.kill('SIGKILL');
+  });
+
+  return start();
+}
+
 export function pipeYouTubeAudio(
   sourceUrl: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH',
   req: { on: (event: string, cb: () => void) => void },
   res: Response,
-  startSec = 0
+  _startSec = 0,
 ): ChildProcess {
-  const proc = spawn(ytDlpCommand(), ytdlpArgs(
-    ...ytDlpAudioExtractArgs(quality),
-    '-o', '-',
-    sourceUrl,
-  ), { stdio: ['ignore', 'pipe', 'pipe'] });
-
-  res.setHeader('Content-Type', 'audio/mpeg');
-  res.setHeader('Cache-Control', 'private, max-age=86400');
-  res.setHeader('Accept-Ranges', 'none');
-
-  proc.stdout.pipe(res);
-
-  let stderr = '';
-  proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
-
-  proc.on('error', (err) => {
-    console.error('[Stream] Pipe error:', err.message);
-    if (!res.headersSent) res.status(502).end();
-    else if (!res.writableEnded) res.end();
-  });
-
-  proc.on('close', (code) => {
-    if (code !== 0) {
-      console.error('[Stream] Pipe closed with error:', lastLines(stderr));
-    }
-    if (!res.writableEnded) res.end();
-  });
-
-  req.on('close', () => {
-    if (!proc.killed) proc.kill('SIGKILL');
-  });
-
-  return proc;
+  return pipeYtDlpWithFallback(sourceUrl, quality, req, res, 'Pipe');
 }
 
 /** Stream audio via yt-dlp search — starts quickly without a resolved source URL. */
@@ -349,37 +419,5 @@ export function pipeYouTubeSearch(
   req: { on: (event: string, cb: () => void) => void },
   res: Response,
 ): ChildProcess {
-  const proc = spawn(ytDlpCommand(), ytdlpArgs(
-    ...ytDlpAudioExtractArgs(quality),
-    '-o', '-',
-    `ytsearch1:${searchQuery}`,
-  ), { stdio: ['ignore', 'pipe', 'pipe'] });
-
-  res.setHeader('Content-Type', 'audio/mpeg');
-  res.setHeader('Cache-Control', 'private, max-age=86400');
-  res.setHeader('Accept-Ranges', 'none');
-
-  proc.stdout.pipe(res);
-
-  let stderr = '';
-  proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
-
-  proc.on('error', (err) => {
-    console.error('[Stream] Search pipe error:', err.message);
-    if (!res.headersSent) res.status(502).end();
-    else if (!res.writableEnded) res.end();
-  });
-
-  proc.on('close', (code) => {
-    if (code !== 0) {
-      console.error('[Stream] Search pipe closed with error:', lastLines(stderr));
-    }
-    if (!res.writableEnded) res.end();
-  });
-
-  req.on('close', () => {
-    if (!proc.killed) proc.kill('SIGKILL');
-  });
-
-  return proc;
+  return pipeYtDlpWithFallback(`ytsearch1:${searchQuery}`, quality, req, res, 'Search pipe');
 }
