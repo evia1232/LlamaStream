@@ -8,7 +8,7 @@ import { body, validationResult } from 'express-validator';
 import { authenticate, AuthRequest, optionalAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { exportPlaylist, listUserSpotifyPlaylists } from '../services/spotify';
-import { startPlaylistImport, startSpotifyPlaylistsImport, getImportJobStatus, importSpotifyPlaylist, listActiveImportJobs, retryFailedImportTrack, buildFailedImportItems, FailedImportItem, ImportTrackItem } from '../services/playlistImport';
+import { startPlaylistImport, startSpotifyPlaylistsImport, getImportJobStatus, importSpotifyPlaylist, listActiveImportJobs, retryFailedImportTrack, startRestoreFailedImports, buildFailedImportItems, FailedImportItem, ImportTrackItem } from '../services/playlistImport';
 import { trackStreamUrl } from '../services/trackDownload';
 import { addTrackToPlaylist, nextPlaylistPosition } from '../lib/playlistTracks';
 import { prefetchLibraryTrack } from '../services/downloader';
@@ -309,6 +309,16 @@ router.post('/:id/retry-failed', authenticate, async (req: AuthRequest, res) => 
     });
   } catch (err) {
     console.error('Retry failed import track:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/:id/restore-failed', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const result = await startRestoreFailedImports(req.params.id, req.user!.userId);
+    res.json(result);
+  } catch (err) {
+    console.error('Restore failed imports:', err);
     res.status(500).json({ error: (err as Error).message });
   }
 });

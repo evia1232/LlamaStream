@@ -480,6 +480,104 @@ export async function retryFailedImportTrack(
   };
 }
 
+const restoreInFlight = new Set<string>();
+
+/**
+ * Re-try every failed import slot in ascending Spotify/YouTube order.
+ * Runs in the background so the HTTP request returns immediately.
+ */
+export async function startRestoreFailedImports(playlistId: string, userId: string) {
+  const playlist = await prisma.playlist.findUnique({
+    where: { id: playlistId },
+    include: {
+      importJob: true,
+      tracks: { select: { position: true } },
+    },
+  });
+  if (!playlist || playlist.userId !== userId) throw new Error('Playlist not found');
+  const job = playlist.importJob;
+  if (!job) throw new Error('No import job for this playlist');
+
+  if (restoreInFlight.has(playlistId) || job.status === 'running' || job.status === 'parsing') {
+    return {
+      started: false,
+      alreadyRunning: true,
+      totalFailed: job.failedTracks || 0,
+    };
+  }
+
+  const trackData = (job.trackData as unknown as ImportTrackItem[]) || [];
+  const occupied = new Set(playlist.tracks.map((t) => t.position));
+  const failedItems = buildFailedImportItems(
+    trackData,
+    job.errors,
+    occupied,
+    { attemptedUntil: trackData.length },
+  ).sort((a, b) => a.position - b.position);
+
+  if (failedItems.length === 0) {
+    return { started: false, alreadyRunning: false, totalFailed: 0 };
+  }
+
+  restoreInFlight.add(playlistId);
+  await prisma.playlistImportJob.update({
+    where: { id: job.id },
+    data: { status: 'running' },
+  });
+
+  void (async () => {
+    try {
+      console.log(`[Import] Restore started for playlist ${playlistId}: ${failedItems.length} failed slots`);
+      for (const item of failedItems) {
+        try {
+          const { isYouTubeRateLimited, youtubeRateLimitRemainingMs } = await import('./ytdlp');
+          if (isYouTubeRateLimited()) {
+            const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
+            console.warn(`[Import] Restore paused — YouTube rate-limited (~${mins} min)`);
+            await prisma.playlistImportJob.update({
+              where: { id: job.id },
+              data: { status: 'pending' },
+            });
+            return;
+          }
+          await retryFailedImportTrack(playlistId, userId, item.position);
+          await sleep(1500);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[Import] Restore skip pos ${item.position}: ${msg.split('\n')[0]}`);
+          if (/rate-?limited/i.test(msg)) {
+            await prisma.playlistImportJob.update({
+              where: { id: job.id },
+              data: { status: 'pending' },
+            });
+            return;
+          }
+          // leave this slot failed; continue next positions
+          await sleep(800);
+        }
+      }
+
+      const fresh = await prisma.playlistImportJob.findUnique({ where: { id: job.id } });
+      const remaining = fresh?.failedTracks ?? 0;
+      await prisma.playlistImportJob.update({
+        where: { id: job.id },
+        data: { status: remaining > 0 ? 'completed' : 'completed' },
+      });
+      console.log(`[Import] Restore finished for playlist ${playlistId}; remaining failed=${remaining}`);
+    } catch (err) {
+      console.error(`[Import] Restore crashed for playlist ${playlistId}:`, err);
+      await prisma.playlistImportJob.update({
+        where: { id: job.id },
+        data: { status: 'failed' },
+      }).catch(() => null);
+    } finally {
+      restoreInFlight.delete(playlistId);
+    }
+  })();
+
+  return { started: true, alreadyRunning: false, totalFailed: failedItems.length };
+}
+
 export async function listActiveImportJobs(userId: string) {
   const jobs = await prisma.playlistImportJob.findMany({
     where: {

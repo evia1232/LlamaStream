@@ -29,51 +29,6 @@ function PlayIcon({ className }: { className?: string }) {
   return <Play className={clsx(className, 'play-icon-nudge')} />;
 }
 
-function CompactLyrics({ className }: { className?: string }) {
-  const { t } = useTranslation();
-  const activeLineRef = useRef<HTMLDivElement>(null);
-  const lastActiveRef = useRef(-2);
-  const { lines, activeIndex, hasSynced, plainContent } = useActiveLyric(true);
-
-  useEffect(() => {
-    if (activeIndex === lastActiveRef.current) return;
-    lastActiveRef.current = activeIndex;
-    if (activeIndex < 0) return;
-    activeLineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [activeIndex]);
-
-  if (hasSynced) {
-    return (
-      <div className={clsx('overflow-y-auto scrollbar-spotify', className)}>
-        <div className="space-y-0.5 py-4">
-          {lines.map((line, i) => (
-            <div
-              key={`${line.time}-${i}`}
-              ref={i === activeIndex ? activeLineRef : undefined}
-              className={clsx(
-                'py-1.5 text-[15px] font-semibold leading-snug transition-colors duration-300',
-                i === activeIndex ? 'text-white' : 'text-white/35',
-              )}
-            >
-              {line.text || ' '}
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (plainContent) {
-    return (
-      <pre className={clsx('whitespace-pre-wrap text-sm text-white/70 overflow-y-auto py-4', className)}>
-        {plainContent}
-      </pre>
-    );
-  }
-
-  return <p className={clsx('text-spotify-text text-sm py-4', className)}>{t('noLyrics')}</p>;
-}
-
 export default function NowPlayingSheet() {
   const { t } = useTranslation();
 
@@ -449,8 +404,9 @@ export default function NowPlayingSheet() {
     <div className={clsx('text-start', compact ? 'mb-3' : 'mb-6 px-1')}>
       {hasSynced && (
         <p
+          key={activeText || 'empty'}
           className={clsx(
-            'font-bold text-white tracking-wide leading-snug truncate transition-opacity duration-500',
+            'font-bold text-white tracking-wide leading-snug truncate animate-fade-in',
             compact ? 'min-h-[1.25rem] mb-2 text-sm' : 'min-h-[1.5rem] mb-3 text-[15px]',
             activeText ? 'opacity-100' : 'opacity-0',
           )}
@@ -596,11 +552,6 @@ export default function NowPlayingSheet() {
             <button onClick={() => setShowQueue(true)} className="icon-btn p-2">
               <ListMusic className="w-4 h-4" />
             </button>
-          </div>
-
-          <div className="border-t border-white/8 pt-4 mb-6">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-spotify-text mb-1">{t('lyrics')}</h3>
-            <CompactLyrics className="max-h-48" />
           </div>
 
           {belowFold}

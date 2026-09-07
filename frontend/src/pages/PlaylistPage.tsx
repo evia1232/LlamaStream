@@ -23,6 +23,7 @@ export default function PlaylistPage() {
 
   const [importJob, setImportJob] = useState<ImportJobStatus | null>(null);
   const [retryingPos, setRetryingPos] = useState<number | null>(null);
+  const [restoring, setRestoring] = useState(false);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   const loadPlaylist = useCallback(() => {
@@ -82,7 +83,7 @@ export default function PlaylistPage() {
   };
 
   const handleRetryFailed = async (item: FailedImportItem) => {
-    if (!id || retryingPos !== null) return;
+    if (!id || retryingPos !== null || restoring) return;
     setRetryingPos(item.position);
     try {
       await api.post(`/playlists/${id}/retry-failed`, { position: item.position });
@@ -91,6 +92,27 @@ export default function PlaylistPage() {
       alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
     } finally {
       setRetryingPos(null);
+    }
+  };
+
+  const failedCount = (playlist?.failedItems?.length
+    || importJob?.failedItems?.length
+    || importJob?.failedTracks
+    || 0);
+
+  const handleRestorePlaylist = async () => {
+    if (!id || restoring || retryingPos !== null) return;
+    setRestoring(true);
+    try {
+      const { data } = await api.post(`/playlists/${id}/restore-failed`);
+      if (!data.started && data.totalFailed === 0) {
+        alert(t('restorePlaylistNone'));
+      }
+      loadPlaylist();
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -181,10 +203,22 @@ export default function PlaylistPage() {
         </div>
       </div>
 
-      <div className="px-6 py-4 flex items-center gap-4">
+      <div className="px-6 py-4 flex items-center gap-4 flex-wrap">
         <button onClick={handlePlayAll} className="w-14 h-14 bg-spotify-green rounded-full flex items-center justify-center hover:scale-105 transition-transform hover:bg-spotify-green-hover">
           <Play className="w-6 h-6 fill-black text-black play-icon-nudge" />
         </button>
+        {failedCount > 0 && (
+          <button
+            type="button"
+            onClick={() => void handleRestorePlaylist()}
+            disabled={restoring || retryingPos !== null || !!importActive}
+            title={t('restorePlaylistHint')}
+            className="green-btn !py-2.5 !px-4 !text-sm flex items-center gap-2 disabled:opacity-50"
+          >
+            <RefreshCw className={clsx('w-4 h-4', (restoring || importActive) && 'animate-spin')} />
+            {restoring || importActive ? t('restorePlaylistRunning') : t('restorePlaylist')}
+          </button>
+        )}
         <div className="flex gap-2 ms-auto">
           <button onClick={() => handleExport('json')} className="icon-btn flex items-center gap-2 px-3">
             <Download className="w-4 h-4" />
@@ -246,7 +280,7 @@ export default function PlaylistPage() {
               <button
                 type="button"
                 onClick={() => void handleRetryFailed(row.item)}
-                disabled={retryingPos !== null}
+                disabled={retryingPos !== null || restoring}
                 className="green-btn !py-1.5 !px-3 !text-xs flex items-center gap-1.5 disabled:opacity-50"
               >
                 <RefreshCw className={clsx('w-3.5 h-3.5', retryingPos === row.position && 'animate-spin')} />

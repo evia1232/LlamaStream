@@ -55,12 +55,13 @@ function ImportFailedList({
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const [retryingPos, setRetryingPos] = useState<number | null>(null);
+  const [restoring, setRestoring] = useState(false);
   const items = toFailedItems(job);
 
   if (items.length === 0) return null;
 
   const handleRetry = async (item: FailedImportItem) => {
-    if (retryingPos !== null) return;
+    if (retryingPos !== null || restoring) return;
     setRetryingPos(item.position);
     try {
       await api.post(`/playlists/${job.playlist.id}/retry-failed`, { position: item.position });
@@ -72,18 +73,50 @@ function ImportFailedList({
     }
   };
 
+  const handleRestoreAll = async () => {
+    if (restoring || retryingPos !== null) return;
+    setRestoring(true);
+    try {
+      const { data } = await api.post(`/playlists/${job.playlist.id}/restore-failed`);
+      if (!data.started && data.totalFailed === 0) {
+        alert(t('restorePlaylistNone'));
+      }
+      onRetrySuccess?.();
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const busy = restoring || retryingPos !== null || ['parsing', 'pending', 'running'].includes(job.status);
+
   return (
     <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-red-300 hover:bg-red-500/10 transition-colors"
-      >
-        <span>{t('importFailedListTitle', { count: items.length })}</span>
-        {open ? <ChevronUp className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
-      </button>
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-red-500/20">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex-1 flex items-center justify-between gap-2 text-sm text-red-300 hover:text-red-200 transition-colors text-start"
+        >
+          <span>{t('importFailedListTitle', { count: items.length })}</span>
+          {open ? <ChevronUp className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleRestoreAll()}
+          disabled={busy}
+          title={t('restorePlaylistHint')}
+          className="shrink-0 green-btn !py-1.5 !px-2.5 !text-xs flex items-center gap-1.5 disabled:opacity-50"
+        >
+          <RefreshCw className={clsx('w-3.5 h-3.5', (restoring || ['running', 'pending'].includes(job.status)) && 'animate-spin')} />
+          <span className="hidden sm:inline">
+            {restoring || job.status === 'running' ? t('restorePlaylistRunning') : t('restorePlaylist')}
+          </span>
+        </button>
+      </div>
       {open && (
-        <ul className="max-h-72 overflow-y-auto border-t border-red-500/20 divide-y divide-red-500/10">
+        <ul className="max-h-72 overflow-y-auto divide-y divide-red-500/10">
           {items.map((item) => (
             <li key={`${item.position}-${item.name}`} className="px-3 py-2 text-xs flex items-start gap-2">
               <span className="text-spotify-text tabular-nums w-6 shrink-0 pt-0.5">{item.position + 1}</span>
@@ -94,7 +127,7 @@ function ImportFailedList({
               <button
                 type="button"
                 onClick={() => void handleRetry(item)}
-                disabled={retryingPos !== null}
+                disabled={busy}
                 className="shrink-0 icon-btn px-2 py-1 text-spotify-green disabled:opacity-50 flex items-center gap-1"
                 title={t('retryImportTrack')}
               >
