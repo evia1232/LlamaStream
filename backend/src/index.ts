@@ -29,7 +29,7 @@ import homeRoutes from './routes/home';
 import discoverRoutes from './routes/discover';
 import mediaRoutes from './routes/media';
 import settingsRoutes from './routes/settings';
-import { resumePendingImports } from './services/playlistImport';
+import { resumePendingImports, startImportResumeScheduler } from './services/playlistImport';
 import { evictStaleCache, startCacheEvictionScheduler } from './services/trackStorage';
 import { reconcileAllStaleTracks } from './services/trackIntegrity';
 
@@ -263,6 +263,7 @@ async function seedAdmin() {
 async function start() {
   await seedAdmin();
   await resumePendingImports();
+  startImportResumeScheduler();
   const evicted = await evictStaleCache().catch(() => 0);
   if (evicted > 0) console.log(`[Storage] Evicted ${evicted} stale cache tracks`);
   startCacheEvictionScheduler();

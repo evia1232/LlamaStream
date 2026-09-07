@@ -8,7 +8,7 @@ import { body, validationResult } from 'express-validator';
 import { authenticate, AuthRequest, optionalAuth } from '../middleware/auth';
 import prisma from '../lib/prisma';
 import { exportPlaylist, listUserSpotifyPlaylists } from '../services/spotify';
-import { startPlaylistImport, startSpotifyPlaylistsImport, getImportJobStatus, importSpotifyPlaylist, listActiveImportJobs, retryFailedImportTrack, startRestoreFailedImports, buildFailedImportItems, FailedImportItem, ImportTrackItem } from '../services/playlistImport';
+import { startPlaylistImport, startSpotifyPlaylistsImport, getImportJobStatus, importSpotifyPlaylist, listActiveImportJobs, retryFailedImportTrack, startRestoreFailedImports, resumePendingImports, buildFailedImportItems, FailedImportItem, ImportTrackItem } from '../services/playlistImport';
 import { trackStreamUrl } from '../services/trackDownload';
 import { addTrackToPlaylist, nextPlaylistPosition } from '../lib/playlistTracks';
 import { prefetchLibraryTrack } from '../services/downloader';
@@ -176,6 +176,24 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
+  // Unstick jobs that finished all slots but stayed "pending" after a rate-limit pause
+  if (playlist.importJob) {
+    const total = playlist.importJob.totalTracks || 0;
+    const done = playlist.importJob.completedTracks + playlist.importJob.failedTracks;
+    if (
+      total > 0
+      && done >= total
+      && (playlist.importJob.status === 'pending' || playlist.importJob.status === 'running')
+    ) {
+      const nextStatus = playlist.importJob.failedTracks === total ? 'failed' : 'completed';
+      await prisma.playlistImportJob.update({
+        where: { id: playlist.importJob.id },
+        data: { status: nextStatus },
+      });
+      playlist.importJob.status = nextStatus;
+    }
+  }
+
   const occupied = new Set(playlist.tracks.map((pt) => pt.position));
   const trackData = (playlist.importJob?.trackData as unknown as ImportTrackItem[]) || [];
   const failedItems: FailedImportItem[] = playlist.importJob
@@ -319,6 +337,27 @@ router.post('/:id/restore-failed', authenticate, async (req: AuthRequest, res) =
     res.json(result);
   } catch (err) {
     console.error('Restore failed imports:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/:id/resume-import', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const playlist = await prisma.playlist.findUnique({
+      where: { id: req.params.id },
+      include: { importJob: true },
+    });
+    if (!playlist || playlist.userId !== req.user!.userId) {
+      return res.status(404).json({ error: 'Playlist not found' });
+    }
+    if (!playlist.importJob) {
+      return res.status(400).json({ error: 'No import job for this playlist' });
+    }
+    await resumePendingImports();
+    const status = await getImportJobStatus(playlist.importJob.id, req.user!.userId);
+    res.json({ ok: true, job: status });
+  } catch (err) {
+    console.error('Resume import:', err);
     res.status(500).json({ error: (err as Error).message });
   }
 });

@@ -255,10 +255,38 @@ async function runPlaylistImport(jobId: string, url: string, userId?: string) {
 }
 
 export async function resumePendingImports() {
+  const { isYouTubeRateLimited, youtubeRateLimitRemainingMs } = await import('./ytdlp');
+
+  // First: finalize any jobs that already finished all slots but were left pending
+  const stuckDone = await prisma.playlistImportJob.findMany({
+    where: { status: { in: ['pending', 'running', 'parsing'] } },
+  });
+  for (const job of stuckDone) {
+    const total = job.totalTracks || 0;
+    const done = job.completedTracks + job.failedTracks;
+    if (total > 0 && done >= total && job.status !== 'parsing') {
+      await prisma.playlistImportJob.update({
+        where: { id: job.id },
+        data: { status: job.failedTracks === total ? 'failed' : 'completed' },
+      });
+      console.log(`[Import] Finalized stuck job ${job.id}: ${done}/${total} (was ${job.status})`);
+    }
+  }
+
+  if (isYouTubeRateLimited()) {
+    const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
+    console.log(`[Import] Skip resume — YouTube gated (~${mins}m left)`);
+    return;
+  }
+
   const jobs = await prisma.playlistImportJob.findMany({
     where: { status: { in: ['parsing', 'pending', 'running'] } },
   });
   for (const job of jobs) {
+    const total = job.totalTracks || 0;
+    const done = job.completedTracks + job.failedTracks;
+    if (total > 0 && done >= total) continue; // just finalized above
+
     if (job.status === 'parsing') {
       setImmediate(() => {
         runPlaylistImport(job.id, job.sourceUrl, job.userId).catch(console.error);
@@ -274,12 +302,47 @@ export async function resumePendingImports() {
   }
 }
 
+/** Periodic wake-up so rate-limit pauses don't leave jobs stuck forever. */
+let importResumeTimer: ReturnType<typeof setInterval> | null = null;
+export function startImportResumeScheduler() {
+  if (importResumeTimer) return;
+  importResumeTimer = setInterval(() => {
+    void resumePendingImports().catch((err) => {
+      console.error('[Import] Resume scheduler error:', err);
+    });
+  }, 60_000);
+}
+
 export async function processPlaylistImport(jobId: string) {
   const job = await prisma.playlistImportJob.findUnique({ where: { id: jobId } });
   if (!job || job.status === 'completed' || job.status === 'failed') return;
 
   const tracks = job.trackData as unknown as ImportTrackItem[];
-  if (tracks.length === 0) return;
+  if (!tracks || tracks.length === 0) {
+    await prisma.playlistImportJob.update({
+      where: { id: jobId },
+      data: { status: 'failed', errors: ['No tracks to import'] },
+    });
+    return;
+  }
+
+  let completed = job.completedTracks;
+  let failed = job.failedTracks;
+  let startIndex = completed + failed;
+
+  // Already finished every slot — don't leave UI spinning on "pending"
+  if (startIndex >= tracks.length) {
+    await prisma.playlistImportJob.update({
+      where: { id: jobId },
+      data: {
+        status: failed === tracks.length ? 'failed' : 'completed',
+        completedTracks: completed,
+        failedTracks: failed,
+      },
+    });
+    console.log(`[Import] Job ${jobId} already done: ${completed}/${tracks.length} — marked completed`);
+    return;
+  }
 
   await prisma.playlistImportJob.update({
     where: { id: jobId },
@@ -288,10 +351,6 @@ export async function processPlaylistImport(jobId: string) {
 
   const rawErrors = Array.isArray(job.errors) ? [...(job.errors as unknown[])] : [];
   const errors: FailedImportItem[] = rawErrors.filter(isFailedImportItem);
-  // Drop legacy string-only bag when we start writing structured failures
-  let completed = job.completedTracks;
-  let failed = job.failedTracks;
-  let startIndex = completed + failed;
 
   for (let i = startIndex; i < tracks.length; i++) {
     // Respect YouTube hourly ban — pause import instead of burning the rest
@@ -299,6 +358,19 @@ export async function processPlaylistImport(jobId: string) {
       const { isYouTubeRateLimited, youtubeRateLimitRemainingMs } = await import('./ytdlp');
       if (isYouTubeRateLimited()) {
         const mins = Math.ceil(youtubeRateLimitRemainingMs() / 60000);
+        // If somehow we're past the end, finalize instead of pending
+        if (completed + failed >= tracks.length) {
+          await prisma.playlistImportJob.update({
+            where: { id: jobId },
+            data: {
+              status: failed === tracks.length ? 'failed' : 'completed',
+              completedTracks: completed,
+              failedTracks: failed,
+              errors: errors as unknown as object[],
+            },
+          });
+          return;
+        }
         await prisma.playlistImportJob.update({
           where: { id: jobId },
           data: {
@@ -308,7 +380,7 @@ export async function processPlaylistImport(jobId: string) {
             errors: errors as unknown as object[],
           },
         });
-        console.warn(`[Import] Job ${jobId} paused — YouTube rate-limited (~${mins}m). Will resume on restart.`);
+        console.warn(`[Import] Job ${jobId} paused — YouTube rate-limited (~${mins}m). Auto-resume when clear.`);
         return;
       }
     } catch { /* ignore */ }
@@ -595,7 +667,22 @@ export async function listActiveImportJobs(userId: string) {
     orderBy: { createdAt: 'desc' },
   });
 
-  return jobs.map((job) => ({
+  // Drop jobs that are only "pending" because they finished and never got finalized
+  const visible = [];
+  for (const job of jobs) {
+    const total = job.totalTracks || 0;
+    const done = job.completedTracks + job.failedTracks;
+    if (total > 0 && done >= total) {
+      await prisma.playlistImportJob.update({
+        where: { id: job.id },
+        data: { status: job.failedTracks === total ? 'failed' : 'completed' },
+      });
+      continue;
+    }
+    visible.push(job);
+  }
+
+  return visible.map((job) => ({
     id: job.id,
     status: job.status,
     totalTracks: job.totalTracks,

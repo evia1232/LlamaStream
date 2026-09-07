@@ -89,7 +89,11 @@ function ImportFailedList({
     }
   };
 
-  const busy = restoring || retryingPos !== null || ['parsing', 'pending', 'running'].includes(job.status);
+  const busy = restoring || retryingPos !== null
+    || ['parsing', 'running'].includes(job.status)
+    || (job.status === 'pending'
+      && job.totalTracks > 0
+      && (job.completedTracks + job.failedTracks) < job.totalTracks);
 
   return (
     <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 overflow-hidden">
@@ -144,10 +148,24 @@ function ImportFailedList({
 
 export default function ImportStatusList({ jobs, className, onRetrySuccess, onRefresh }: ImportStatusListProps) {
   const { t } = useTranslation();
+  const [resumingId, setResumingId] = useState<string | null>(null);
   if (jobs.length === 0) return null;
   const afterRetry = () => {
     onRetrySuccess?.();
     onRefresh?.();
+  };
+
+  const handleResume = async (playlistId: string, jobId: string) => {
+    if (resumingId) return;
+    setResumingId(jobId);
+    try {
+      await api.post(`/playlists/${playlistId}/resume-import`);
+      afterRetry();
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('error'));
+    } finally {
+      setResumingId(null);
+    }
   };
 
   return (
@@ -156,21 +174,30 @@ export default function ImportStatusList({ jobs, className, onRetrySuccess, onRe
         const done = job.completedTracks + job.failedTracks;
         const total = job.totalTracks || done || 1;
         const pct = Math.min(100, Math.round((done / total) * 100));
-        const active = ['parsing', 'pending', 'running'].includes(job.status);
-        const finished = ['completed', 'failed'].includes(job.status);
+        const fullyDone = job.totalTracks > 0 && done >= job.totalTracks;
+        const active = ['parsing', 'pending', 'running'].includes(job.status) && !fullyDone;
+        const finished = ['completed', 'failed'].includes(job.status) || fullyDone;
         const failedCount = Math.max(job.failedTracks, toFailedItems(job).length);
+        const paused = job.status === 'pending' && !fullyDone;
 
         return (
           <div key={job.id} className="surface-elevated p-4 rounded-spotify">
             <div className="flex items-start justify-between gap-3 mb-2">
               <div className="min-w-0">
                 <p className="text-sm font-bold truncate">
-                  {active ? t('importInProgress') : t('importFinished')}:{' '}
+                  {active || paused ? t('importInProgress') : t('importFinished')}:{' '}
                   <Link to={`/playlist/${job.playlist.id}`} className="hover:underline text-spotify-green">
                     {job.playlist.name}
                   </Link>
                 </p>
-                <p className="text-caption mt-0.5">{statusLabel(job.status, t)}</p>
+                <p className="text-caption mt-0.5">
+                  {fullyDone && job.status === 'pending'
+                    ? t('importStatusCompleted')
+                    : statusLabel(job.status, t)}
+                </p>
+                {paused && (
+                  <p className="text-xs text-amber-300/90 mt-1">{t('importPausedHint')}</p>
+                )}
               </div>
               <span className="text-caption shrink-0 tabular-nums">
                 {job.totalTracks > 0
@@ -188,6 +215,18 @@ export default function ImportStatusList({ jobs, className, onRetrySuccess, onRe
                 style={{ width: `${active && job.totalTracks === 0 ? 8 : pct}%` }}
               />
             </div>
+
+            {paused && (
+              <button
+                type="button"
+                onClick={() => void handleResume(job.playlist.id, job.id)}
+                disabled={resumingId !== null}
+                className="mt-3 green-btn !py-2 !px-3 !text-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <RefreshCw className={clsx('w-3.5 h-3.5', resumingId === job.id && 'animate-spin')} />
+                {t('resumeImport')}
+              </button>
+            )}
 
             {(finished || failedCount > 0) && job.totalTracks > 0 && (
               <div className="mt-3 flex flex-wrap gap-2 text-xs">

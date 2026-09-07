@@ -49,8 +49,15 @@ export default function PlaylistPage() {
     return () => window.clearInterval(timer);
   }, [importJob?.status, loadPlaylist]);
 
-  const importActive = importJob && ['parsing', 'pending', 'running'].includes(importJob.status);
-  const importFinished = importJob && ['completed', 'failed'].includes(importJob.status);
+  const importActive = importJob
+    && ['parsing', 'pending', 'running'].includes(importJob.status)
+    && !(importJob.totalTracks > 0
+      && (importJob.completedTracks + importJob.failedTracks) >= importJob.totalTracks);
+  const importFinished = importJob && (
+    ['completed', 'failed'].includes(importJob.status)
+    || (importJob.totalTracks > 0
+      && (importJob.completedTracks + importJob.failedTracks) >= importJob.totalTracks)
+  );
 
   const normalizedTracks = (playlist?.tracks ?? []).map((t) => normalizeTrack(t as Track));
 
