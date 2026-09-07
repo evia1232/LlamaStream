@@ -105,7 +105,7 @@ export async function prepareTrackForPlayback(track: Track): Promise<Track> {
         album: track.album?.title,
       };
 
-  const { data } = await api.post('/tracks/prepare-playback', payload);
+  const { data } = await api.post('/tracks/prepare-playback', payload, { timeout: 60000 });
   return normalizeTrack(data.track);
 }
 
