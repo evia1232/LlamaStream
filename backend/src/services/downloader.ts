@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config';
 import prisma from '../lib/prisma';
 import { runYtDlp, findFileByPrefix, lastLines, ytDlpAudioExtractAttempts, isFormatUnavailableError, ytDlpAuthArgsAsync, ytDlpCommand, noteSuccessfulSongFetch, waitForYtDlpSlot, isYouTubeRateLimitError, noteYouTubeRateLimit, isYouTubeRateLimited, clearYouTubeRateLimit, youtubeRateLimitRemainingMs } from './ytdlp';
-import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, cleanSearchTitle, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults, artistMatchStrength } from '../lib/trackMatch';
+import { buildSearchQueries, rankYouTubeResults, shouldFilterVariants, pickBestAvailableResult, sanitizeSearchText, cleanSearchTitle, isYouTubeShortOrReel, isDurationCompatible, isRejectedYouTubeResult, filterYouTubeResults, artistMatchStrength, isWrongArtistMatch, shouldEnforceArtistMatch } from '../lib/trackMatch';
 import { rotateProfileNow } from './ytdlpProfiles';
 import { lookupSpotifyTrack, isSpotifyConfigured, fetchSpotifyTrackByUrl } from './spotifyApi';
 import { fetchLyricsForTrack } from './lyrics';
@@ -147,15 +147,30 @@ async function pickVerifiedCandidate(
   relaxed: boolean,
   excludeIds: Set<string> = new Set()
 ): Promise<SearchResult | null> {
-  for (const candidate of candidates.slice(0, 6)) {
+  const matchTarget = { title: target.title, artist: target.artist, duration: target.duration };
+  const enforceArtist = shouldEnforceArtistMatch(matchTarget, relaxed);
+
+  for (const candidate of candidates.slice(0, 8)) {
     if (isYouTubeShortOrReel(candidate) || excludeIds.has(candidate.id)) continue;
+    if (/\bcover\b/i.test(candidate.title) && enforceArtist) {
+      console.log(`[Match] Skipped cover: "${candidate.title}"`);
+      continue;
+    }
+    if (enforceArtist && isWrongArtistMatch(candidate, matchTarget)) {
+      console.log(`[Match] Skipped wrong artist: "${candidate.title}" / ${candidate.artist}`);
+      continue;
+    }
+    if (enforceArtist && artistMatchStrength(candidate, target.artist) < 0.35) {
+      console.log(`[Match] Skipped weak artist match: "${candidate.title}" / ${candidate.artist}`);
+      continue;
+    }
 
     let duration = candidate.duration;
     if (target.duration && target.duration > 0) {
       if (duration <= 0) {
         duration = await fetchYouTubeDuration(candidate.url);
       }
-      if (duration > 0 && !isDurationCompatible(target.duration, duration, relaxed)) {
+      if (duration > 0 && !isDurationCompatible(target.duration, duration, relaxed && !enforceArtist)) {
         console.log(`[Match] Skipped duration mismatch: "${candidate.title}" (${duration}s vs ${target.duration}s)`);
         continue;
       }
@@ -697,8 +712,9 @@ export async function resolveYouTubeSource(
     if (isYouTubeRateLimited()) {
       throw new Error(`YouTube rate-limited (~${Math.ceil(youtubeRateLimitRemainingMs() / 60000)} min left)`);
     }
-    // Cap query fan-out — empty proxy responses used to fire 5+ searches per track
-    const queries = buildSearchQueries(searchArtist || artist, title, album).slice(0, 2);
+    // Prefer official audio first for Latin; keep fan-out small to save proxy
+    const queryCap = opts?.relaxed ? 2 : 3;
+    const queries = buildSearchQueries(searchArtist || artist, title, album).slice(0, queryCap);
     let sawAnyYtHit = false;
     for (const q of queries) {
       try {
@@ -875,7 +891,7 @@ export function resolveAndAttachSourceInBackground(
   trackId: string,
   input: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH',
-  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string; thumbnailUrl?: string },
+  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string; thumbnailUrl?: string; relaxed?: boolean },
 ) {
   if (resolveInFlight.has(trackId)) return;
   if (isResolveCoolingDown(trackId)) return;
@@ -885,7 +901,7 @@ export function resolveAndAttachSourceInBackground(
   resolveInFlight.add(trackId);
   void (async () => {
     try {
-      const source = await resolveYouTubeSource(input, { ...opts, relaxed: true });
+      const source = await resolveYouTubeSource(input, { ...opts, relaxed: !!opts?.relaxed });
       const track = await prisma.track.findUnique({ where: { id: trackId }, include: { artist: true } });
       if (!track) return;
 
@@ -928,11 +944,47 @@ export function resolveAndAttachSourceInBackground(
   })();
 }
 
+async function attachResolvedSourceToTrack(
+  trackId: string,
+  source: ResolvedSource,
+  quality: 'LOW' | 'NORMAL' | 'HIGH',
+  opts?: { title?: string; artist?: string; album?: string; thumbnailUrl?: string; spotifyUrl?: string },
+) {
+  const track = await prisma.track.findUnique({ where: { id: trackId }, include: { artist: true, album: true } });
+  if (!track) return null;
+
+  await prisma.track.update({
+    where: { id: trackId },
+    data: {
+      sourceUrl: source.url,
+      sourceId: source.sourceId,
+      ...(needsBetterAlbumArt(track.thumbnailUrl)
+        ? { thumbnailUrl: source.thumbnailUrl || track.thumbnailUrl }
+        : {}),
+      duration: source.duration || track.duration,
+    },
+  });
+
+  clearResolveCooldown(trackId);
+  consecutiveEmptySearches = 0;
+
+  ensureBackgroundDownload(trackId, source.url, quality, {
+    title: opts?.title || track.title,
+    artist: opts?.artist || track.artist.name,
+    album: opts?.album,
+  });
+
+  return prisma.track.findUniqueOrThrow({
+    where: { id: trackId },
+    include: { artist: true, album: true, lyrics: true },
+  });
+}
+
 /** Resolve source, create pending track, start background download — returns quickly for streaming. */
 export async function prepareTrackForPlayback(
   input: string,
   quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
-  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string; thumbnailUrl?: string; relaxed?: boolean }
+  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string; duration?: number; album?: string; thumbnailUrl?: string; relaxed?: boolean; deferResolve?: boolean }
 ) {
   const trimmed = input.trim();
   const searchQuery = opts?.artist && opts?.title ? `${opts.artist} - ${opts.title}` : trimmed;
@@ -950,7 +1002,53 @@ export async function prepareTrackForPlayback(
       });
     } else if (!existing.sourceUrl && existing.title && existing.artist.name) {
       if (!isResolveCoolingDown(existing.id) && !isYouTubeRateLimited()) {
-        resolveAndAttachSourceInBackground(existing.id, searchQuery, quality, opts);
+        if (opts?.deferResolve) {
+          resolveAndAttachSourceInBackground(existing.id, searchQuery, quality, {
+            ...opts,
+            title: existing.title,
+            artist: existing.artist.name,
+            duration: existing.duration > 0 ? existing.duration : opts?.duration,
+            album: existing.album?.title || opts?.album,
+          });
+        } else {
+          resolveInFlight.add(existing.id);
+          try {
+            const source = await Promise.race([
+              resolveYouTubeSource(searchQuery, {
+                title: existing.title,
+                artist: existing.artist.name,
+                duration: existing.duration > 0 ? existing.duration : opts?.duration,
+                album: existing.album?.title || opts?.album,
+                spotifyUrl: opts?.spotifyUrl,
+                relaxed: !!opts?.relaxed,
+              }),
+              new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error('YouTube resolve timed out')), 45000);
+              }),
+            ]);
+            const ready = await attachResolvedSourceToTrack(existing.id, source, quality, {
+              title: existing.title,
+              artist: existing.artist.name,
+              album: existing.album?.title || opts?.album,
+              spotifyUrl: opts?.spotifyUrl,
+            });
+            if (ready) return ready;
+          } catch (err) {
+            markResolveFailed(existing.id, err);
+            console.error(`[Prepare] Sync resolve failed for existing ${existing.id}:`, (err as Error).message);
+            if (!isResolveCoolingDown(existing.id)) {
+              resolveAndAttachSourceInBackground(existing.id, searchQuery, quality, {
+                ...opts,
+                title: existing.title,
+                artist: existing.artist.name,
+                duration: existing.duration > 0 ? existing.duration : opts?.duration,
+                album: existing.album?.title || opts?.album,
+              });
+            }
+          } finally {
+            resolveInFlight.delete(existing.id);
+          }
+        }
       }
     }
     return existing;
@@ -989,8 +1087,35 @@ export async function prepareTrackForPlayback(
       preferredThumbnail: opts.thumbnailUrl,
       spotifyUrl: opts.spotifyUrl,
     });
+
+    // Interactive play: resolve the RIGHT source now (not a random cover in the background)
     if (!isResolveCoolingDown(track.id) && !isYouTubeRateLimited()) {
-      resolveAndAttachSourceInBackground(track.id, searchQuery, quality, opts);
+      if (opts?.deferResolve) {
+        resolveAndAttachSourceInBackground(track.id, searchQuery, quality, opts);
+        return track;
+      }
+      if (resolveInFlight.has(track.id)) {
+        return track;
+      }
+      resolveInFlight.add(track.id);
+      try {
+        const source = await Promise.race([
+          resolveYouTubeSource(searchQuery, { ...opts, relaxed: !!opts?.relaxed }),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('YouTube resolve timed out')), 45000);
+          }),
+        ]);
+        const ready = await attachResolvedSourceToTrack(track.id, source, quality, opts);
+        if (ready) return ready;
+      } catch (err) {
+        markResolveFailed(track.id, err);
+        console.error(`[Prepare] Sync resolve failed for ${track.id}:`, (err as Error).message);
+        if (!isResolveCoolingDown(track.id)) {
+          resolveAndAttachSourceInBackground(track.id, searchQuery, quality, opts);
+        }
+      } finally {
+        resolveInFlight.delete(track.id);
+      }
     }
     return track;
   }

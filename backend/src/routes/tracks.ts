@@ -375,7 +375,7 @@ router.post('/prepare-playback', authenticate, async (req: AuthRequest, res) => 
         artist,
         duration,
         album,
-        relaxed: true,
+        relaxed: false,
       },
     );
 
@@ -653,7 +653,8 @@ router.post('/prefetch', authenticate, async (req: AuthRequest, res) => {
       duration,
       album,
       thumbnailUrl,
-      relaxed: true,
+      relaxed: false,
+      deferResolve: true,
     });
     res.json({ trackId: track.id, status: 'prefetching', track: formatTrack(track) });
   } catch (err) {

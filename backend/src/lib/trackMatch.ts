@@ -20,7 +20,8 @@ export interface RankOptions {
 const BAD_KEYWORDS = [
   'karaoke', 'karaoke version', 'sing along', 'sing-along', 'singalong',
   'with lyrics', 'lyrics on screen', 'scrolling lyrics', 'lyric video', 'lyrics video',
-  'cover version', 'cover by', 'tribute band', 'tribute to', 'in the style of',
+  'cover version', 'cover by', 'cover dance', 'dance cover', 'girl group cover',
+  'tribute band', 'tribute to', 'in the style of',
   'backing track', 'backtrack', 'playback track', 'minus one', 'minusone', 'no vocals',
   'instrumental karaoke', 'pro backing', 'originally performed by',
   'reaction', 'reacts to', 'tutorial', 'lesson', 'how to play', 'guitar tutorial',
@@ -61,6 +62,9 @@ const VARIANT_PATTERNS: RegExp[] = [
   /\bcover by\b/i,
   /\bcover version\b/i,
   /\bcovered by\b/i,
+  /\bcover dance\b/i,
+  /\bdance cover\b/i,
+  /\bcover\b/i,
   /\bslowed\b/i,
   /\bslowed\s*\+\s*reverb\b/i,
   /\breverb\b/i,
@@ -298,7 +302,9 @@ export function isRejectedYouTubeResult(
   relaxed = false
 ): boolean {
   if (isYouTubeShortOrReel(result)) return true;
-  if (isLikelyBadMatch(result.title, relaxed)) return true;
+  if (isLikelyBadMatch(result.title, relaxed && !shouldEnforceArtistMatch(target, relaxed))) return true;
+  // Always reject English "cover" uploads when we know the artist (Believer cover groups, etc.)
+  if (/\bcover\b/i.test(result.title) && shouldEnforceArtistMatch(target, relaxed)) return true;
 
   if (target.duration && target.duration > 0 && result.duration > 0) {
     if (!isDurationCompatible(target.duration, result.duration, relaxed)) return true;
@@ -306,8 +312,7 @@ export function isRejectedYouTubeResult(
     return true;
   }
 
-  // Never accept a clear wrong-artist hit when we know who we want
-  if (!relaxed && isWrongArtistMatch(result, target)) return true;
+  if (shouldEnforceArtistMatch(target, relaxed) && isWrongArtistMatch(result, target)) return true;
 
   return false;
 }
@@ -329,11 +334,20 @@ export function isLikelyBadMatch(title: string, relaxed = false): boolean {
     if (relaxed && softLyric && /lyric|visualizer|with lyrics/i.test(kw)) continue;
     return true;
   }
+  // Bare "cover" — reject unless relaxed Hebrew import (קאבר already covered)
+  if (/\bcover\b/i.test(lower) && !relaxed) return true;
   if (/\bkaraoke\b/i.test(lower)) return true;
   if (/\bsing\s*along\b/i.test(lower)) return true;
   if (/\bקאבר\b/.test(title)) return true;
   if (/\bכיסוי\b/.test(title)) return true;
   return false;
+}
+
+/** Strict artist enforcement for Latin Spotify metadata; Hebrew imports stay softer. */
+export function shouldEnforceArtistMatch(target: MatchTarget, relaxed: boolean): boolean {
+  if (!relaxed) return true;
+  const blob = `${target.title || ''} ${target.artist || ''}`;
+  return !containsHebrew(blob);
 }
 
 export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, options?: RankOptions): number {
@@ -374,6 +388,13 @@ export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, opt
     }
   }
 
+  // Prefer official / auto-generated Topic channels over random covers
+  const channel = (result.artist || '').toLowerCase();
+  if (/\btopic\b/.test(channel) || channel.endsWith(' - topic')) score += 30;
+  if (/vevo/.test(channel)) score += 28;
+  if (/official/.test(channel)) score += 12;
+  if (/\bcover\b/i.test(ytTitle)) score -= 100;
+
   // Duration match (Spotify gives seconds) — heavily weighted
   if (target.duration && target.duration > 0 && result.duration > 0) {
     const diff = Math.abs(result.duration - target.duration);
@@ -413,7 +434,8 @@ export function rankYouTubeResults(
   options?: RankOptions
 ): SearchResult[] {
   const relaxed = !!options?.relaxed;
-  const minScore = options?.minScore ?? (options?.filterVariants ? (relaxed ? 18 : 35) : (relaxed ? 10 : 15));
+  const enforceArtist = shouldEnforceArtistMatch(target, relaxed);
+  const minScore = options?.minScore ?? (options?.filterVariants ? (relaxed ? 18 : 35) : (relaxed ? 10 : 20));
   const filterVariants = options?.filterVariants ?? false;
   const hasArtist = normalizeForMatch(primaryArtist(target.artist || '')).length >= 2;
 
@@ -422,20 +444,20 @@ export function rankYouTubeResults(
     .map((r) => ({ result: r, score: scoreYouTubeMatch(r, target, options) }))
     .filter(({ result, score }) => {
       if (score < minScore) return false;
-      if (isLikelyBadMatch(result.title, relaxed)) return false;
+      if (isLikelyBadMatch(result.title, relaxed && !enforceArtist)) return false;
       if (isYouTubeShortOrReel(result)) return false;
-      // Soften artist gates for import retries — Latin Spotify names often missing from Hebrew YT titles
-      if (!relaxed && hasArtist && isWrongArtistMatch(result, target)) return false;
-      if (hasArtist && artistMatchStrength(result, target.artist) < (relaxed ? 0.05 : 0.15) && score < (relaxed ? 40 : 70)) {
+      if (/\bcover\b/i.test(result.title) && enforceArtist) return false;
+      if (hasArtist && enforceArtist && isWrongArtistMatch(result, target)) return false;
+      const minArtist = enforceArtist ? 0.35 : (relaxed ? 0.05 : 0.15);
+      if (hasArtist && artistMatchStrength(result, target.artist) < minArtist && score < (enforceArtist ? 85 : 70)) {
         return false;
       }
       if (target.duration && target.duration > 0 && result.duration > 0
-        && !isDurationCompatible(target.duration, result.duration, relaxed)) {
+        && !isDurationCompatible(target.duration, result.duration, relaxed && !enforceArtist)) {
         return false;
       }
       if (filterVariants && hasUnwantedVariant(result.title, target.title, options?.rawQuery)) {
-        // Keep lyric/visualizer in relaxed mode
-        if (!(relaxed && /\b(lyric|lyrics|visualizer|מילים)\b/i.test(result.title))) {
+        if (!(relaxed && !enforceArtist && /\b(lyric|lyrics|visualizer|מילים)\b/i.test(result.title))) {
           return false;
         }
       }
@@ -473,8 +495,8 @@ export function pickBestAvailableResult(
     }
   }
 
-  // Last resort for import: closest duration among non-short/non-karaoke hits
-  if (relaxed && safe.length > 0 && target.duration && target.duration > 0) {
+  // Last resort for Hebrew import only: closest duration among non-short/non-karaoke hits
+  if (relaxed && !shouldEnforceArtistMatch(target, relaxed) && safe.length > 0 && target.duration && target.duration > 0) {
     const byDuration = [...safe]
       .filter((r) => r.duration > 0)
       .sort((a, b) => Math.abs(a.duration - target.duration!) - Math.abs(b.duration - target.duration!));
@@ -497,22 +519,28 @@ export function buildSearchQueries(artist: string, title: string, album?: string
   const t = cleanSearchTitle(title);
   const rawTitle = sanitizeSearchText(title);
   const queries: string[] = [];
+  const hebrew = containsHebrew(a) || containsHebrew(t) || containsHebrew(rawTitle);
 
-  // Always prefer artist+title first — bare title finds the wrong popular song
-  // (e.g. מחילה → אבישי אשל instead of JASMIN MOALLEM)
+  // Official / Topic first for Latin artists — stops covers winning the first page
+  if (a && t && !hebrew) {
+    queries.push(`${a} - ${t} official audio`);
+    queries.push(`${a} ${t} official audio`);
+    queries.push(`"${a}" "${t}"`);
+  }
+
+  // Prefer artist+title — bare title finds the wrong popular song
   if (a && t) {
     queries.push(`${a} ${t}`);
     queries.push(`${a} - ${t}`);
     queries.push(`${t} ${a}`);
-    queries.push(`"${a}" "${t}"`);
+    if (hebrew) queries.push(`"${a}" "${t}"`);
     queries.push(`${a} ${t} official audio`);
     queries.push(`${a} - ${t} official audio`);
   }
 
-  if (containsHebrew(t) || containsHebrew(a) || containsHebrew(rawTitle)) {
+  if (hebrew) {
     if (rawTitle !== t && a) queries.push(`${a} ${rawTitle}`);
     if (album && t) queries.push(`${a} ${t} ${sanitizeSearchText(album)}`.trim());
-    // Title-only only as late fallback when artist searches fail
     if (t) queries.push(`${t} audio`);
   }
 
