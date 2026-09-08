@@ -9,6 +9,8 @@ export interface User {
   language: string;
   searchSpotifyEnabled?: boolean;
   searchYoutubeEnabled?: boolean;
+  /** When false, play via YouTube/local only (ignore Spotify Premium streaming) */
+  spotifyPlaybackEnabled?: boolean;
   /** Cumulative bytes of tracks this user liked or put in playlists */
   storageBytes?: number;
   spotify?: {

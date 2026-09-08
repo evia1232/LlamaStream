@@ -5,6 +5,7 @@ import clsx from 'clsx';
 import i18n from '../i18n';
 import { applyDocumentDirection } from '../lib/direction';
 import { useAuthStore, usePlayerStore } from '../store';
+import { useSpotifyPlayerStore } from '../store/spotifyPlayerStore';
 import api from '../api/client';
 import { User } from '../types';
 import { Trash2, UserPlus, HardDrive, Infinity, Music2, Palette, LogOut, Wifi } from 'lucide-react';
@@ -66,6 +67,7 @@ export default function SettingsPage() {
   const [audioQuality, setAudioQuality] = useState(user?.audioQuality || 'HIGH');
   const [searchSpotifyEnabled, setSearchSpotifyEnabled] = useState(user?.searchSpotifyEnabled ?? true);
   const [searchYoutubeEnabled, setSearchYoutubeEnabled] = useState(user?.searchYoutubeEnabled ?? true);
+  const [spotifyPlaybackEnabled, setSpotifyPlaybackEnabled] = useState(user?.spotifyPlaybackEnabled ?? true);
   const [saved, setSaved] = useState(false);
 
   const [users, setUsers] = useState<User[]>([]);
@@ -261,7 +263,8 @@ export default function SettingsPage() {
     if (!user) return;
     setSearchSpotifyEnabled(user.searchSpotifyEnabled ?? true);
     setSearchYoutubeEnabled(user.searchYoutubeEnabled ?? true);
-  }, [user?.searchSpotifyEnabled, user?.searchYoutubeEnabled, user]);
+    setSpotifyPlaybackEnabled(user.spotifyPlaybackEnabled ?? true);
+  }, [user?.searchSpotifyEnabled, user?.searchYoutubeEnabled, user?.spotifyPlaybackEnabled, user]);
 
   const handleSave = async () => {
     await updateProfile({
@@ -270,7 +273,15 @@ export default function SettingsPage() {
       audioQuality: audioQuality as 'LOW' | 'NORMAL' | 'HIGH',
       searchSpotifyEnabled,
       searchYoutubeEnabled,
+      spotifyPlaybackEnabled,
     });
+    if (!spotifyPlaybackEnabled) {
+      const { playbackEngine } = usePlayerStore.getState();
+      if (playbackEngine === 'spotify') {
+        void useSpotifyPlayerStore.getState().pause();
+        usePlayerStore.setState({ playbackEngine: 'local' });
+      }
+    }
     i18n.changeLanguage(language);
     localStorage.setItem('language', language);
     applyDocumentDirection(language);
@@ -547,6 +558,17 @@ export default function SettingsPage() {
               </button>
             )}
             {spotifyMsg && <p className="text-sm text-spotify-green">{spotifyMsg}</p>}
+          </div>
+
+          <div className="bg-spotify-lightgray rounded-xl p-4 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="font-medium">{t('spotifyPlaybackEnabled')}</p>
+              <p className="text-sm text-spotify-text mt-1">{t('spotifyPlaybackHint')}</p>
+            </div>
+            <ToggleSwitch
+              checked={spotifyPlaybackEnabled}
+              onToggle={() => setSpotifyPlaybackEnabled((v) => !v)}
+            />
           </div>
         </section>
       )}

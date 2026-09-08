@@ -21,8 +21,10 @@ export function getSpotifyTrackUri(track: Track): string | null {
 
 export function canStreamFromSpotify(
   track: Track,
-  spotify: { connected: boolean; premium: boolean }
+  spotify: { connected: boolean; premium: boolean },
+  opts?: { playbackEnabled?: boolean },
 ): boolean {
+  if (opts?.playbackEnabled === false) return false;
   if (!spotify.connected || !spotify.premium) return false;
   if (track.isDownloaded) return false;
   return !!(track.spotifyUrl || track.source === 'spotify' || getSpotifyTrackUri(track));

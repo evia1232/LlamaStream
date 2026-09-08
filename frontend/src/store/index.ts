@@ -285,7 +285,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const user = useAuthStore.getState().user;
     const spotifyStatus = user?.spotify ?? { connected: false, premium: false };
     const spotifyUri = getSpotifyTrackUri(track);
-    const useSpotify = !track.isDownloaded && canStreamFromSpotify(track, spotifyStatus) && !!spotifyUri;
+    const useSpotify = !track.isDownloaded
+      && canStreamFromSpotify(track, spotifyStatus, {
+        playbackEnabled: user?.spotifyPlaybackEnabled ?? true,
+      })
+      && !!spotifyUri;
     const canPlayLocal = canStreamTrackLocally(track);
     const stale = () => generation !== get()._playGeneration;
 
