@@ -4,6 +4,7 @@ import { trackStreamUrl, isDownloadInProgress } from './trackDownload';
 import { effectiveDownloadedFlag, isTrackPlayable } from './trackIntegrity';
 import {
   isSpotifyConfigured,
+  isSpotifyRateLimited,
   searchSpotifyArtist,
   fetchSpotifyArtistById,
   resolveSpotifyArtistIdFromTrack,
@@ -14,6 +15,14 @@ import {
   SpotifyArtistResult,
   SpotifyAlbumResult,
 } from './spotifyApi';
+
+// Re-export rate-limit helper text from spotifyApi via local copy for artist errors
+function spotifyUnavailableMessage(): string {
+  if (isSpotifyRateLimited()) {
+    return 'Spotify temporarily unavailable (rate limit). Showing local catalog if available.';
+  }
+  return 'Spotify temporarily unavailable. Showing local catalog if available.';
+}
 
 const SPOTIFY_TIMEOUT_MS = 20000;
 const MAX_SPOTIFY_ALBUMS = 24;
@@ -184,16 +193,21 @@ async function findLocalTracks(artistName: string, artistId?: string | null) {
   );
 }
 
-async function findLocalAlbums(artistName: string, artistId?: string | null) {
+async function findLocalAlbums(
+  artistName: string,
+  artistId?: string | null,
+  spotifyArtistId?: string | null,
+) {
+  const or: object[] = [
+    { artist: { name: { contains: artistName, mode: 'insensitive' } } },
+  ];
+  if (artistId) or.push({ artistId });
+  if (spotifyArtistId) {
+    or.push({ artist: { spotifyArtistId } });
+  }
+
   const candidates = await prisma.album.findMany({
-    where: artistId
-      ? {
-          OR: [
-            { artistId },
-            { artist: { name: { contains: artistName, mode: 'insensitive' } } },
-          ],
-        }
-      : { artist: { name: { contains: artistName, mode: 'insensitive' } } },
+    where: { OR: or },
     include: {
       artist: true,
       _count: { select: { tracks: true } },
@@ -202,7 +216,11 @@ async function findLocalAlbums(artistName: string, artistId?: string | null) {
     take: 100,
   });
 
-  return candidates.filter((a) => artistNameMatches(a.artist.name, artistName));
+  return candidates.filter((a) => {
+    if (spotifyArtistId && a.artist.spotifyArtistId === spotifyArtistId) return true;
+    if (artistId && a.artistId === artistId) return true;
+    return artistNameMatches(a.artist.name, artistName);
+  });
 }
 
 async function findListenedTracks(userId: string, artistName: string, artistId?: string | null) {
@@ -312,12 +330,14 @@ export async function buildArtistPageLocal(
   userId: string,
   artistName: string,
   artistId?: string | null,
+  spotifyArtistIdHint?: string | null,
 ): Promise<ArtistPageLocal> {
   const { resolvedName, resolvedId, dbArtist } = await resolveArtist(artistName, artistId);
+  const spotifyArtistId = spotifyArtistIdHint || dbArtist?.spotifyArtistId || null;
 
   const [localTrackRows, localAlbumRows, listenedRows] = await Promise.all([
     findLocalTracks(resolvedName, resolvedId),
-    findLocalAlbums(resolvedName, resolvedId),
+    findLocalAlbums(resolvedName, resolvedId, spotifyArtistId),
     findListenedTracks(userId, resolvedName, resolvedId),
   ]);
 
@@ -336,6 +356,21 @@ export async function buildArtistPageLocal(
   };
 }
 
+function stubArtistFromLocal(
+  name: string,
+  spotifyArtistId: string,
+  imageUrl?: string | null,
+): SpotifyArtistResult {
+  return {
+    id: spotifyArtistId,
+    name,
+    imageUrl: imageUrl || '',
+    followers: 0,
+    genres: [],
+    spotifyUrl: `https://open.spotify.com/artist/${spotifyArtistId}`,
+  };
+}
+
 export async function fetchArtistSpotifyData(
   artistName: string,
   hints?: { spotifyArtistId?: string | null; spotifyTrackId?: string | null },
@@ -350,6 +385,17 @@ export async function fetchArtistSpotifyData(
 
   if (!isSpotifyConfigured()) {
     return { ...empty, error: 'Spotify API not configured' };
+  }
+
+  // Soft-fail while cooling down — caller will fill albums from local DB
+  if (isSpotifyRateLimited()) {
+    return {
+      ...empty,
+      artist: hints?.spotifyArtistId
+        ? stubArtistFromLocal(artistName, hints.spotifyArtistId)
+        : null,
+      error: spotifyUnavailableMessage(),
+    };
   }
 
   try {
@@ -383,12 +429,20 @@ export async function fetchArtistSpotifyData(
         SPOTIFY_TIMEOUT_MS,
         null,
       );
-      if (!spotifyArtist) {
-        resolveError = `Could not find artist "${artistName}" on Spotify`;
-      }
     }
 
     if (!spotifyArtist) {
+      // Rate-limit / timeout often looks like "not found" — don't lie to the UI
+      if (isSpotifyRateLimited() || hints?.spotifyArtistId) {
+        return {
+          ...empty,
+          artist: hints?.spotifyArtistId
+            ? stubArtistFromLocal(artistName, hints.spotifyArtistId)
+            : null,
+          error: spotifyUnavailableMessage(),
+        };
+      }
+      resolveError = `Could not find artist "${artistName}" on Spotify`;
       return { ...empty, configured: true, error: resolveError };
     }
 
@@ -398,7 +452,6 @@ export async function fetchArtistSpotifyData(
     ]);
 
     void persistArtistSpotifyMeta(artistName, spotifyArtist, persistForArtistId);
-    // Never block the artist-page response on stub persistence / image downloads
     void persistAlbumStubs(spotifyArtist, albums.slice(0, MAX_SPOTIFY_ALBUMS));
 
     return {
@@ -406,10 +459,19 @@ export async function fetchArtistSpotifyData(
       artist: spotifyArtist,
       topTracks,
       albums: albums.slice(0, MAX_SPOTIFY_ALBUMS),
+      ...(albums.length === 0 && isSpotifyRateLimited()
+        ? { error: spotifyUnavailableMessage() }
+        : {}),
     };
   } catch (err) {
     console.error('[Artist] Spotify fetch failed:', err);
-    return { ...empty, configured: true, error: (err as Error).message };
+    return {
+      ...empty,
+      artist: hints?.spotifyArtistId
+        ? stubArtistFromLocal(artistName, hints.spotifyArtistId)
+        : null,
+      error: spotifyUnavailableMessage(),
+    };
   }
 }
 
@@ -420,49 +482,73 @@ export async function buildArtistPage(
   artistId?: string | null,
   hints?: { spotifyArtistId?: string | null; spotifyTrackId?: string | null },
 ): Promise<ArtistPageFull> {
-  const local = await buildArtistPageLocal(userId, artistName, artistId);
+  const localFirst = await buildArtistPageLocal(
+    userId,
+    artistName,
+    artistId,
+    hints?.spotifyArtistId,
+  );
 
   const mergedHints = {
-    spotifyArtistId: hints?.spotifyArtistId || local.artist.spotifyArtistId,
+    spotifyArtistId: hints?.spotifyArtistId || localFirst.artist.spotifyArtistId,
     spotifyTrackId: hints?.spotifyTrackId,
   };
 
-  // Always hit Spotify for new albums/top tracks (independent of local cache)
   const spotify = await fetchArtistSpotifyData(
-    local.artist.name,
+    localFirst.artist.name,
     mergedHints,
-    local.artist.id,
+    localFirst.artist.id,
   );
 
-  // If Spotify returned no albums (timeout / rate-limit), surface local stubs so UI isn't empty
+  // Re-load local after possible stub writes / with spotify id for broader album match
+  const local = await buildArtistPageLocal(
+    userId,
+    artistName,
+    artistId || localFirst.artist.id,
+    mergedHints.spotifyArtistId || spotify.artist?.id,
+  );
+
   let albums = spotify.albums;
   if (albums.length === 0 && local.localAlbums.length > 0) {
-    albums = local.localAlbums
-      .filter((a) => a.spotifyAlbumId)
-      .map((a) => ({
-        id: a.spotifyAlbumId!,
-        name: a.title,
-        imageUrl: a.coverUrl || '',
-        releaseYear: a.releaseYear,
-        totalTracks: a.trackCount,
-        spotifyUrl: `https://open.spotify.com/album/${a.spotifyAlbumId}`,
-        albumType: 'album',
-      }));
+    albums = local.localAlbums.map((a) => ({
+      id: a.spotifyAlbumId || a.id,
+      name: a.title,
+      imageUrl: a.coverUrl || '',
+      releaseYear: a.releaseYear,
+      totalTracks: a.trackCount,
+      spotifyUrl: a.spotifyAlbumId
+        ? `https://open.spotify.com/album/${a.spotifyAlbumId}`
+        : '',
+      albumType: 'album',
+    }));
   }
 
-  const spotifyMerged: ArtistSpotifyData = { ...spotify, albums };
+  const spotifyMerged: ArtistSpotifyData = {
+    ...spotify,
+    albums,
+    artist: spotify.artist
+      || (mergedHints.spotifyArtistId
+        ? stubArtistFromLocal(
+            local.artist.name,
+            mergedHints.spotifyArtistId,
+            local.artist.imageUrl,
+          )
+        : null),
+  };
 
   const imageUrl = local.artist.imageUrl || spotifyMerged.artist?.imageUrl || null;
   const spotifyArtistId = spotifyMerged.artist?.id || local.artist.spotifyArtistId;
 
-  const recommendedTracks = spotifyMerged.topTracks.length > 0 || spotifyMerged.albums.length > 0
-    ? await buildArtistRecommendations(
-        spotifyMerged.topTracks,
-        spotifyMerged.albums,
-        local.listenedTracks,
-        local.localTracks,
-      )
-    : [];
+  const recommendedTracks =
+    !isSpotifyRateLimited()
+    && (spotifyMerged.topTracks.length > 0 || spotify.albums.length > 0)
+      ? await buildArtistRecommendations(
+          spotifyMerged.topTracks,
+          spotify.albums,
+          local.listenedTracks,
+          local.localTracks,
+        )
+      : [];
 
   return {
     ...local,

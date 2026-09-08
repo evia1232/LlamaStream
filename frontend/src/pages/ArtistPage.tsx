@@ -236,7 +236,14 @@ export default function ArtistPage() {
             <p className="text-caption text-spotify-text">{t('spotifyNotConfigured')}</p>
           )}
           {!loading && spotify?.configured && !spotify.artist && (
-            <p className="text-caption text-spotify-text">{t('artistSpotifyNotFound')}</p>
+            <p className="text-caption text-spotify-text">
+              {spotify.error?.includes('rate') || spotify.error?.includes('unavailable')
+                ? t('spotifyArtistUnavailable')
+                : t('artistSpotifyNotFound')}
+            </p>
+          )}
+          {!loading && spotify?.configured && spotify.artist && spotify.error && (
+            <p className="text-caption text-amber-400/90">{t('spotifyArtistUnavailable')}</p>
           )}
           {spotify?.artist && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption">
@@ -292,26 +299,31 @@ export default function ArtistPage() {
           <section className="px-4">
             <h2 className="text-heading-sm mb-4">{t('albums')}</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {spotifyAlbums.map((album) => (
-                <Link
-                  key={album.id}
-                  to={`/album/spotify/${encodeURIComponent(album.id)}`}
-                  className="surface-card group"
-                >
-                  <div className="aspect-square rounded-spotify overflow-hidden bg-spotify-gray mb-3 shadow-card">
-                    {album.imageUrl ? (
-                      <img src={album.imageUrl} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-3xl text-spotify-text">♪</div>
-                    )}
-                  </div>
-                  <p className="text-title truncate">{album.name}</p>
-                  <p className="text-caption capitalize">
-                    {album.albumType}
-                    {album.releaseYear ? ` · ${album.releaseYear}` : ''}
-                  </p>
-                </Link>
-              ))}
+              {spotifyAlbums.map((album) => {
+                const inAppPath = /^[a-zA-Z0-9]{22}$/.test(album.id)
+                  ? `/album/spotify/${encodeURIComponent(album.id)}`
+                  : `/album/${encodeURIComponent(album.id)}`;
+                return (
+                  <Link
+                    key={album.id}
+                    to={inAppPath}
+                    className="surface-card group"
+                  >
+                    <div className="aspect-square rounded-spotify overflow-hidden bg-spotify-gray mb-3 shadow-card">
+                      {album.imageUrl ? (
+                        <img src={album.imageUrl} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-3xl text-spotify-text">♪</div>
+                      )}
+                    </div>
+                    <p className="text-title truncate">{album.name}</p>
+                    <p className="text-caption capitalize">
+                      {album.albumType}
+                      {album.releaseYear ? ` · ${album.releaseYear}` : ''}
+                    </p>
+                  </Link>
+                );
+              })}
             </div>
           </section>
         )}

@@ -1080,14 +1080,10 @@ export async function fetchSpotifyArtistAlbums(artistId: string): Promise<Spotif
   const seen = new Set<string>();
   const albums: SpotifyAlbumResult[] = [];
   const market = normalizeMarket(config.spotifyMarket);
+  const pageLimit = SPOTIFY_LIST_MAX_LIMIT; // API max is 10
+  const maxAlbums = 50;
 
-  const params = new URLSearchParams({
-    include_groups: 'album,single',
-    limit: String(SPOTIFY_LIST_MAX_LIMIT),
-  });
-  if (market) params.set('market', market);
-
-  const data = await spotifyGet<{
+  const pushItems = (
     items: Array<{
       id: string;
       name: string;
@@ -1096,44 +1092,52 @@ export async function fetchSpotifyArtistAlbums(artistId: string): Promise<Spotif
       release_date: string;
       external_urls: { spotify: string };
       images: { url: string }[];
-    }>;
-  }>(`/artists/${artistId}/albums?${params}`);
-
-  if (!data?.items?.length) {
-    // Retry without market filter
-    const fallback = await spotifyGet<typeof data>(
-      `/artists/${artistId}/albums?include_groups=album,single&limit=${SPOTIFY_LIST_MAX_LIMIT}`,
-    );
-    if (fallback?.items?.length) {
-      for (const a of fallback.items) {
-        if (seen.has(a.id)) continue;
-        seen.add(a.id);
-        albums.push({
-          id: a.id,
-          name: a.name,
-          imageUrl: a.images[0]?.url || '',
-          releaseYear: a.release_date ? parseInt(a.release_date.slice(0, 4), 10) || null : null,
-          totalTracks: a.total_tracks,
-          spotifyUrl: a.external_urls.spotify,
-          albumType: a.album_type,
-        });
-      }
+    }>,
+  ) => {
+    for (const a of items) {
+      if (seen.has(a.id)) continue;
+      seen.add(a.id);
+      albums.push({
+        id: a.id,
+        name: a.name,
+        imageUrl: a.images[0]?.url || '',
+        releaseYear: a.release_date ? parseInt(a.release_date.slice(0, 4), 10) || null : null,
+        totalTracks: a.total_tracks,
+        spotifyUrl: a.external_urls.spotify,
+        albumType: a.album_type,
+      });
     }
-    return albums;
-  }
+  };
 
-  for (const a of data.items) {
-    if (seen.has(a.id)) continue;
-    seen.add(a.id);
-    albums.push({
-      id: a.id,
-      name: a.name,
-      imageUrl: a.images[0]?.url || '',
-      releaseYear: a.release_date ? parseInt(a.release_date.slice(0, 4), 10) || null : null,
-      totalTracks: a.total_tracks,
-      spotifyUrl: a.external_urls.spotify,
-      albumType: a.album_type,
-    });
+  for (const useMarket of [true, false]) {
+    if (albums.length > 0) break;
+    for (let offset = 0; offset < maxAlbums && albums.length < maxAlbums; offset += pageLimit) {
+      if (isSpotifyRateLimited()) break;
+
+      const params = new URLSearchParams({
+        include_groups: 'album,single',
+        limit: String(pageLimit),
+        offset: String(offset),
+      });
+      if (useMarket && market) params.set('market', market);
+
+      const data = await spotifyGet<{
+        items: Array<{
+          id: string;
+          name: string;
+          album_type: string;
+          total_tracks: number;
+          release_date: string;
+          external_urls: { spotify: string };
+          images: { url: string }[];
+        }>;
+        next: string | null;
+      }>(`/artists/${artistId}/albums?${params}`);
+
+      if (!data?.items?.length) break;
+      pushItems(data.items);
+      if (!data.next || data.items.length < pageLimit) break;
+    }
   }
 
   return albums;
