@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth';
-import { getLocalAlbumPage, openSpotifyAlbumInApp } from '../services/albumCatalog';
+import { loadAlbumPage, openSpotifyAlbumInApp } from '../services/albumCatalog';
 
 const router = Router();
 
@@ -17,7 +17,7 @@ router.get('/spotify/:spotifyAlbumId', authenticate, async (req, res) => {
 
 router.get('/:id', authenticate, async (req, res) => {
   try {
-    const page = await getLocalAlbumPage(req.params.id);
+    const page = await loadAlbumPage(req.params.id);
     if (!page) return res.status(404).json({ error: 'Album not found' });
     res.json(page);
   } catch (err) {

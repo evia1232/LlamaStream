@@ -172,8 +172,8 @@ router.get('/artists/:id', authenticate, async (req: AuthRequest, res) => {
 
 router.get('/albums/:id', authenticate, async (req, res) => {
   try {
-    const { getLocalAlbumPage } = await import('../services/albumCatalog');
-    const page = await getLocalAlbumPage(req.params.id);
+    const { loadAlbumPage } = await import('../services/albumCatalog');
+    const page = await loadAlbumPage(req.params.id);
     if (!page) return res.status(404).json({ error: 'Album not found' });
     res.json(page);
   } catch (err) {

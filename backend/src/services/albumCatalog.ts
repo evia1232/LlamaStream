@@ -253,11 +253,19 @@ export async function getLocalAlbumPage(albumId: string) {
 /**
  * Load Spotify album into local DB (artist + album + track metadata + cached images),
  * then return an in-app album page payload.
+ * Always re-fetches Spotify when available so newly added tracks appear even if a local copy exists.
  */
 export async function openSpotifyAlbumInApp(spotifyAlbumId: string) {
-  if (!isSpotifyConfigured()) throw new Error('Spotify is not configured');
+  if (!isSpotifyConfigured()) {
+    const cached = await prisma.album.findFirst({
+      where: { spotifyAlbumId },
+      select: { id: true },
+    });
+    if (cached) return getLocalAlbumPage(cached.id);
+    throw new Error('Spotify is not configured');
+  }
+
   if (isSpotifyRateLimited()) {
-    // Fall back to whatever we already cached locally
     const cached = await prisma.album.findFirst({
       where: { spotifyAlbumId },
       select: { id: true },
@@ -267,7 +275,14 @@ export async function openSpotifyAlbumInApp(spotifyAlbumId: string) {
   }
 
   const details = await fetchSpotifyAlbumDetails(spotifyAlbumId);
-  if (!details) throw new Error('Album not found on Spotify');
+  if (!details) {
+    const cached = await prisma.album.findFirst({
+      where: { spotifyAlbumId },
+      select: { id: true },
+    });
+    if (cached) return getLocalAlbumPage(cached.id);
+    throw new Error('Album not found on Spotify');
+  }
 
   const artist = await upsertArtistLocal({
     name: details.artistName,
@@ -300,6 +315,28 @@ export async function openSpotifyAlbumInApp(spotifyAlbumId: string) {
       spotifyTrackId: t.id,
       spotifyUrl: t.spotifyUrl,
     });
+  }
+
+  return getLocalAlbumPage(album.id);
+}
+
+/**
+ * Open a local album by id. If it is linked to Spotify, always refresh catalog
+ * from Spotify first (new tracks), then return the merged local page.
+ */
+export async function loadAlbumPage(albumId: string) {
+  const album = await prisma.album.findUnique({
+    where: { id: albumId },
+    select: { id: true, spotifyAlbumId: true },
+  });
+  if (!album) return null;
+
+  if (album.spotifyAlbumId && isSpotifyConfigured() && !isSpotifyRateLimited()) {
+    try {
+      return await openSpotifyAlbumInApp(album.spotifyAlbumId);
+    } catch (err) {
+      console.error('[Album] Spotify refresh failed, using local cache:', (err as Error).message);
+    }
   }
 
   return getLocalAlbumPage(album.id);

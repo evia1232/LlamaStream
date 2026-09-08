@@ -393,7 +393,8 @@ export async function fetchArtistSpotifyData(
     ]);
 
     void persistArtistSpotifyMeta(artistName, spotifyArtist, persistForArtistId);
-    void persistAlbumStubs(spotifyArtist, albums.slice(0, MAX_SPOTIFY_ALBUMS));
+    // Await so new albums are in the local DB before the page response is built
+    await persistAlbumStubs(spotifyArtist, albums.slice(0, MAX_SPOTIFY_ALBUMS));
 
     return {
       configured: true,
@@ -407,25 +408,29 @@ export async function fetchArtistSpotifyData(
   }
 }
 
-/** Full artist page — local library + Spotify catalog in one response */
+/** Full artist page — always refresh Spotify catalog, then merge with local library */
 export async function buildArtistPage(
   userId: string,
   artistName: string,
   artistId?: string | null,
   hints?: { spotifyArtistId?: string | null; spotifyTrackId?: string | null },
 ): Promise<ArtistPageFull> {
-  const local = await buildArtistPageLocal(userId, artistName, artistId);
+  const localFirst = await buildArtistPageLocal(userId, artistName, artistId);
 
   const mergedHints = {
-    spotifyArtistId: hints?.spotifyArtistId || local.artist.spotifyArtistId,
+    spotifyArtistId: hints?.spotifyArtistId || localFirst.artist.spotifyArtistId,
     spotifyTrackId: hints?.spotifyTrackId,
   };
 
+  // Always hit Spotify for new albums/top tracks (independent of local cache)
   const spotify = await fetchArtistSpotifyData(
-    local.artist.name,
+    localFirst.artist.name,
     mergedHints,
-    local.artist.id,
+    localFirst.artist.id,
   );
+
+  // Re-read local after stubs were persisted so new albums show in localAlbums too
+  const local = await buildArtistPageLocal(userId, artistName, artistId || localFirst.artist.id);
 
   const imageUrl = local.artist.imageUrl || spotify.artist?.imageUrl || null;
   const spotifyArtistId = spotify.artist?.id || local.artist.spotifyArtistId;
