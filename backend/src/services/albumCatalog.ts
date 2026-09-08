@@ -55,12 +55,17 @@ export async function upsertArtistLocal(opts: {
   name: string;
   spotifyArtistId?: string | null;
   imageUrl?: string | null;
+  /** When false, store remote URL as-is (fast stubs). Default true. */
+  cacheImages?: boolean;
 }) {
   const name = opts.name.trim();
   if (!name) throw new Error('Artist name required');
 
+  const cacheImages = opts.cacheImages !== false;
   const localImage = opts.imageUrl
-    ? await cacheRemoteImage(opts.imageUrl, `artist:${opts.spotifyArtistId || name}`)
+    ? (cacheImages
+        ? await cacheRemoteImage(opts.imageUrl, `artist:${opts.spotifyArtistId || name}`)
+        : opts.imageUrl)
     : null;
 
   if (opts.spotifyArtistId) {
@@ -103,10 +108,15 @@ export async function upsertAlbumLocal(opts: {
   coverUrl?: string | null;
   releaseYear?: number | null;
   spotifyAlbumId?: string | null;
+  /** When false, store remote URL as-is (fast stubs). Default true. */
+  cacheImages?: boolean;
 }) {
   const title = opts.title.trim();
+  const cacheImages = opts.cacheImages !== false;
   const localCover = opts.coverUrl
-    ? await cacheRemoteImage(opts.coverUrl, `album:${opts.spotifyAlbumId || title}`)
+    ? (cacheImages
+        ? await cacheRemoteImage(opts.coverUrl, `album:${opts.spotifyAlbumId || title}`)
+        : opts.coverUrl)
     : null;
 
   if (opts.spotifyAlbumId) {
@@ -321,19 +331,29 @@ export async function openSpotifyAlbumInApp(spotifyAlbumId: string) {
 }
 
 /**
- * Open a local album by id. If it is linked to Spotify, always refresh catalog
- * from Spotify first (new tracks), then return the merged local page.
+ * Open a local album by id. Refresh from Spotify when the catalog looks stale
+ * or has no tracks yet (stubs). Avoids hammering Spotify on every navigation.
  */
 export async function loadAlbumPage(albumId: string) {
   const album = await prisma.album.findUnique({
     where: { id: albumId },
-    select: { id: true, spotifyAlbumId: true },
+    select: {
+      id: true,
+      spotifyAlbumId: true,
+      updatedAt: true,
+      _count: { select: { tracks: true } },
+    },
   });
   if (!album) return null;
 
-  if (album.spotifyAlbumId && isSpotifyConfigured() && !isSpotifyRateLimited()) {
+  const STALE_MS = 6 * 60 * 60 * 1000;
+  const needsRefresh =
+    !!album.spotifyAlbumId
+    && (album._count.tracks === 0 || Date.now() - album.updatedAt.getTime() > STALE_MS);
+
+  if (needsRefresh && isSpotifyConfigured() && !isSpotifyRateLimited()) {
     try {
-      return await openSpotifyAlbumInApp(album.spotifyAlbumId);
+      return await openSpotifyAlbumInApp(album.spotifyAlbumId!);
     } catch (err) {
       console.error('[Album] Spotify refresh failed, using local cache:', (err as Error).message);
     }

@@ -66,6 +66,7 @@ function formatAlbum(album: {
   title: string;
   coverUrl: string | null;
   releaseYear: number | null;
+  spotifyAlbumId?: string | null;
   artist: { id: string; name: string };
   _count?: { tracks: number };
 }) {
@@ -74,6 +75,7 @@ function formatAlbum(album: {
     title: album.title,
     coverUrl: album.coverUrl,
     releaseYear: album.releaseYear,
+    spotifyAlbumId: album.spotifyAlbumId ?? null,
     trackCount: album._count?.tracks ?? 0,
     artist: { id: album.artist.id, name: album.artist.name },
   };
@@ -112,6 +114,8 @@ async function persistAlbumStubs(spotifyArtist: SpotifyArtistResult, albums: Spo
       name: spotifyArtist.name,
       spotifyArtistId: spotifyArtist.id,
       imageUrl: spotifyArtist.imageUrl,
+      // Fast path — don't download dozens of covers during artist page load
+      cacheImages: false,
     });
     for (const album of albums.slice(0, 40)) {
       await upsertAlbumLocal({
@@ -120,6 +124,7 @@ async function persistAlbumStubs(spotifyArtist: SpotifyArtistResult, albums: Spo
         coverUrl: album.imageUrl,
         releaseYear: album.releaseYear,
         spotifyAlbumId: album.id,
+        cacheImages: false,
       });
     }
   } catch (err) {
@@ -393,8 +398,8 @@ export async function fetchArtistSpotifyData(
     ]);
 
     void persistArtistSpotifyMeta(artistName, spotifyArtist, persistForArtistId);
-    // Await so new albums are in the local DB before the page response is built
-    await persistAlbumStubs(spotifyArtist, albums.slice(0, MAX_SPOTIFY_ALBUMS));
+    // Never block the artist-page response on stub persistence / image downloads
+    void persistAlbumStubs(spotifyArtist, albums.slice(0, MAX_SPOTIFY_ALBUMS));
 
     return {
       configured: true,
@@ -408,37 +413,52 @@ export async function fetchArtistSpotifyData(
   }
 }
 
-/** Full artist page — always refresh Spotify catalog, then merge with local library */
+/** Full artist page — refresh Spotify catalog, fall back to local albums if needed */
 export async function buildArtistPage(
   userId: string,
   artistName: string,
   artistId?: string | null,
   hints?: { spotifyArtistId?: string | null; spotifyTrackId?: string | null },
 ): Promise<ArtistPageFull> {
-  const localFirst = await buildArtistPageLocal(userId, artistName, artistId);
+  const local = await buildArtistPageLocal(userId, artistName, artistId);
 
   const mergedHints = {
-    spotifyArtistId: hints?.spotifyArtistId || localFirst.artist.spotifyArtistId,
+    spotifyArtistId: hints?.spotifyArtistId || local.artist.spotifyArtistId,
     spotifyTrackId: hints?.spotifyTrackId,
   };
 
   // Always hit Spotify for new albums/top tracks (independent of local cache)
   const spotify = await fetchArtistSpotifyData(
-    localFirst.artist.name,
+    local.artist.name,
     mergedHints,
-    localFirst.artist.id,
+    local.artist.id,
   );
 
-  // Re-read local after stubs were persisted so new albums show in localAlbums too
-  const local = await buildArtistPageLocal(userId, artistName, artistId || localFirst.artist.id);
+  // If Spotify returned no albums (timeout / rate-limit), surface local stubs so UI isn't empty
+  let albums = spotify.albums;
+  if (albums.length === 0 && local.localAlbums.length > 0) {
+    albums = local.localAlbums
+      .filter((a) => a.spotifyAlbumId)
+      .map((a) => ({
+        id: a.spotifyAlbumId!,
+        name: a.title,
+        imageUrl: a.coverUrl || '',
+        releaseYear: a.releaseYear,
+        totalTracks: a.trackCount,
+        spotifyUrl: `https://open.spotify.com/album/${a.spotifyAlbumId}`,
+        albumType: 'album',
+      }));
+  }
 
-  const imageUrl = local.artist.imageUrl || spotify.artist?.imageUrl || null;
-  const spotifyArtistId = spotify.artist?.id || local.artist.spotifyArtistId;
+  const spotifyMerged: ArtistSpotifyData = { ...spotify, albums };
 
-  const recommendedTracks = spotify.topTracks.length > 0 || spotify.albums.length > 0
+  const imageUrl = local.artist.imageUrl || spotifyMerged.artist?.imageUrl || null;
+  const spotifyArtistId = spotifyMerged.artist?.id || local.artist.spotifyArtistId;
+
+  const recommendedTracks = spotifyMerged.topTracks.length > 0 || spotifyMerged.albums.length > 0
     ? await buildArtistRecommendations(
-        spotify.topTracks,
-        spotify.albums,
+        spotifyMerged.topTracks,
+        spotifyMerged.albums,
         local.listenedTracks,
         local.localTracks,
       )
@@ -448,11 +468,11 @@ export async function buildArtistPage(
     ...local,
     artist: {
       ...local.artist,
-      name: spotify.artist?.name || local.artist.name,
+      name: spotifyMerged.artist?.name || local.artist.name,
       imageUrl,
       spotifyArtistId,
     },
-    spotify,
+    spotify: spotifyMerged,
     recommendedTracks,
   };
 }
