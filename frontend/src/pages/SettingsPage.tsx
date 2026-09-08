@@ -67,7 +67,16 @@ export default function SettingsPage() {
   const [audioQuality, setAudioQuality] = useState(user?.audioQuality || 'HIGH');
   const [searchSpotifyEnabled, setSearchSpotifyEnabled] = useState(user?.searchSpotifyEnabled ?? true);
   const [searchYoutubeEnabled, setSearchYoutubeEnabled] = useState(user?.searchYoutubeEnabled ?? true);
-  const [spotifyPlaybackEnabled, setSpotifyPlaybackEnabled] = useState(user?.spotifyPlaybackEnabled ?? true);
+  const [spotifyPlaybackEnabled, setSpotifyPlaybackEnabled] = useState(() => {
+    if (typeof user?.spotifyPlaybackEnabled === 'boolean') return user.spotifyPlaybackEnabled;
+    try {
+      const ls = localStorage.getItem('spotifyPlaybackEnabled');
+      if (ls === '0') return false;
+      if (ls === '1') return true;
+    } catch { /* ignore */ }
+    return true;
+  });
+  const [playbackSaveMsg, setPlaybackSaveMsg] = useState('');
   const [saved, setSaved] = useState(false);
 
   const [users, setUsers] = useState<User[]>([]);
@@ -263,8 +272,35 @@ export default function SettingsPage() {
     if (!user) return;
     setSearchSpotifyEnabled(user.searchSpotifyEnabled ?? true);
     setSearchYoutubeEnabled(user.searchYoutubeEnabled ?? true);
-    setSpotifyPlaybackEnabled(user.spotifyPlaybackEnabled ?? true);
+    if (typeof user.spotifyPlaybackEnabled === 'boolean') {
+      setSpotifyPlaybackEnabled(user.spotifyPlaybackEnabled);
+      try {
+        localStorage.setItem('spotifyPlaybackEnabled', user.spotifyPlaybackEnabled ? '1' : '0');
+      } catch { /* ignore */ }
+    }
   }, [user?.searchSpotifyEnabled, user?.searchYoutubeEnabled, user?.spotifyPlaybackEnabled, user]);
+
+  const applySpotifyPlaybackEnabled = async (enabled: boolean) => {
+    setSpotifyPlaybackEnabled(enabled);
+    setPlaybackSaveMsg('');
+    try {
+      localStorage.setItem('spotifyPlaybackEnabled', enabled ? '1' : '0');
+    } catch { /* ignore */ }
+    try {
+      await updateProfile({ spotifyPlaybackEnabled: enabled });
+      if (!enabled) {
+        const { playbackEngine } = usePlayerStore.getState();
+        if (playbackEngine === 'spotify') {
+          void useSpotifyPlayerStore.getState().pause();
+          usePlayerStore.setState({ playbackEngine: 'local' });
+        }
+      }
+      setPlaybackSaveMsg(t('success'));
+      window.setTimeout(() => setPlaybackSaveMsg(''), 2000);
+    } catch {
+      setPlaybackSaveMsg(t('error'));
+    }
+  };
 
   const handleSave = async () => {
     await updateProfile({
@@ -275,6 +311,9 @@ export default function SettingsPage() {
       searchYoutubeEnabled,
       spotifyPlaybackEnabled,
     });
+    try {
+      localStorage.setItem('spotifyPlaybackEnabled', spotifyPlaybackEnabled ? '1' : '0');
+    } catch { /* ignore */ }
     if (!spotifyPlaybackEnabled) {
       const { playbackEngine } = usePlayerStore.getState();
       if (playbackEngine === 'spotify') {
@@ -567,9 +606,14 @@ export default function SettingsPage() {
             </div>
             <ToggleSwitch
               checked={spotifyPlaybackEnabled}
-              onToggle={() => setSpotifyPlaybackEnabled((v) => !v)}
+              onToggle={() => void applySpotifyPlaybackEnabled(!spotifyPlaybackEnabled)}
             />
           </div>
+          {playbackSaveMsg && (
+            <p className={clsx('text-sm', playbackSaveMsg === t('error') ? 'text-red-400' : 'text-spotify-green')}>
+              {playbackSaveMsg}
+            </p>
+          )}
         </section>
       )}
 

@@ -152,7 +152,7 @@ router.put(
   body('audioQuality').optional().isIn(['LOW', 'NORMAL', 'HIGH']),
   body('searchSpotifyEnabled').optional().isBoolean(),
   body('searchYoutubeEnabled').optional().isBoolean(),
-  body('spotifyPlaybackEnabled').optional().isBoolean(),
+  body('spotifyPlaybackEnabled').optional({ values: 'null' }).isBoolean(),
   async (req: AuthRequest, res) => {
     const {
       displayName,
@@ -162,18 +162,23 @@ router.put(
       searchYoutubeEnabled,
       spotifyPlaybackEnabled,
     } = req.body;
-    const user = await prisma.user.update({
-      where: { id: req.user!.userId },
-      data: {
-        ...(displayName !== undefined && { displayName }),
-        ...(language !== undefined && { language }),
-        ...(audioQuality !== undefined && { audioQuality }),
-        ...(searchSpotifyEnabled !== undefined && { searchSpotifyEnabled }),
-        ...(searchYoutubeEnabled !== undefined && { searchYoutubeEnabled }),
-        ...(spotifyPlaybackEnabled !== undefined && { spotifyPlaybackEnabled }),
-      },
-    });
-    res.json({ user: sanitizeUser(user) });
+    try {
+      const user = await prisma.user.update({
+        where: { id: req.user!.userId },
+        data: {
+          ...(displayName !== undefined && { displayName }),
+          ...(language !== undefined && { language }),
+          ...(audioQuality !== undefined && { audioQuality }),
+          ...(searchSpotifyEnabled !== undefined && { searchSpotifyEnabled }),
+          ...(searchYoutubeEnabled !== undefined && { searchYoutubeEnabled }),
+          ...(typeof spotifyPlaybackEnabled === 'boolean' && { spotifyPlaybackEnabled }),
+        },
+      });
+      res.json({ user: sanitizeUser(user) });
+    } catch (err) {
+      console.error('Profile update failed:', err);
+      res.status(500).json({ error: (err as Error).message });
+    }
   }
 );
 
