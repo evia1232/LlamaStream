@@ -848,8 +848,9 @@ export async function resolveYouTubeSource(
       const q = `${searchArtist} ${title}`;
       const batch = await searchYouTube(q, 15, undefined, ytSearchOpts);
       collectResults(batch);
-      const pool = filterYouTubeResults(batch, target, true);
-      candidates = rankYouTubeResults(pool, target, { ...rankOpts, minScore: 12, filterVariants: true });
+      // Keep the caller's relaxed flag — do NOT soften artist checks on the last cascade
+      const pool = filterYouTubeResults(batch, target, !!opts?.relaxed);
+      candidates = rankYouTubeResults(pool, target, { ...rankOpts, minScore: opts?.relaxed ? 12 : 25, filterVariants: true });
     } catch (err) {
       console.error(`YouTube unconstrained search failed for "${searchArtist} ${title}":`, err);
     }

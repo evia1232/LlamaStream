@@ -198,25 +198,27 @@ export function isWrongArtistMatch(
   if (strength >= 0.35) return false;
 
   const ytTitle = normalizeForMatch(result.title);
+  const extracted = normalizeForMatch(extractTrackTitleFromYouTube(result.title));
   const titleHit =
     ytTitle.includes(targetTitle)
-    || targetTitle.includes(extractTrackTitleFromYouTube(result.title).toLowerCase().replace(/[^\w\s\u0590-\u05ff]/g, ' ').replace(/\s+/g, ' ').trim())
+    || targetTitle.includes(extracted)
     || wordOverlap(target.title, extractTrackTitleFromYouTube(result.title)) >= 0.6;
 
   if (!titleHit) return false;
 
-  // Latin Spotify artist + Hebrew YouTube lead artist (or any distinct lead) → wrong song
+  // Explicit "Other Artist - Song" (or Song - Other Artist) with a different lead name
   const leading = extractLeadingArtistFromYouTubeTitle(result.title);
-  if (leading && wordOverlap(targetArtist, leading) < 0.25 && artistMatchStrength(result, targetArtist) < 0.35) {
-    return true;
+  if (leading) {
+    const leadOverlap = wordOverlap(targetArtist, leading);
+    // Leading segment is another artist name, not the song title itself
+    const leadingIsTitle = wordOverlap(leading, target.title) >= 0.6
+      || normalizeForMatch(leading) === targetTitle;
+    if (!leadingIsTitle && leadOverlap < 0.35) return true;
   }
 
-  // Channel/uploader clearly different and no artist tokens in title
-  if (result.artist && wordOverlap(targetArtist, result.artist) < 0.2 && strength < 0.2) {
-    return true;
-  }
-
-  return strength < 0.15;
+  // Same song title + weak/no artist signal → almost always the popular wrong version
+  // (e.g. מתגעגע by אייל גולן when asking for ג'ימבו ג'י)
+  return true;
 }
 
 /** Returns variant patterns found in text */
@@ -343,11 +345,10 @@ export function isLikelyBadMatch(title: string, relaxed = false): boolean {
   return false;
 }
 
-/** Strict artist enforcement for Latin Spotify metadata; Hebrew imports stay softer. */
-export function shouldEnforceArtistMatch(target: MatchTarget, relaxed: boolean): boolean {
-  if (!relaxed) return true;
-  const blob = `${target.title || ''} ${target.artist || ''}`;
-  return !containsHebrew(blob);
+/** Enforce artist identity whenever we know the target artist (Hebrew included). */
+export function shouldEnforceArtistMatch(target: MatchTarget, _relaxed: boolean): boolean {
+  const artist = primaryArtist(target.artist || '');
+  return normalizeForMatch(artist).length >= 2;
 }
 
 export function scoreYouTubeMatch(result: SearchResult, target: MatchTarget, options?: RankOptions): number {
@@ -448,8 +449,9 @@ export function rankYouTubeResults(
       if (isYouTubeShortOrReel(result)) return false;
       if (/\bcover\b/i.test(result.title) && enforceArtist) return false;
       if (hasArtist && enforceArtist && isWrongArtistMatch(result, target)) return false;
-      const minArtist = enforceArtist ? 0.35 : (relaxed ? 0.05 : 0.15);
-      if (hasArtist && artistMatchStrength(result, target.artist) < minArtist && score < (enforceArtist ? 85 : 70)) {
+      // Never let a high title/duration score override a missing artist (Hebrew same-title traps)
+      const minArtist = enforceArtist ? 0.35 : (relaxed ? 0.12 : 0.2);
+      if (hasArtist && artistMatchStrength(result, target.artist) < minArtist) {
         return false;
       }
       if (target.duration && target.duration > 0 && result.duration > 0
@@ -482,12 +484,12 @@ export function pickBestAvailableResult(
   const normTitle = normalizeForMatch(cleanSearchTitle(target.title));
   const safe = results.filter((r) => !isLikelyBadMatch(r.title, relaxed) && !isYouTubeShortOrReel(r)
     && !isRejectedYouTubeResult(r, target, relaxed)
-    && !(hasArtist && !relaxed && isWrongArtistMatch(r, target)));
+    && !(hasArtist && isWrongArtistMatch(r, target)));
 
   for (const r of safe) {
     const ytNorm = normalizeForMatch(r.title);
     if (normTitle.length >= 3 && (ytNorm.includes(normTitle) || normTitle.includes(ytNorm))) {
-      if (hasArtist && !relaxed && artistMatchStrength(r, target.artist) < 0.2) continue;
+      if (hasArtist && artistMatchStrength(r, target.artist) < 0.35) continue;
       if (!hasUnwantedVariant(r.title, target.title, options?.rawQuery)
         || (relaxed && /\b(lyric|lyrics|visualizer|מילים)\b/i.test(r.title))) {
         return r;
@@ -495,8 +497,8 @@ export function pickBestAvailableResult(
     }
   }
 
-  // Last resort for Hebrew import only: closest duration among non-short/non-karaoke hits
-  if (relaxed && !shouldEnforceArtistMatch(target, relaxed) && safe.length > 0 && target.duration && target.duration > 0) {
+  // Duration-only fallback removed when an artist is known — it picked wrong same-title songs
+  if (relaxed && !hasArtist && safe.length > 0 && target.duration && target.duration > 0) {
     const byDuration = [...safe]
       .filter((r) => r.duration > 0)
       .sort((a, b) => Math.abs(a.duration - target.duration!) - Math.abs(b.duration - target.duration!));
@@ -530,10 +532,16 @@ export function buildSearchQueries(artist: string, title: string, album?: string
 
   // Prefer artist+title — bare title finds the wrong popular song
   if (a && t) {
-    queries.push(`${a} ${t}`);
-    queries.push(`${a} - ${t}`);
-    queries.push(`${t} ${a}`);
-    if (hebrew) queries.push(`"${a}" "${t}"`);
+    if (hebrew) {
+      queries.push(`"${a}" "${t}"`);
+      queries.push(`${a} - ${t}`);
+      queries.push(`${a} ${t}`);
+    } else {
+      queries.push(`${a} ${t}`);
+      queries.push(`${a} - ${t}`);
+      queries.push(`${t} ${a}`);
+      queries.push(`"${a}" "${t}"`);
+    }
     queries.push(`${a} ${t} official audio`);
     queries.push(`${a} - ${t} official audio`);
   }
@@ -541,7 +549,7 @@ export function buildSearchQueries(artist: string, title: string, album?: string
   if (hebrew) {
     if (rawTitle !== t && a) queries.push(`${a} ${rawTitle}`);
     if (album && t) queries.push(`${a} ${t} ${sanitizeSearchText(album)}`.trim());
-    if (t) queries.push(`${t} audio`);
+    // Never search bare Hebrew title first — popular same-name songs steal the match
   }
 
   queries.push(
@@ -554,9 +562,9 @@ export function buildSearchQueries(artist: string, title: string, album?: string
   if (album) {
     queries.push(`${a} ${t} ${sanitizeSearchText(album)} official`);
   }
-  // Bare title last — never first
-  if (t) queries.push(t);
-  if (rawTitle && rawTitle !== t) queries.push(rawTitle);
+  // Bare title last — and only for Latin (Hebrew same titles collide across artists)
+  if (t && !hebrew) queries.push(t);
+  if (rawTitle && rawTitle !== t && !hebrew) queries.push(rawTitle);
 
   return [...new Set(queries.filter((q) => q && q.replace(/["']/g, '').trim().length > 0))];
 }
