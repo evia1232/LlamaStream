@@ -14,6 +14,7 @@ import { usePlaybackSync } from '../../hooks/usePlaybackSync';
 import DevicePicker from '../player/DevicePicker';
 import { startPlaybackKeeper } from '../../lib/backgroundPlayback';
 import { startAppResumeListeners } from '../../lib/appResume';
+import { startAndroidBackNavigation } from '../../lib/androidBackNavigation';
 import AppToast from '../ui/AppToast';
 import OfflineBadge from '../ui/OfflineBadge';
 
@@ -25,9 +26,11 @@ export default function Layout({ children }: { children: ReactNode }) {
   useEffect(() => {
     const stopKeeper = startPlaybackKeeper();
     const stopResume = startAppResumeListeners();
+    const stopBack = startAndroidBackNavigation();
     return () => {
       stopKeeper();
       stopResume();
+      stopBack();
     };
   }, []);
 

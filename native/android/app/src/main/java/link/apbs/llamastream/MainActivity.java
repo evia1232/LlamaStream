@@ -133,8 +133,6 @@ public class MainActivity extends BridgeActivity {
     super.onDestroy();
   }
 
-  @Override
-  public void onBackPressed() {
-    moveTaskToBack(true);
-  }
+  // Do not override onBackPressed — Capacitor fires App `backButton` so the WebView/SPA
+  // can navigate history (and only minimize at the root via JS).
 }
