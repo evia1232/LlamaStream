@@ -98,9 +98,11 @@ export function normalizeTrack(track: {
   isDownloaded?: boolean;
   isDownloading?: boolean;
   streamUrl?: string | null;
+  sourceUrl?: string | null;
   source?: 'library' | 'youtube' | 'spotify';
   youtubeUrl?: string;
   spotifyUrl?: string;
+  spotifyTrackId?: string;
   quality?: 'LOW' | 'NORMAL' | 'HIGH';
   artist: { id?: string; name?: string } | string;
   album?: { id: string; title: string; coverUrl?: string | null } | null;
@@ -111,6 +113,8 @@ export function normalizeTrack(track: {
     : { name: artistName };
 
   const thumbnailUrl = normalizeCoverUrl(track.thumbnailUrl || track.album?.coverUrl || '') || null;
+  const spotifyUrl = track.spotifyUrl
+    || (track.spotifyTrackId ? `https://open.spotify.com/track/${track.spotifyTrackId}` : undefined);
 
   return {
     id: track.id,
@@ -120,11 +124,13 @@ export function normalizeTrack(track: {
     isDownloaded: !!track.isDownloaded,
     isDownloading: track.isDownloading ?? false,
     streamUrl: track.streamUrl ?? null,
+    sourceUrl: track.sourceUrl ?? null,
     artist: artistObj,
     album: track.album ?? null,
     source: track.source,
     youtubeUrl: track.youtubeUrl,
-    spotifyUrl: track.spotifyUrl,
+    spotifyUrl,
+    spotifyTrackId: track.spotifyTrackId,
     quality: track.quality as Track['quality'],
   };
 }

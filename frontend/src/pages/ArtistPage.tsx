@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Play, ExternalLink } from 'lucide-react';
 import api from '../api/client';
@@ -290,19 +290,17 @@ export default function ArtistPage() {
 
         {spotifyAlbums.length > 0 && (
           <section className="px-4">
-            <h2 className="text-heading-sm mb-4">{t('spotifyAlbums')}</h2>
+            <h2 className="text-heading-sm mb-4">{t('albums')}</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
               {spotifyAlbums.map((album) => (
-                <a
+                <Link
                   key={album.id}
-                  href={album.spotifyUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  to={`/album/spotify/${encodeURIComponent(album.id)}`}
                   className="surface-card group"
                 >
                   <div className="aspect-square rounded-spotify overflow-hidden bg-spotify-gray mb-3 shadow-card">
                     {album.imageUrl ? (
-                      <img src={album.imageUrl} alt="" className="w-full h-full object-cover" />
+                      <img src={album.imageUrl} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-3xl text-spotify-text">♪</div>
                     )}
@@ -312,7 +310,7 @@ export default function ArtistPage() {
                     {album.albumType}
                     {album.releaseYear ? ` · ${album.releaseYear}` : ''}
                   </p>
-                </a>
+                </Link>
               ))}
             </div>
           </section>
@@ -370,10 +368,10 @@ export default function ArtistPage() {
             <h2 className="text-heading-sm mb-4">{t('localAlbums')}</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
               {local.localAlbums.map((album) => (
-                <div key={album.id} className="surface-card">
+                <Link key={album.id} to={`/album/${album.id}`} className="surface-card group">
                   <div className="aspect-square rounded-spotify overflow-hidden bg-spotify-gray mb-3 shadow-card">
                     {album.coverUrl ? (
-                      <img src={album.coverUrl} alt="" className="w-full h-full object-cover" />
+                      <img src={album.coverUrl} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-3xl text-spotify-text">♪</div>
                     )}
@@ -383,7 +381,7 @@ export default function ArtistPage() {
                     {album.releaseYear ? `${album.releaseYear} · ` : ''}
                     {t('trackCount', { count: album.trackCount })}
                   </p>
-                </div>
+                </Link>
               ))}
             </div>
           </section>

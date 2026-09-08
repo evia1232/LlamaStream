@@ -2,6 +2,7 @@ import { Track } from '../types';
 
 /** Extract Spotify track ID from URL or external track id */
 export function getSpotifyTrackId(track: Track): string | null {
+  if (track.spotifyTrackId) return track.spotifyTrackId;
   if (track.spotifyUrl) {
     const match = track.spotifyUrl.match(/track\/([a-zA-Z0-9]+)/i);
     if (match) return match[1];

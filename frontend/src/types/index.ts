@@ -32,6 +32,7 @@ export interface Track {
   duration: number;
   thumbnailUrl?: string | null;
   streamUrl?: string | null;
+  sourceUrl?: string | null;
   isDownloaded?: boolean;
   isDownloading?: boolean;
   artist: Artist | { name: string } | string;
@@ -41,6 +42,7 @@ export interface Track {
   /** Playlist slot index (Spotify order) when loaded from a playlist */
   position?: number;
   spotifyUrl?: string;
+  spotifyTrackId?: string;
   spotifyArtistId?: string;
   quality?: 'LOW' | 'NORMAL' | 'HIGH';
 }

@@ -29,6 +29,7 @@ import homeRoutes from './routes/home';
 import discoverRoutes from './routes/discover';
 import mediaRoutes from './routes/media';
 import settingsRoutes from './routes/settings';
+import albumRoutes from './routes/albums';
 import { resumePendingImports, startImportResumeScheduler } from './services/playlistImport';
 import { evictStaleCache, startCacheEvictionScheduler } from './services/trackStorage';
 import { reconcileAllStaleTracks } from './services/trackIntegrity';
@@ -237,6 +238,7 @@ app.use('/api/home', homeRoutes);
 app.use('/api/discover', discoverRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/albums', albumRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

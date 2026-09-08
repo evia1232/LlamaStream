@@ -171,15 +171,15 @@ router.get('/artists/:id', authenticate, async (req: AuthRequest, res) => {
 });
 
 router.get('/albums/:id', authenticate, async (req, res) => {
-  const album = await prisma.album.findUnique({
-    where: { id: req.params.id },
-    include: {
-      artist: true,
-      tracks: { include: { artist: true, album: true } },
-    },
-  });
-  if (!album) return res.status(404).json({ error: 'Album not found' });
-  res.json({ album });
+  try {
+    const { getLocalAlbumPage } = await import('../services/albumCatalog');
+    const page = await getLocalAlbumPage(req.params.id);
+    if (!page) return res.status(404).json({ error: 'Album not found' });
+    res.json(page);
+  } catch (err) {
+    console.error('Get album:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 export default router;

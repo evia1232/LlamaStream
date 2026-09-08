@@ -70,21 +70,22 @@ export async function ensureTrackDownloaded(track: Track): Promise<Track> {
 
 /** Resolve source and return a streamable library track without waiting for full download. */
 export async function prepareTrackForPlayback(track: Track): Promise<Track> {
-  if (canStreamTrackLocally(track)) {
+  // Already on disk — play immediately
+  if (isLibraryId(track.id) && track.isDownloaded) {
     return { ...track, streamUrl: track.streamUrl || optimisticStreamUrl(track) };
   }
 
-  if (isLibraryId(track.id)) {
+  // Library track with known YouTube source — stream + background download
+  if (isLibraryId(track.id) && track.sourceUrl) {
     void api.post(`/tracks/${track.id}/prefetch`).catch(() => { /* ignore */ });
-    if (track.title && getArtistName(track.artist)) {
-      return { ...track, streamUrl: optimisticStreamUrl(track) };
-    }
-    const { data } = await api.get(`/tracks/${track.id}`);
+    return { ...track, streamUrl: track.streamUrl || optimisticStreamUrl(track) };
+  }
+
+  // Catalog-only library track (e.g. album page) — sync-resolve YouTube, then stream
+  if (isLibraryId(track.id)) {
+    const { data } = await api.post(`/tracks/${track.id}/prepare-playback`, {}, { timeout: 60000 });
     const ready = normalizeTrack(data.track);
-    if (canStreamTrackLocally(ready)) {
-      return { ...ready, streamUrl: ready.streamUrl || optimisticStreamUrl(ready) };
-    }
-    throw new Error('Track not ready for playback');
+    return { ...ready, streamUrl: ready.streamUrl || optimisticStreamUrl(ready) };
   }
 
   const artistName = getArtistName(track.artist);
@@ -103,17 +104,17 @@ export async function prepareTrackForPlayback(track: Track): Promise<Track> {
         artist: artistName,
         duration: track.duration,
         album: track.album?.title,
+        thumbnailUrl: track.thumbnailUrl,
       };
 
   const { data } = await api.post('/tracks/prepare-playback', payload, { timeout: 60000 });
   return normalizeTrack(data.track);
 }
 
-/** True when the browser can hit /tracks/:id/stream right now (library track with metadata or cached file). */
+/** True when the browser can hit /tracks/:id/stream with a real file or YouTube source. */
 export function canStreamTrackLocally(track: Track | null | undefined): boolean {
   if (!track || !isLibraryId(track.id)) return false;
-  if (track.isDownloaded || track.streamUrl) return true;
-  return !!(track.title && getArtistName(track.artist));
+  return !!(track.isDownloaded || track.sourceUrl);
 }
 
 function optimisticStreamUrl(track: Track): string {

@@ -13,6 +13,9 @@ import { ensureBackgroundDownload, cancelBackgroundDownload, isDownloadInProgres
 import { getCacheAudioDir, getDownloadDirForTrack, finalizeFileStorage, promoteTrackToLibrary, isTrackPinned } from './trackStorage';
 import { findCanonicalDownloadedTrack, linkTrackToCanonical, propagateDownloadToSourceId } from './trackDedup';
 import { resolveAlbumArt, needsBetterAlbumArt, upgradeTrackAlbumArtInBackground } from './albumArt';
+import { cacheRemoteImage } from './mediaCache';
+import { upsertAlbumLocal, upsertArtistLocal } from './albumCatalog';
+import { extractSpotifyTrackId } from './spotifyApi';
 
 /** Prevent resolve storms that burn proxy IPs (stream/prefetch/error retries). */
 const resolveInFlight = new Set<string>();
@@ -543,13 +546,34 @@ export async function upsertPendingTrack(
 ) {
   const artistName = preferredArtist || source.artist;
   const trackTitle = preferredTitle || source.title;
+  const spotifyTrackId = opts?.spotifyUrl ? extractSpotifyTrackId(opts.spotifyUrl) : null;
 
-  let artist = await prisma.artist.findUnique({ where: { name: artistName } });
-  if (!artist) artist = await prisma.artist.create({ data: { name: artistName } });
+  const artist = await upsertArtistLocal({ name: artistName });
 
-  const existing = source.sourceId
-    ? await prisma.track.findFirst({ where: { sourceId: source.sourceId }, include: { artist: true, album: true, lyrics: true } })
+  let albumId: string | null = null;
+  if (opts?.album?.trim()) {
+    const album = await upsertAlbumLocal({
+      title: opts.album.trim(),
+      artistId: artist.id,
+      coverUrl: opts?.preferredThumbnail || source.thumbnailUrl || null,
+    });
+    albumId = album.id;
+  }
+
+  const existingBySpotify = spotifyTrackId
+    ? await prisma.track.findFirst({
+        where: { spotifyTrackId },
+        include: { artist: true, album: true, lyrics: true },
+      })
     : null;
+
+  const existing = existingBySpotify
+    || (source.sourceId
+      ? await prisma.track.findFirst({
+          where: { sourceId: source.sourceId },
+          include: { artist: true, album: true, lyrics: true },
+        })
+      : null);
 
   if (existing?.isDownloaded && existing.filePath && fs.existsSync(existing.filePath)) {
     return existing;
@@ -570,23 +594,28 @@ export async function upsertPendingTrack(
     ? existing.thumbnailUrl
     : null;
 
-  const albumArt = keepExistingArt || await resolveAlbumArt({
+  const albumArtRaw = keepExistingArt || await resolveAlbumArt({
     title: trackTitle,
     artist: artistName,
     album: opts?.album,
     preferredUrl: opts?.preferredThumbnail || source.thumbnailUrl,
     spotifyUrl: opts?.spotifyUrl,
   });
+  const albumArt = albumArtRaw
+    ? await cacheRemoteImage(albumArtRaw, `track:${spotifyTrackId || trackTitle}`)
+    : null;
 
   const data = {
     title: trackTitle,
     artistId: artist.id,
-    duration: source.duration,
-    sourceUrl: source.url,
-    sourceId: source.sourceId,
-    thumbnailUrl: albumArt || source.thumbnailUrl,
+    albumId: albumId || existing?.albumId || undefined,
+    duration: source.duration || existing?.duration || 0,
+    sourceUrl: source.url || existing?.sourceUrl || null,
+    sourceId: source.sourceId || existing?.sourceId || null,
+    spotifyTrackId: spotifyTrackId || existing?.spotifyTrackId || undefined,
+    thumbnailUrl: albumArt || source.thumbnailUrl || existing?.thumbnailUrl || null,
     quality,
-    isDownloaded: false,
+    isDownloaded: false as boolean,
     filePath: null as string | null,
     downloadedAt: null as Date | null,
   };
@@ -594,7 +623,15 @@ export async function upsertPendingTrack(
   if (existing) {
     const updated = await prisma.track.update({
       where: { id: existing.id },
-      data,
+      data: {
+        ...data,
+        // Don't wipe a good source when upserting empty pending metadata
+        sourceUrl: source.url || existing.sourceUrl,
+        sourceId: source.sourceId || existing.sourceId,
+        isDownloaded: existing.isDownloaded && existing.filePath ? existing.isDownloaded : false,
+        filePath: existing.filePath && fs.existsSync(existing.filePath) ? existing.filePath : null,
+        downloadedAt: existing.downloadedAt,
+      },
       include: { artist: true, album: true, lyrics: true },
     });
     if (canonical?.filePath && fs.existsSync(canonical.filePath)) {
@@ -878,9 +915,18 @@ function sourceFromYouTubeUrl(
 }
 
 async function findPlayableExisting(
-  opts?: { title?: string; artist?: string; url?: string },
+  opts?: { title?: string; artist?: string; url?: string; spotifyUrl?: string },
   searchQuery?: string,
 ) {
+  const spotifyTrackId = opts?.spotifyUrl ? extractSpotifyTrackId(opts.spotifyUrl) : null;
+  if (spotifyTrackId) {
+    const bySp = await prisma.track.findFirst({
+      where: { spotifyTrackId },
+      include: { artist: true, album: true, lyrics: true },
+    });
+    if (bySp) return bySp;
+  }
+
   if (opts?.url) {
     const byUrl = await prisma.track.findFirst({
       where: { OR: [{ sourceUrl: opts.url }, ...(extractYouTubeVideoId(opts.url) ? [{ sourceId: extractYouTubeVideoId(opts.url)! }] : [])] },
@@ -1168,6 +1214,89 @@ export async function prepareTrackForPlayback(
   });
 
   return track;
+}
+
+/** Sync-resolve YouTube for an existing library/catalog track, then background-download. */
+export async function prepareLibraryTrackForPlayback(
+  trackId: string,
+  quality: 'LOW' | 'NORMAL' | 'HIGH' = 'HIGH',
+) {
+  const existing = await prisma.track.findUnique({
+    where: { id: trackId },
+    include: { artist: true, album: true, lyrics: true },
+  });
+  if (!existing) throw new Error('Track not found');
+
+  if (existing.isDownloaded && existing.filePath && fs.existsSync(existing.filePath)) {
+    return existing;
+  }
+
+  if (existing.sourceUrl) {
+    if (!isDownloadInProgress(existing.id)) {
+      ensureBackgroundDownload(existing.id, existing.sourceUrl, quality, {
+        title: existing.title,
+        artist: existing.artist.name,
+        album: existing.album?.title,
+      });
+    }
+    return existing;
+  }
+
+  const spotifyUrl = existing.spotifyTrackId
+    ? `https://open.spotify.com/track/${existing.spotifyTrackId}`
+    : undefined;
+  const searchQuery = `${existing.artist.name} - ${existing.title}`;
+
+  if (isResolveCoolingDown(existing.id) || isYouTubeHardRateLimited()) {
+    return existing;
+  }
+
+  if (resolveInFlight.has(existing.id)) {
+    return existing;
+  }
+
+  resolveInFlight.add(existing.id);
+  try {
+    const source = await Promise.race([
+      resolveYouTubeSource(searchQuery, {
+        title: existing.title,
+        artist: existing.artist.name,
+        duration: existing.duration > 0 ? existing.duration : undefined,
+        album: existing.album?.title || undefined,
+        spotifyUrl,
+        interactive: true,
+      }),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('YouTube resolve timed out')), 45000);
+      }),
+    ]);
+    const ready = await attachResolvedSourceToTrack(existing.id, source, quality, {
+      title: existing.title,
+      artist: existing.artist.name,
+      album: existing.album?.title || undefined,
+      spotifyUrl,
+    });
+    if (ready) return ready;
+  } catch (err) {
+    markResolveFailed(existing.id, err);
+    console.error(`[Prepare] Library sync resolve failed for ${existing.id}:`, (err as Error).message);
+    if (!isResolveCoolingDown(existing.id)) {
+      resolveAndAttachSourceInBackground(existing.id, searchQuery, quality, {
+        title: existing.title,
+        artist: existing.artist.name,
+        duration: existing.duration > 0 ? existing.duration : undefined,
+        album: existing.album?.title || undefined,
+        spotifyUrl,
+      });
+    }
+  } finally {
+    resolveInFlight.delete(existing.id);
+  }
+
+  return prisma.track.findUniqueOrThrow({
+    where: { id: existing.id },
+    include: { artist: true, album: true, lyrics: true },
+  });
 }
 
 export async function resolveAndDownload(

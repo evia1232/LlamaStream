@@ -105,14 +105,40 @@ export interface ArtistPageFull extends ArtistPageLocal {
   spotify: ArtistSpotifyData;
 }
 
+async function persistAlbumStubs(spotifyArtist: SpotifyArtistResult, albums: SpotifyAlbumResult[]) {
+  try {
+    const { upsertArtistLocal, upsertAlbumLocal } = await import('./albumCatalog');
+    const artist = await upsertArtistLocal({
+      name: spotifyArtist.name,
+      spotifyArtistId: spotifyArtist.id,
+      imageUrl: spotifyArtist.imageUrl,
+    });
+    for (const album of albums.slice(0, 40)) {
+      await upsertAlbumLocal({
+        title: album.name,
+        artistId: artist.id,
+        coverUrl: album.imageUrl,
+        releaseYear: album.releaseYear,
+        spotifyAlbumId: album.id,
+      });
+    }
+  } catch (err) {
+    console.error('[Artist] Failed to persist album stubs:', err);
+  }
+}
+
 async function persistArtistSpotifyMeta(
   artistName: string,
   spotify: SpotifyArtistResult,
   artistId?: string | null,
 ) {
+  const { cacheRemoteImage } = await import('./mediaCache');
+  const localImage = spotify.imageUrl
+    ? await cacheRemoteImage(spotify.imageUrl, `artist:${spotify.id}`)
+    : null;
   const data = {
     spotifyArtistId: spotify.id,
-    ...(spotify.imageUrl ? { imageUrl: spotify.imageUrl } : {}),
+    ...(localImage ? { imageUrl: localImage } : spotify.imageUrl ? { imageUrl: spotify.imageUrl } : {}),
   };
 
   try {
@@ -367,6 +393,7 @@ export async function fetchArtistSpotifyData(
     ]);
 
     void persistArtistSpotifyMeta(artistName, spotifyArtist, persistForArtistId);
+    void persistAlbumStubs(spotifyArtist, albums.slice(0, MAX_SPOTIFY_ALBUMS));
 
     return {
       configured: true,

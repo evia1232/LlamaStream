@@ -10,6 +10,7 @@ import PlaylistPage from './pages/PlaylistPage';
 import LikedPage from './pages/LikedPage';
 import SettingsPage from './pages/SettingsPage';
 import ArtistPage from './pages/ArtistPage';
+import AlbumPage from './pages/AlbumPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { token, isLoading } = useAuthStore();
@@ -57,6 +58,8 @@ export default function App() {
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/artist/by-name/:name" element={<ArtistPage />} />
                 <Route path="/artist/:id" element={<ArtistPage />} />
+                <Route path="/album/spotify/:spotifyAlbumId" element={<AlbumPage />} />
+                <Route path="/album/:id" element={<AlbumPage />} />
               </Routes>
             </Layout>
           </ProtectedRoute>

@@ -5,7 +5,7 @@ import { body, query } from 'express-validator';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { config } from '../config';
 import prisma from '../lib/prisma';
-import { resolveAndDownload, downloadLibraryTrack, prefetchLibraryTrack, researchTrack, resolveYouTubeSource, upsertPendingTrack, prepareTrackForPlayback, resolveAndAttachSourceInBackground, isResolveCoolingDown } from '../services/downloader';
+import { resolveAndDownload, downloadLibraryTrack, prefetchLibraryTrack, researchTrack, resolveYouTubeSource, upsertPendingTrack, prepareTrackForPlayback, prepareLibraryTrackForPlayback, resolveAndAttachSourceInBackground, isResolveCoolingDown } from '../services/downloader';
 import { ensureBackgroundDownload, trackStreamUrl, isDownloadInProgress, isDownloadCoolingDown, pipeYouTubeAudio, clearDownloadCooldown, cancelBackgroundDownload } from '../services/trackDownload';
 import { fetchLyricsForTrack } from '../services/lyrics';
 import { unifiedSearch } from '../services/search';
@@ -38,6 +38,7 @@ function formatTrack(track: {
   filePath: string | null;
   sourceUrl: string | null;
   sourceId: string | null;
+  spotifyTrackId?: string | null;
   thumbnailUrl: string | null;
   quality: string;
   isDownloaded: boolean;
@@ -52,6 +53,9 @@ function formatTrack(track: {
     title: track.title,
     artist: track.artist,
   };
+  const spotifyUrl = track.spotifyTrackId
+    ? `https://open.spotify.com/track/${track.spotifyTrackId}`
+    : undefined;
   return {
     id: track.id,
     title: track.title,
@@ -59,6 +63,8 @@ function formatTrack(track: {
     thumbnailUrl: track.thumbnailUrl,
     sourceUrl: track.sourceUrl,
     sourceId: track.sourceId,
+    spotifyTrackId: track.spotifyTrackId ?? undefined,
+    spotifyUrl,
     quality: track.quality,
     isDownloaded,
     isDownloading: !isDownloaded && !!track.sourceUrl && isDownloadInProgress(track.id),
@@ -350,7 +356,7 @@ router.post('/prepare-playback', authenticate, async (req: AuthRequest, res) => 
   try {
     const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
     const quality = user?.audioQuality || 'HIGH';
-    const { query: searchQuery, url, spotifyUrl, title, artist, duration, album } = req.body as {
+    const { query: searchQuery, url, spotifyUrl, title, artist, duration, album, thumbnailUrl } = req.body as {
       query?: string;
       url?: string;
       spotifyUrl?: string;
@@ -358,6 +364,7 @@ router.post('/prepare-playback', authenticate, async (req: AuthRequest, res) => 
       artist?: string;
       duration?: number;
       album?: string;
+      thumbnailUrl?: string;
     };
 
     let input = searchQuery || url || spotifyUrl || '';
@@ -375,6 +382,7 @@ router.post('/prepare-playback', authenticate, async (req: AuthRequest, res) => 
         artist,
         duration,
         album,
+        thumbnailUrl,
         relaxed: false,
       },
     );
@@ -529,6 +537,9 @@ router.get('/:id/stream', streamAuth, async (req, res) => {
         artist: fresh.artist.name,
         duration: fresh.duration > 0 ? fresh.duration : undefined,
         album: fresh.album?.title,
+        spotifyUrl: fresh.spotifyTrackId
+          ? `https://open.spotify.com/track/${fresh.spotifyTrackId}`
+          : undefined,
       });
     }
     return res.status(503).json({
@@ -659,6 +670,18 @@ router.post('/prefetch', authenticate, async (req: AuthRequest, res) => {
     res.json({ trackId: track.id, status: 'prefetching', track: formatTrack(track) });
   } catch (err) {
     console.error('Prefetch error:', err);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post('/:id/prepare-playback', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user!.userId } });
+    const quality = user?.audioQuality || 'HIGH';
+    const track = await prepareLibraryTrackForPlayback(req.params.id, quality);
+    res.json({ track: formatTrack(track) });
+  } catch (err) {
+    console.error('Prepare library playback error:', err);
     res.status(500).json({ error: (err as Error).message });
   }
 });

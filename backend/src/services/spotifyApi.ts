@@ -1140,8 +1140,90 @@ export async function fetchSpotifyArtistAlbums(artistId: string): Promise<Spotif
 }
 
 export async function fetchSpotifyAlbumTracks(albumId: string): Promise<SpotifySearchResult[]> {
-  const data = await spotifyGet<{ items: SpotifyApiTrack[] }>(
-    `/albums/${albumId}/tracks?limit=${SPOTIFY_LIST_MAX_LIMIT}`,
-  );
-  return (data?.items || []).map(mapSpotifyApiTrack);
+  const data = await spotifyGet<{
+    items: Array<{
+      id: string;
+      name: string;
+      duration_ms: number;
+      external_urls?: { spotify: string };
+      artists: { id: string; name: string }[];
+    }>;
+  }>(`/albums/${albumId}/tracks?limit=${SPOTIFY_LIST_MAX_LIMIT}`);
+
+  return (data?.items || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    artist: (t.artists || []).map((a) => a.name).join(', '),
+    primaryArtistId: t.artists?.[0]?.id,
+    duration: Math.round((t.duration_ms || 0) / 1000),
+    thumbnailUrl: '',
+    spotifyUrl: t.external_urls?.spotify || `https://open.spotify.com/track/${t.id}`,
+    source: 'spotify' as const,
+  }));
+}
+
+export async function fetchSpotifyAlbumDetails(albumId: string): Promise<{
+  id: string;
+  name: string;
+  imageUrl: string;
+  releaseYear: number | null;
+  artistName: string;
+  spotifyArtistId: string | null;
+  artistImageUrl: string | null;
+  spotifyUrl: string;
+  tracks: SpotifySearchResult[];
+} | null> {
+  const data = await spotifyGet<{
+    id: string;
+    name: string;
+    images: { url: string }[];
+    release_date?: string;
+    external_urls: { spotify: string };
+    artists: { id: string; name: string }[];
+    tracks: {
+      items: Array<{
+        id: string;
+        name: string;
+        duration_ms: number;
+        external_urls?: { spotify: string };
+        artists: { id: string; name: string }[];
+      }>;
+    };
+  }>(`/albums/${albumId}`);
+
+  if (!data?.id) return null;
+
+  const cover = data.images?.[0]?.url || '';
+  const primary = data.artists?.[0];
+  let artistImageUrl: string | null = null;
+  if (primary?.id) {
+    const artist = await fetchSpotifyArtistById(primary.id);
+    artistImageUrl = artist?.imageUrl || null;
+  }
+
+  const tracks: SpotifySearchResult[] = (data.tracks?.items || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    artist: (t.artists || []).map((a) => a.name).join(', ') || primary?.name || '',
+    primaryArtistId: t.artists?.[0]?.id || primary?.id,
+    album: data.name,
+    duration: Math.round((t.duration_ms || 0) / 1000),
+    thumbnailUrl: cover,
+    spotifyUrl: t.external_urls?.spotify || `https://open.spotify.com/track/${t.id}`,
+    source: 'spotify' as const,
+  }));
+
+  const year = data.release_date ? parseInt(data.release_date.slice(0, 4), 10) : null;
+
+  return {
+    id: data.id,
+    name: data.name,
+    imageUrl: cover,
+    releaseYear: Number.isFinite(year) ? year : null,
+    artistName: primary?.name || 'Unknown',
+    spotifyArtistId: primary?.id || null,
+    artistImageUrl,
+    spotifyUrl: data.external_urls?.spotify || `https://open.spotify.com/album/${data.id}`,
+    tracks,
+  };
 }
